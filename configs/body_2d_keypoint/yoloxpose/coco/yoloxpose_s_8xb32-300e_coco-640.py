@@ -121,7 +121,7 @@ model = dict(
         loss_oks=dict(
             type='OKSLoss',
             reduction='none',
-            metainfo='configs/_base_/datasets/coco.py',
+            metainfo=r'C:\Users\user\Documents\GitHub\mmpose\configs\_base_\datasets\coco.py',
             norm_target_weight=True,
             loss_weight=30.0),
         loss_vis=dict(
@@ -192,22 +192,22 @@ train_pipeline_stage2 = [
 ]
 
 data_mode = 'bottomup'
-data_root = 'data/'
+data_root = r'C:\Users\user\Documents\GitHub\mmpose\data'
 
 dataset_coco = dict(
     type='CocoDataset',
     data_root=data_root,
     data_mode=data_mode,
     filter_cfg=dict(filter_empty_gt=False, min_size=32),
-    ann_file='coco/annotations/person_keypoints_train2017.json',
-    data_prefix=dict(img='coco/train2017/'),
+    ann_file=r'C:\Users\user\Documents\GitHub\mmpose\data\coco\annotations\person_keypoints_train2017.json',
+    data_prefix=dict(img=r'C:\Users\user\Documents\GitHub\mmpose\data\coco\train2017'),
     pipeline=train_pipeline_stage1,
 )
 
 train_dataloader = dict(
-    batch_size=32,
-    num_workers=8,
-    persistent_workers=True,
+    batch_size=16,
+    num_workers=0,
+    persistent_workers=False,
     pin_memory=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
     dataset=dataset_coco)
@@ -224,8 +224,8 @@ val_pipeline = [
 
 val_dataloader = dict(
     batch_size=1,
-    num_workers=2,
-    persistent_workers=True,
+    num_workers=0,
+    persistent_workers=False,
     pin_memory=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
@@ -233,8 +233,8 @@ val_dataloader = dict(
         type='CocoDataset',
         data_root=data_root,
         data_mode=data_mode,
-        ann_file='coco/annotations/person_keypoints_val2017.json',
-        data_prefix=dict(img='coco/val2017/'),
+        ann_file=r'C:\Users\user\Documents\GitHub\mmpose\data\coco\annotations\person_keypoints_val2017.json',
+        data_prefix=dict(img=r'C:\Users\user\Documents\GitHub\mmpose\data\coco\val2017'),
         test_mode=True,
         pipeline=val_pipeline,
     ))
@@ -243,7 +243,7 @@ test_dataloader = val_dataloader
 # evaluators
 val_evaluator = dict(
     type='CocoMetric',
-    ann_file=data_root + 'coco/annotations/person_keypoints_val2017.json',
+    ann_file=data_root + r'\coco\annotations\person_keypoints_val2017.json',
     score_mode='bbox',
     nms_mode='none',
 )

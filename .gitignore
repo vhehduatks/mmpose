@@ -131,3 +131,9 @@ docs/**/modelzoo.md
 *.pth
 
 *.DS_Store
+
+# add
+*.jpg
+*.json
+*.tar
+temp_modify/*
