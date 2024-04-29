@@ -323,7 +323,7 @@ def multilabel_classification_accuracy(pred: np.ndarray,
 
 def keypoint_mpjpe(pred: np.ndarray,
                    gt: np.ndarray,
-                   mask: np.ndarray,
+                   mask: np.ndarray = None,
                    alignment: str = 'none'):
     """Calculate the mean per-joint position error (MPJPE) and the error after
     rigid alignment with the ground truth (P-MPJPE).
@@ -354,7 +354,7 @@ def keypoint_mpjpe(pred: np.ndarray,
         - (float | np.ndarray): mpjpe after rigid alignment with the
             ground truth (p-mpjpe).
     """
-    assert mask.any()
+    # assert mask.any()
 
     if alignment == 'none':
         pass
@@ -370,6 +370,6 @@ def keypoint_mpjpe(pred: np.ndarray,
         pred = pred * scale_factor[:, None, None]
     else:
         raise ValueError(f'Invalid value for alignment: {alignment}')
-    error = np.linalg.norm(pred - gt, ord=2, axis=-1)[mask].mean()
+    error = np.linalg.norm(pred - gt, ord=2, axis=-1).mean()
 
     return error

@@ -170,16 +170,16 @@ class YOLOXPoseHeadModule(BaseModule):
 			self.conv_pose.append(nn.Sequential(*stacked_convs))
 
 		# output layers
-		self.out_kpt_vis = nn.ModuleList()
+		# self.out_kpt_vis = nn.ModuleList()
 		self.out_kpt = nn.ModuleList()
-		self.out_kpt_3d = nn.ModuleList()
+		# self.out_kpt_3d = nn.ModuleList()
 		for _ in self.featmap_strides:
-			self.out_kpt_vis.append(
-				nn.Conv2d(self.feat_channels, self.num_keypoints, 1))
+			# self.out_kpt_vis.append(
+			# 	nn.Conv2d(self.feat_channels, self.num_keypoints, 1))
 			self.out_kpt.append(
 				nn.Conv2d(self.feat_channels, self.num_keypoints * 2, 1))
-			self.out_kpt_3d.append(
-				nn.Conv2d(self.feat_channels, self.num_keypoints * 3, 1))
+			# self.out_kpt_3d.append(
+			# 	nn.Conv2d(self.feat_channels, self.num_keypoints * 3, 1))
 
 
 	def init_weights(self):
@@ -211,16 +211,12 @@ class YOLOXPoseHeadModule(BaseModule):
 
 		for i in range(len(x)):
 
-			# cls_feat = self.conv_cls[i](x[i])
-			# reg_feat = self.conv_reg[i](x[i])
 			pose_feat = self.conv_pose[i](x[i])
 
-			# cls_scores.append(self.out_cls[i](cls_feat))
-			# objectnesses.append(self.out_obj[i](reg_feat))
-			# bbox_preds.append(self.out_bbox[i](reg_feat))
+
 			kpt_offsets.append(self.out_kpt[i](pose_feat))
-			kpt_vis.append(self.out_kpt_vis[i](pose_feat))
-			kpt_3d_offsets.append(self.out_kpt_3d[i](pose_feat))
+			# kpt_vis.append(self.out_kpt_vis[i](pose_feat))
+			# kpt_3d_offsets.append(self.out_kpt_3d[i](pose_feat))
 
 		return cls_scores, objectnesses, bbox_preds, kpt_offsets, kpt_vis, kpt_3d_offsets
 
@@ -265,17 +261,25 @@ class YOLOXPoseHead_Custom(BaseModule):
 
 		# build losses
 		self.loss_mpjpe = MODELS.build(loss_mpjpe)
-		
-		# self.loss_cls = MODELS.build(loss_cls)
-		# if loss_obj is not None:
-		#     self.loss_obj = MODELS.build(loss_obj)
-		# self.loss_bbox = MODELS.build(loss_bbox)
-		# self.loss_oks = MODELS.build(loss_oks)
-		# self.loss_vis = MODELS.build(loss_vis)
-		# if loss_bbox_aux is not None:
-		#     self.loss_bbox_aux = MODELS.build(loss_bbox_aux)
-		# if loss_kpt_aux is not None:
-		#     self.loss_kpt_aux = MODELS.build(loss_kpt_aux)
+
+		# self.conv_vis = nn.Conv2d(in_channels, 17, kernel_size=1)
+		self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+		self.simple_yet_effective_baseline_0 = nn.Linear(15*2, 1024)
+		self.simple_yet_effective_baseline_1 = self._make_bilinear()
+		self.simple_yet_effective_baseline_2 = self._make_bilinear()
+		self.simple_yet_effective_baseline_3 = nn.Linear(1024, 16*3)
+	def _make_bilinear(self):
+		return nn.Sequential(
+			nn.Linear(1024, 1024),
+			nn.BatchNorm1d(1024),
+			nn.ReLU(),
+			nn.Dropout(),
+			nn.Linear(1024, 1024),
+			nn.BatchNorm1d(1024),
+			nn.ReLU(),
+			nn.Dropout(),
+		)
+
 
 	def forward(self, feats: Features):
 		assert isinstance(feats, (tuple, list))
@@ -302,93 +306,96 @@ class YOLOXPoseHead_Custom(BaseModule):
 		cls_scores, objectnesses, bbox_preds, kpt_offsets, \
 			kpt_vis, kpt_3d_offsets = self.forward(feats)
 
-		# featmap_sizes = [cls_score.shape[2:] for cls_score in kpt_vis]
-		# mlvl_priors = self.prior_generator.grid_priors(
-		# 	featmap_sizes,
-		# 	dtype=kpt_vis[0].dtype,
-		# 	device=kpt_vis[0].device,
-		# 	with_stride=True)
-		# flatten_priors = torch.cat(mlvl_priors)
+		kpt_pred = kpt_offsets[0].new_zeros(kpt_offsets[0].shape[:2]) #[batch, 15*2]
+		for kpt_offset in kpt_offsets:
+			kpt_pred+=self.avgpool(kpt_offset).view(kpt_pred.shape)
 
-		# flatten cls_scores, bbox_preds and objectness
-		# flatten_cls_scores = self._flatten_predictions(cls_scores)
-		# flatten_bbox_preds = self._flatten_predictions(bbox_preds)
-		# flatten_objectness = self._flatten_predictions(objectnesses)
-		flatten_kpt_offsets = self._flatten_predictions(kpt_offsets)
-		flatten_kpt_offsets = self._flatten_predictions(kpt_3d_offsets)
-		flatten_kpt_vis = self._flatten_predictions(kpt_vis)
-		# flatten_bbox_decoded = self.decode_bbox(flatten_bbox_preds, flatten_priors[..., :2],flatten_priors[..., -1])
-		flatten_kpt_decoded = self.decode_kpt_reg(flatten_kpt_offsets,
-												  flatten_priors[..., :2],
-												  flatten_priors[..., -1])
+		kpt_3d_pred_0 = self.simple_yet_effective_baseline_0(kpt_pred)
+		kpt_3d_pred_1 = self.simple_yet_effective_baseline_1(kpt_3d_pred_0)
+		kpt_3d_pred_2 = self.simple_yet_effective_baseline_2(kpt_3d_pred_1+kpt_3d_pred_0)
+		kpt_3d_pred_3 = self.simple_yet_effective_baseline_3(kpt_3d_pred_2+kpt_3d_pred_1)
+
+
 
 		# 2. generate targets
-		targets = self._get_targets(flatten_priors,
-									flatten_cls_scores.detach(),
-									flatten_objectness.detach(),
-									flatten_bbox_decoded.detach(),
-									flatten_kpt_decoded.detach(),
-									flatten_kpt_vis.detach(),
-									batch_data_samples)
-		pos_masks, cls_targets, obj_targets, obj_weights, \
-			bbox_targets, bbox_aux_targets, kpt_targets, kpt_aux_targets, \
-			vis_targets, vis_weights, pos_areas, pos_priors, group_indices, \
-			num_fg_imgs = targets
+		kpt_targets, kpt_3d_targets = [],[]
+		for batch in batch_data_samples:
+			kpt_targets.append(batch.gt_instance_labels.keypoints)
+			kpt_3d_targets.append(batch.gt_instance_labels.lifting_target)
 
-		num_pos = torch.tensor(
-			sum(num_fg_imgs),
-			dtype=torch.float,
-			device=flatten_cls_scores.device)
-		num_total_samples = max(reduce_mean(num_pos), 1.0)
+		kpt_targets = torch.cat(kpt_targets)
+		kpt_3d_targets = torch.cat(kpt_3d_targets)
+		# targets = self._get_targets(flatten_priors,
+		# 							flatten_cls_scores.detach(),
+		# 							flatten_objectness.detach(),
+		# 							flatten_bbox_decoded.detach(),
+		# 							flatten_kpt_decoded.detach(),
+		# 							flatten_kpt_vis.detach(),
+		# 							batch_data_samples)
+		# pos_masks, cls_targets, obj_targets, obj_weights, \
+		# 	bbox_targets, bbox_aux_targets, kpt_targets, kpt_aux_targets, \
+		# 	vis_targets, vis_weights, pos_areas, pos_priors, group_indices, \
+		# 	num_fg_imgs = targets
+
+		# num_pos = torch.tensor(
+		# 	sum(num_fg_imgs),
+		# 	dtype=torch.float,
+		# 	device=flatten_cls_scores.device)
+		# num_total_samples = max(reduce_mean(num_pos), 1.0)
 
 		# 3. calculate loss
 		# 3.1 objectness loss
 		losses = dict()
+		# must include "loss" in key
+		losses['loss_MPJPE_3d'] = self.loss_mpjpe(kpt_3d_pred_3.view((kpt_3d_pred_3.shape[0],16,3)),kpt_3d_targets)
+		losses['loss_MPJPE_2d'] = self.loss_mpjpe(kpt_pred.view(kpt_pred.shape[0],15,2),kpt_targets)
+		#TODO loss add for keypoints_visible = torch.ones((kpt_pred.shape[0],1,15),device=kpt_pred.device),
 
-		obj_preds = flatten_objectness.view(-1, 1)
-		losses['loss_obj'] = self.loss_obj(obj_preds, obj_targets,
-										   obj_weights) / num_total_samples
 
-		if num_pos > 0:
-			# 3.2 bbox loss
-			bbox_preds = flatten_bbox_decoded.view(-1, 4)[pos_masks]
-			losses['loss_bbox'] = self.loss_bbox(
-				bbox_preds, bbox_targets) / num_total_samples
+		# obj_preds = flatten_objectness.view(-1, 1)
+		# losses['loss_obj'] = self.loss_obj(obj_preds, obj_targets,
+		# 								   obj_weights) / num_total_samples
 
-			# 3.3 keypoint loss
-			kpt_preds = flatten_kpt_decoded.view(-1, self.num_keypoints,
-												 2)[pos_masks]
-			losses['loss_kpt'] = self.loss_oks(kpt_preds, kpt_targets,
-											   vis_targets, pos_areas)
+		# if num_pos > 0:
+		# 	# 3.2 bbox loss
+		# 	bbox_preds = flatten_bbox_decoded.view(-1, 4)[pos_masks]
+		# 	losses['loss_bbox'] = self.loss_bbox(
+		# 		bbox_preds, bbox_targets) / num_total_samples
 
-			# 3.4 keypoint visibility loss
-			kpt_vis_preds = flatten_kpt_vis.view(-1,
-												 self.num_keypoints)[pos_masks]
-			losses['loss_vis'] = self.loss_vis(kpt_vis_preds, vis_targets,
-											   vis_weights)
+		# 	# 3.3 keypoint loss
+		# 	kpt_preds = flatten_kpt_decoded.view(-1, self.num_keypoints,
+		# 										 2)[pos_masks]
+		# 	losses['loss_kpt'] = self.loss_oks(kpt_preds, kpt_targets,
+		# 									   vis_targets, pos_areas)
 
-			# 3.5 classification loss
-			cls_preds = flatten_cls_scores.view(-1,
-												self.num_classes)[pos_masks]
-			losses['overlaps'] = cls_targets
-			cls_targets = cls_targets.pow(self.overlaps_power).detach()
-			losses['loss_cls'] = self.loss_cls(cls_preds,
-											   cls_targets) / num_total_samples
+		# 	# 3.4 keypoint visibility loss
+		# 	kpt_vis_preds = flatten_kpt_vis.view(-1,
+		# 										 self.num_keypoints)[pos_masks]
+		# 	losses['loss_vis'] = self.loss_vis(kpt_vis_preds, vis_targets,
+		# 									   vis_weights)
 
-			if self.use_aux_loss:
-				if hasattr(self, 'loss_bbox_aux'):
-					# 3.6 auxiliary bbox regression loss
-					bbox_preds_raw = flatten_bbox_preds.view(-1, 4)[pos_masks]
-					losses['loss_bbox_aux'] = self.loss_bbox_aux(
-						bbox_preds_raw, bbox_aux_targets) / num_total_samples
+		# 	# 3.5 classification loss
+		# 	cls_preds = flatten_cls_scores.view(-1,
+		# 										self.num_classes)[pos_masks]
+		# 	losses['overlaps'] = cls_targets
+		# 	cls_targets = cls_targets.pow(self.overlaps_power).detach()
+		# 	losses['loss_cls'] = self.loss_cls(cls_preds,
+		# 									   cls_targets) / num_total_samples
 
-				if hasattr(self, 'loss_kpt_aux'):
-					# 3.7 auxiliary keypoint regression loss
-					kpt_preds_raw = flatten_kpt_offsets.view(
-						-1, self.num_keypoints, 2)[pos_masks]
-					kpt_weights = vis_targets / vis_targets.size(-1)
-					losses['loss_kpt_aux'] = self.loss_kpt_aux(
-						kpt_preds_raw, kpt_aux_targets, kpt_weights)
+		# 	if self.use_aux_loss:
+		# 		if hasattr(self, 'loss_bbox_aux'):
+		# 			# 3.6 auxiliary bbox regression loss
+		# 			bbox_preds_raw = flatten_bbox_preds.view(-1, 4)[pos_masks]
+		# 			losses['loss_bbox_aux'] = self.loss_bbox_aux(
+		# 				bbox_preds_raw, bbox_aux_targets) / num_total_samples
+
+		# 		if hasattr(self, 'loss_kpt_aux'):
+		# 			# 3.7 auxiliary keypoint regression loss
+		# 			kpt_preds_raw = flatten_kpt_offsets.view(
+		# 				-1, self.num_keypoints, 2)[pos_masks]
+		# 			kpt_weights = vis_targets / vis_targets.size(-1)
+		# 			losses['loss_kpt_aux'] = self.loss_kpt_aux(
+		# 				kpt_preds_raw, kpt_aux_targets, kpt_weights)
 
 		return losses
 
@@ -634,86 +641,44 @@ class YOLOXPoseHead_Custom(BaseModule):
 					in shape (K*2, h, w)
 		"""
 
+
+		# cfg = copy.deepcopy(test_cfg)
+
+		# batch_img_metas = [d.metainfo for d in batch_data_samples]
+		# featmap_sizes = [cls_score.shape[2:] for cls_score in cls_scores]
+
+				# 1. collect & reform predictions
 		cls_scores, objectnesses, bbox_preds, kpt_offsets, \
-			kpt_vis = self.forward(feats)
+			kpt_vis, kpt_3d_offsets = self.forward(feats)
 
-		cfg = copy.deepcopy(test_cfg)
+		kpt_pred = kpt_offsets[0].new_zeros(kpt_offsets[0].shape[:2]) #[batch, 15*2]
+		for kpt_offset in kpt_offsets:
+			kpt_pred+=self.avgpool(kpt_offset).view(kpt_pred.shape)
 
-		batch_img_metas = [d.metainfo for d in batch_data_samples]
-		featmap_sizes = [cls_score.shape[2:] for cls_score in cls_scores]
+		kpt_3d_pred_0 = self.simple_yet_effective_baseline_0(kpt_pred)
+		kpt_3d_pred_1 = self.simple_yet_effective_baseline_1(kpt_3d_pred_0)
+		kpt_3d_pred_2 = self.simple_yet_effective_baseline_2(kpt_3d_pred_1+kpt_3d_pred_0)
+		kpt_3d_pred_3 = self.simple_yet_effective_baseline_3(kpt_3d_pred_2+kpt_3d_pred_1)
 
-		# If the shape does not change, use the previous mlvl_priors
-		if featmap_sizes != self.featmap_sizes:
-			self.mlvl_priors = self.prior_generator.grid_priors(
-				featmap_sizes,
-				dtype=cls_scores[0].dtype,
-				device=cls_scores[0].device)
-			self.featmap_sizes = featmap_sizes
-		flatten_priors = torch.cat(self.mlvl_priors)
 
-		mlvl_strides = [
-			flatten_priors.new_full((featmap_size.numel(), ),
-									stride) for featmap_size, stride in zip(
-										featmap_sizes, self.featmap_strides)
-		]
-		flatten_stride = torch.cat(mlvl_strides)
+		# # 2. generate targets
+		# kpt_targets, kpt_3d_targets = [],[]
+		# for batch in batch_data_samples:
+		# 	kpt_targets.append(batch.gt_instance_labels.keypoints)
+		# 	kpt_3d_targets.append(batch.gt_instance_labels.lifting_target)
 
-		# flatten cls_scores, bbox_preds and objectness
-		flatten_cls_scores = self._flatten_predictions(cls_scores).sigmoid()
-		flatten_bbox_preds = self._flatten_predictions(bbox_preds)
-		flatten_objectness = self._flatten_predictions(objectnesses).sigmoid()
-		flatten_kpt_offsets = self._flatten_predictions(kpt_offsets)
-		flatten_kpt_vis = self._flatten_predictions(kpt_vis).sigmoid()
-		flatten_bbox_preds = self.decode_bbox(flatten_bbox_preds,
-											  flatten_priors, flatten_stride)
-		flatten_kpt_reg = self.decode_kpt_reg(flatten_kpt_offsets,
-											  flatten_priors, flatten_stride)
+		# kpt_targets = torch.cat(kpt_targets)
+		# kpt_3d_targets = torch.cat(kpt_3d_targets)
 
-		results_list = []
-		for (bboxes, scores, objectness, kpt_reg, kpt_vis,
-			 img_meta) in zip(flatten_bbox_preds, flatten_cls_scores,
-							  flatten_objectness, flatten_kpt_reg,
-							  flatten_kpt_vis, batch_img_metas):
+		results = InstanceData(
+			transformed_keypoints = kpt_pred.view(kpt_pred.shape[0],15,2),
+			keypoints=kpt_3d_pred_3.view((kpt_3d_pred_3.shape[0],16,3)),
+			keypoints_visible = torch.ones((kpt_pred.shape[0],1,15),device=kpt_pred.device)
+		)
 
-			score_thr = cfg.get('score_thr', 0.01)
-			scores *= objectness
+		results_list =[]
 
-			nms_pre = cfg.get('nms_pre', 100000)
-			scores, labels = scores.max(1, keepdim=True)
-			scores, _, keep_idxs_score, results = filter_scores_and_topk(
-				scores, score_thr, nms_pre, results=dict(labels=labels[:, 0]))
-			labels = results['labels']
-
-			bboxes = bboxes[keep_idxs_score]
-			kpt_vis = kpt_vis[keep_idxs_score]
-			stride = flatten_stride[keep_idxs_score]
-			keypoints = kpt_reg[keep_idxs_score]
-
-			if bboxes.numel() > 0:
-				nms_thr = cfg.get('nms_thr', 1.0)
-				if nms_thr < 1.0:
-					keep_idxs_nms = nms_torch(bboxes, scores, nms_thr)
-					bboxes = bboxes[keep_idxs_nms]
-					stride = stride[keep_idxs_nms]
-					labels = labels[keep_idxs_nms]
-					kpt_vis = kpt_vis[keep_idxs_nms]
-					keypoints = keypoints[keep_idxs_nms]
-					scores = scores[keep_idxs_nms]
-
-			results = InstanceData(
-				scores=scores,
-				labels=labels,
-				bboxes=bboxes,
-				bbox_scores=scores,
-				keypoints=keypoints,
-				keypoint_scores=kpt_vis,
-				keypoints_visible=kpt_vis)
-
-			input_size = img_meta['input_size']
-			results.bboxes[:, 0::2].clamp_(0, input_size[0])
-			results.bboxes[:, 1::2].clamp_(0, input_size[1])
-
-			results_list.append(results.numpy())
+		results_list.append(results.numpy())
 
 		return results_list
 

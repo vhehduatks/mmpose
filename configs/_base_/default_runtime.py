@@ -2,18 +2,19 @@ default_scope = 'mmpose'
 
 # hooks
 default_hooks = dict(
-    timer=dict(type='IterTimerHook'),
-    logger=dict(type='LoggerHook', interval=50),
-    param_scheduler=dict(type='ParamSchedulerHook'),
-    checkpoint=dict(type='CheckpointHook', interval=10),
-    sampler_seed=dict(type='DistSamplerSeedHook'),
-    visualization=dict(type='PoseVisualizationHook', enable=False),
-    badcase=dict(
-        type='BadCaseAnalysisHook',
-        enable=False,
-        out_dir='badcase',
-        metric_type='loss',
-        badcase_thr=5))
+    # timer=dict(type='IterTimerHook'),
+    # logger=dict(type='LoggerHook', interval=50),
+    # param_scheduler=dict(type='ParamSchedulerHook'),
+    # checkpoint=dict(type='CheckpointHook', interval=10),
+    # sampler_seed=dict(type='DistSamplerSeedHook'),
+    # visualization=dict(type='PoseVisualizationHook', enable=True),
+    # badcase=dict(
+    #     type='BadCaseAnalysisHook',
+    #     enable=False,
+    #     out_dir='badcase',
+    #     metric_type='loss',
+    #     badcase_thr=5)
+)
 
 # custom hooks
 custom_hooks = [
@@ -29,14 +30,16 @@ env_cfg = dict(
     dist_cfg=dict(backend='nccl'),
 )
 
-# visualizer
-vis_backends = [
-    dict(type='LocalVisBackend'),
-    # dict(type='TensorboardVisBackend'),
-    # dict(type='WandbVisBackend'),
-]
-visualizer = dict(
-    type='PoseLocalVisualizer', vis_backends=vis_backends, name='visualizer')
+# # visualizer
+# vis_backends = [
+#     # dict(type='LocalVisBackend'),
+#     # dict(type='TensorboardVisBackend'),
+#     dict(type='WandbVisBackend'),
+# ]
+# visualizer = dict(
+#     # type='PoseLocalVisualizer', vis_backends=vis_backends, name='visualizer'
+# 	type='Pose3dLocalVisualizer', vis_backends=vis_backends, name='visualizer'
+# 	)
 
 # logger
 log_processor = dict(

@@ -58,7 +58,7 @@ class Pose3dLocalVisualizer(PoseLocalVisualizer):
             link_color: Optional[Union[str, Tuple[Tuple[int]]]] = None,
             text_color: Optional[Union[str, Tuple[int]]] = (255, 255, 255),
             skeleton: Optional[Union[List, Tuple]] = None,
-            line_width: Union[int, float] = 1,
+            line_width: Union[int, float] = 4,
             radius: Union[int, float] = 3,
             show_keypoint_weight: bool = False,
             backend: str = 'opencv',
@@ -147,7 +147,7 @@ class Pose3dLocalVisualizer(PoseLocalVisualizer):
 
         plt.ioff()
         fig = plt.figure(
-            figsize=(vis_width * num_instances * 0.01, vis_height * 0.01))
+            figsize=(vis_width * num_instances * 0.01, vis_height * 0.015))
 
         def _draw_3d_instances_kpts(keypoints,
                                     scores,
@@ -184,8 +184,7 @@ class Pose3dLocalVisualizer(PoseLocalVisualizer):
 
                 ax.set_xlim3d([x_c - axis_limit / 2, x_c + axis_limit / 2])
                 ax.set_ylim3d([y_c - axis_limit / 2, y_c + axis_limit / 2])
-                ax.set_zlim3d(
-                    [min(0, z_c - axis_limit / 2), z_c + axis_limit / 2])
+                ax.set_zlim3d([ z_c + axis_limit / 2, min(0, z_c - axis_limit / 2)])
 
                 if self.kpt_color is None or isinstance(self.kpt_color, str):
                     kpt_color = [self.kpt_color] * len(kpts)

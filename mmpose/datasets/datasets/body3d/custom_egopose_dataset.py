@@ -33,12 +33,14 @@ import re
 import h5py
 import json
 from .config import config
+from ..utils import parse_pose_metainfo
 
 @DATASETS.register_module(name='CustomEgoposeDataset')
 class CustomEgoposeDataset(BaseDataset):
 
 	ROOT_DIRS = ['rgba','depth','json','objectId']
 	CM_TO_M = 100
+	METAINFO: dict = dict(from_file=r'C:\Users\user\Documents\GitHub\mmpose\mmpose\datasets\datasets\body3d\egopose_info.py')
 
 	def __init__(self, 
 			  transform=None,
@@ -81,7 +83,28 @@ class CustomEgoposeDataset(BaseDataset):
 			lazy_init=lazy_init,
 			max_refetch=max_refetch)
 		
-		
+	@classmethod
+	def _load_metainfo(cls, metainfo: dict = None) -> dict:
+		"""Collect meta information from the dictionary of meta.
+
+		Args:
+			metainfo (dict): Raw data of pose meta information.
+
+		Returns:
+			dict: Parsed meta information.
+		"""
+
+		if metainfo is None:
+			metainfo = deepcopy(cls.METAINFO)
+
+		if not isinstance(metainfo, dict):
+			raise TypeError(
+				f'metainfo should be a dict, but got {type(metainfo)}')
+
+		# parse pose metainfo if it has been assigned
+		if metainfo:
+			metainfo = parse_pose_metainfo(metainfo)
+		return metainfo
 		
 	def index_db(self):
 		return self._index_dir(self.ann_file)
@@ -331,7 +354,9 @@ class CustomEgoposeDataset(BaseDataset):
 			else:
 				raise TypeError('data_info should be a dict or list of dict, '
 								f'but got {type(data_info)}')
-
+		
+		people_len = len(data_list)
+		
 		return data_list
 	
 	def parse_data_info(self, img_path, depth_path, seg_path, json_path) -> Union[dict, List[dict]]:
@@ -355,14 +380,14 @@ class CustomEgoposeDataset(BaseDataset):
 		p3d_orig = np.array(data['pts3d_fisheye']).T
 		kpt3d = np.empty([len(config.skel_16), 3], dtype=p3d_orig.dtype)
 		kpt = np.empty([len(config.skel_15), 2], dtype=p2d_orig.dtype)
-
+		action = np.array([data['action']])
 
 
 		for jid, j in enumerate(config.skel_15.keys()):
 			kpt[jid] = p2d_orig[joint_names[j]]
 		for jid, j in enumerate(config.skel_16.keys()):	
 			kpt3d[jid] = p3d_orig[joint_names[j]]
-
+		
 		kpt3d /= self.CM_TO_M
 		kpt3d = np.expand_dims(kpt3d, axis=0)
 		kpt = np.expand_dims(kpt,axis=0)
@@ -372,7 +397,8 @@ class CustomEgoposeDataset(BaseDataset):
 			'seg_path' : seg_path,
 			'keypoints' : kpt,
 			'keypoints_3d' : kpt3d,
-			'keypoints_visible' : np.ones((1,16),dtype=np.float32),
+			'keypoints_visible' : np.ones((1,15),dtype=np.float32),
+			'action' : action
 		}
 
 		# data_info = {

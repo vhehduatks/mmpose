@@ -168,9 +168,10 @@ class BottomupPoseEstimator(BasePoseEstimator):
             input_size = data_sample.metainfo['input_size']
             input_center = data_sample.metainfo['input_center']
             input_scale = data_sample.metainfo['input_scale']
-
+			#TODO pred_instances.keypoints의 shape이 (1, 30)이고, input_size의 shape이 (2,)여서 브로드캐스팅이 불가능
             # convert keypoint coordinates from input space to image space
-            pred_instances.keypoints = pred_instances.keypoints / input_size \
+            # TODO pred_instances 가 나중에 val pipeline의 predict에서 사용되는지 확인
+            pred_instances.transformed_keypoints = pred_instances.transformed_keypoints / input_size \
                 * input_scale + input_center - 0.5 * input_scale
             if 'keypoints_visible' not in pred_instances:
                 pred_instances.keypoints_visible = \

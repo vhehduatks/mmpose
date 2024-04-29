@@ -73,7 +73,7 @@ class PoseVisualizationHook(Hook):
         self.out_dir = out_dir
         self._test_index = 0
         self.backend_args = backend_args
-
+# TODO : 왜 PoseLocalVisualizer로만 적용되는지 확인 
     def after_val_iter(self, runner: Runner, batch_idx: int, data_batch: dict,
                        outputs: Sequence[PoseDataSample]) -> None:
         """Run after every ``self.interval`` validation iterations.
@@ -107,9 +107,9 @@ class PoseVisualizationHook(Hook):
                 os.path.basename(img_path) if self.show else 'val_img',
                 img,
                 data_sample=data_sample,
-                draw_gt=False,
-                draw_bbox=True,
-                draw_heatmap=True,
+                draw_gt=True,
+                draw_bbox=False,
+                # draw_heatmap=False,
                 show=self.show,
                 wait_time=self.wait_time,
                 kpt_thr=self.kpt_thr,

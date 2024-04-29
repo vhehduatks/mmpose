@@ -1,3 +1,4 @@
+#TODO metainfo 만들기 egopose
 dataset_info = dict(
     dataset_name='coco',
     paper_info=dict(

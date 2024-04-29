@@ -15,130 +15,185 @@ from mmpose.registry import KEYPOINT_CODECS, TRANSFORMS
 
 
 try:
-    import albumentations
+	import albumentations
 except ImportError:
-    albumentations = None
+	albumentations = None
 
 Number = Union[int, float]
 
 @TRANSFORMS.register_module()
 class EgoposeFilterAnnotations(BaseTransform):
-    """Eliminate undesirable annotations based on specific conditions.
+	"""Eliminate undesirable annotations based on specific conditions.
 
-    This class is designed to sift through annotations by examining multiple
-    factors such as the size of the bounding box, the visibility of keypoints,
-    and the overall area. Users can fine-tune the criteria to filter out
-    instances that have excessively small bounding boxes, insufficient area,
-    or an inadequate number of visible keypoints.
+	This class is designed to sift through annotations by examining multiple
+	factors such as the size of the bounding box, the visibility of keypoints,
+	and the overall area. Users can fine-tune the criteria to filter out
+	instances that have excessively small bounding boxes, insufficient area,
+	or an inadequate number of visible keypoints.
 
-    Required Keys:
+	Required Keys:
 
-    - bbox (np.ndarray) (optional)
-    - area (np.int64) (optional)
-    - keypoints_visible (np.ndarray) (optional)
+	- bbox (np.ndarray) (optional)
+	- area (np.int64) (optional)
+	- keypoints_visible (np.ndarray) (optional)
 
-    Modified Keys:
+	Modified Keys:
 
-    - bbox (optional)
-    - bbox_score (optional)
-    - category_id (optional)
-    - keypoints (optional)
-    - keypoints_visible (optional)
-    - area (optional)
+	- bbox (optional)
+	- bbox_score (optional)
+	- category_id (optional)
+	- keypoints (optional)
+	- keypoints_visible (optional)
+	- area (optional)
 
-    Args:
-        min_gt_bbox_wh (tuple[float]): Minimum width and height of ground
-            truth boxes. Default: (1., 1.)
-        min_gt_area (int): Minimum foreground area of instances.
-            Default: 1
-        min_kpt_vis (int): Minimum number of visible keypoints. Default: 1
-        by_box (bool): Filter instances with bounding boxes not meeting the
-            min_gt_bbox_wh threshold. Default: False
-        by_area (bool): Filter instances with area less than min_gt_area
-            threshold. Default: False
-        by_kpt (bool): Filter instances with keypoints_visible not meeting the
-            min_kpt_vis threshold. Default: True
-        keep_empty (bool): Whether to return None when it
-            becomes an empty bbox after filtering. Defaults to True.
-    """
+	Args:
+		min_gt_bbox_wh (tuple[float]): Minimum width and height of ground
+			truth boxes. Default: (1., 1.)
+		min_gt_area (int): Minimum foreground area of instances.
+			Default: 1
+		min_kpt_vis (int): Minimum number of visible keypoints. Default: 1
+		by_box (bool): Filter instances with bounding boxes not meeting the
+			min_gt_bbox_wh threshold. Default: False
+		by_area (bool): Filter instances with area less than min_gt_area
+			threshold. Default: False
+		by_kpt (bool): Filter instances with keypoints_visible not meeting the
+			min_kpt_vis threshold. Default: True
+		keep_empty (bool): Whether to return None when it
+			becomes an empty bbox after filtering. Defaults to True.
+	"""
 
-    def __init__(self,
-                 min_gt_bbox_wh: Tuple[int, int] = (1, 1),
-                 min_gt_area: int = 1,
-                 min_kpt_vis: int = 1,
-                 by_box: bool = False,
-                 by_area: bool = False,
-                 by_kpt: bool = True,
-                 keep_empty: bool = True) -> None:
+	def __init__(self,
+				 min_gt_bbox_wh: Tuple[int, int] = (1, 1),
+				 min_gt_area: int = 1,
+				 min_kpt_vis: int = 1,
+				 by_box: bool = False,
+				 by_area: bool = False,
+				 by_kpt: bool = True,
+				 keep_empty: bool = True) -> None:
 
-        assert by_box or by_kpt or by_area
-        self.min_gt_bbox_wh = min_gt_bbox_wh
-        self.min_gt_area = min_gt_area
-        self.min_kpt_vis = min_kpt_vis
-        self.by_box = by_box
-        self.by_area = by_area
-        self.by_kpt = by_kpt
-        self.keep_empty = keep_empty
+		assert by_box or by_kpt or by_area
+		self.min_gt_bbox_wh = min_gt_bbox_wh
+		self.min_gt_area = min_gt_area
+		self.min_kpt_vis = min_kpt_vis
+		self.by_box = by_box
+		self.by_area = by_area
+		self.by_kpt = by_kpt
+		self.keep_empty = keep_empty
 
-    def transform(self, results: dict) -> Union[dict, None]:
-        """Transform function to filter annotations.
+	def transform(self, results: dict) -> Union[dict, None]:
+		"""Transform function to filter annotations.
 
-        Args:
-            results (dict): Result dict.
+		Args:
+			results (dict): Result dict.
 
-        Returns:
-            dict: Updated result dict.
-        """
-        assert 'keypoints' in results
-        kpts = results['keypoints']
-        if kpts.shape[0] == 0:
-            return results
+		Returns:
+			dict: Updated result dict.
+		"""
+		assert 'keypoints' in results
+		
+		kpts = results['keypoints']
+		if kpts.shape[0] == 0:
+			return results
 
-        tests = []
-        if self.by_box and 'bbox' in results:
-            # bbox = results['bbox']
-            # tests.append(
-            #     ((bbox[..., 2] - bbox[..., 0] > self.min_gt_bbox_wh[0]) &
-            #      (bbox[..., 3] - bbox[..., 1] > self.min_gt_bbox_wh[1])))
-            pass
-        if self.by_area and 'area' in results:
-            # area = results['area']
-            # tests.append(area >= self.min_gt_area)
-            pass
-        if self.by_kpt:
-            tests.append(len(kpts) == 16)
+		tests = []
+		if self.by_box and 'bbox' in results:
+			# bbox = results['bbox']
+			# tests.append(
+			#     ((bbox[..., 2] - bbox[..., 0] > self.min_gt_bbox_wh[0]) &
+			#      (bbox[..., 3] - bbox[..., 1] > self.min_gt_bbox_wh[1])))
+			pass
+		if self.by_area and 'area' in results:
+			# area = results['area']
+			# tests.append(area >= self.min_gt_area)
+			pass
+		if self.by_kpt:
+			tests.append(len(kpts) == 16)
 
 		## temp code 
-        # tests.append(True)
+		# tests.append(True)
 		##
-        keep = tests[0]
-        for t in tests[1:]:
-            keep = keep & t
+		keep = tests[0]
+		for t in tests[1:]:
+			keep = keep & t
 
-        if not keep:
-            if self.keep_empty:
-                return None
+		if not keep:
+			if self.keep_empty:
+				return None
 
-        # keys = ('bbox', 'bbox_score', 'category_id', 'keypoints',
-        #         'keypoints_visible', 'area')
-        
-        # for key in keys:
-        #     if key in results:
-        #         results[key] = results[key][keep]
+		# keys = ('bbox', 'bbox_score', 'category_id', 'keypoints',
+		#         'keypoints_visible', 'area')
+		
+		# for key in keys:
+		#     if key in results:
+		#         results[key] = results[key][keep]
 
-        return results
+		return results
 
-    def __repr__(self):
-        # return (f'{self.__class__.__name__}('
-        #         f'min_gt_bbox_wh={self.min_gt_bbox_wh}, '
-        #         f'min_gt_area={self.min_gt_area}, '
-        #         f'min_kpt_vis={self.min_kpt_vis}, '
-        #         f'by_box={self.by_box}, '
-        #         f'by_area={self.by_area}, '
-        #         f'by_kpt={self.by_kpt}, '
-        #         f'keep_empty={self.keep_empty})')
-        pass
+	def __repr__(self):
+		# return (f'{self.__class__.__name__}('
+		#         f'min_gt_bbox_wh={self.min_gt_bbox_wh}, '
+		#         f'min_gt_area={self.min_gt_area}, '
+		#         f'min_kpt_vis={self.min_kpt_vis}, '
+		#         f'by_box={self.by_box}, '
+		#         f'by_area={self.by_area}, '
+		#         f'by_kpt={self.by_kpt}, '
+		#         f'keep_empty={self.keep_empty})')
+		pass
 
+@TRANSFORMS.register_module()
+class FisheyeCropTransform(BaseTransform):
+	"""Fisheye lens image cropping transform."""
+	def __init__(self,
+			  input_size:Tuple[int, int] = (640,640)
+			  )-> None:
+		self.input_size = input_size
+
+
+	def transform(self, results: Dict) -> Dict:
+		img = results['img']
+		h, w = img.shape[:2]
+		# Find non-zero pixel range
+		nonzero_mask = img.any(axis=-1)
+		nonzero_rows = np.any(nonzero_mask, axis=1)
+		nonzero_cols = np.any(nonzero_mask, axis=0)
+		ymin, ymax = np.where(nonzero_rows)[0][[0, -1]]
+		xmin, xmax = np.where(nonzero_cols)[0][[0, -1]]
+
+		# Crop image
+		cropped_img = img[ymin:ymax+1, xmin:xmax+1]
+		cropped_h, cropped_w = cropped_img.shape[:2]
+
+		# Resize cropped image to input size
+		resized_img = cv2.resize(cropped_img, self.input_size, interpolation=cv2.INTER_LINEAR)
+		results['img'] = resized_img
+
+		# Update keypoints
+		if 'keypoints' in results:
+			keypoints = results['keypoints']
+			keypoints[:, :, 0] -= xmin  # Subtract xmin from all x coordinates
+			keypoints[:, :, 1] -= ymin  # Subtract ymin from all y coordinates
+
+			# Scale keypoints to match resized image
+			scale_x = self.input_size[0] / cropped_w
+			scale_y = self.input_size[1] / cropped_h
+			keypoints[:, :, 0] *= scale_x
+			keypoints[:, :, 1] *= scale_y
+
+			# Normalize keypoints
+			x = keypoints[:, :, 0]
+			y = keypoints[:, :, 1]
+			x_normalized = x / self.input_size[0]
+			y_normalized = y / self.input_size[1]
+			normalized_keypoints = np.expand_dims(np.column_stack((x_normalized.squeeze(), y_normalized.squeeze())), axis=0)
+			results['keypoints'] = normalized_keypoints
+
+		# Set input_center, input_scale, and input_size
+		results['input_center'] = np.array([w / 2, h / 2], dtype=np.float32)  
+		results['input_scale'] = np.array([w, h], dtype=np.float32)
+		results['input_size'] = self.input_size
+
+		return results
+	
 
 # @TRANSFORMS.register_module()
 # class GenerateTarget(BaseTransform):
