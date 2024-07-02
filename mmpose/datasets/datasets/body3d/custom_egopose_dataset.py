@@ -378,14 +378,14 @@ class CustomEgoposeDataset(BaseDataset):
 		joint_names = {j['name'].replace('mixamorig:', ''): jid for jid, j in enumerate(data['joints'])}
 		p2d_orig = np.array(data['pts2d_fisheye']).T
 		p3d_orig = np.array(data['pts3d_fisheye']).T
-		kpt3d = np.empty([len(config.skel_16), 3], dtype=p3d_orig.dtype)
+		kpt3d = np.empty([len(config.skel_15), 3], dtype=p3d_orig.dtype)
 		kpt = np.empty([len(config.skel_15), 2], dtype=p2d_orig.dtype)
 		action = np.array([data['action']])
-
+		camera = data['camera']
 
 		for jid, j in enumerate(config.skel_15.keys()):
 			kpt[jid] = p2d_orig[joint_names[j]]
-		for jid, j in enumerate(config.skel_16.keys()):	
+		for jid, j in enumerate(config.skel_15.keys()):	
 			kpt3d[jid] = p3d_orig[joint_names[j]]
 		
 		kpt3d /= self.CM_TO_M
@@ -398,7 +398,8 @@ class CustomEgoposeDataset(BaseDataset):
 			'keypoints' : kpt,
 			'keypoints_3d' : kpt3d,
 			'keypoints_visible' : np.ones((1,15),dtype=np.float32),
-			'action' : action
+			'action' : action,
+			'camera' : camera
 		}
 
 		# data_info = {

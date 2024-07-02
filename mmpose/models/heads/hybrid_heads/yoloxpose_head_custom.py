@@ -306,14 +306,24 @@ class YOLOXPoseHead_Custom(BaseModule):
 		cls_scores, objectnesses, bbox_preds, kpt_offsets, \
 			kpt_vis, kpt_3d_offsets = self.forward(feats)
 
+
+		featmap_sizes = [cls_score.shape[2:] for cls_score in cls_scores]
+		mlvl_priors = self.prior_generator.grid_priors(
+			featmap_sizes,
+			dtype=cls_scores[0].dtype,
+			device=cls_scores[0].device,
+			with_stride=True)
+		flatten_priors = torch.cat(mlvl_priors)
+
 		kpt_pred = kpt_offsets[0].new_zeros(kpt_offsets[0].shape[:2]) #[batch, 15*2]
 		for kpt_offset in kpt_offsets:
 			kpt_pred+=self.avgpool(kpt_offset).view(kpt_pred.shape)
 
-		kpt_3d_pred_0 = self.simple_yet_effective_baseline_0(kpt_pred)
-		kpt_3d_pred_1 = self.simple_yet_effective_baseline_1(kpt_3d_pred_0)
-		kpt_3d_pred_2 = self.simple_yet_effective_baseline_2(kpt_3d_pred_1+kpt_3d_pred_0)
-		kpt_3d_pred_3 = self.simple_yet_effective_baseline_3(kpt_3d_pred_2+kpt_3d_pred_1)
+		flatten_stride = torch.cat(mlvl_strides)
+		flatten_kpt_offsets = self._flatten_predictions(kpt_offsets)
+
+		flatten_kpt_reg = self.decode_kpt_reg(flatten_kpt_offsets,
+												flatten_priors, flatten_stride)
 
 
 

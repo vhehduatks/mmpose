@@ -54,6 +54,7 @@ class Egoposecodec(BaseKeypointCodec):
 		# Crop image
 		cropped_depthmap = depthmap[ymin:ymax+1, xmin:xmax+1]
 
+		
 		encoded = {}
 		encoded['depthmap'] = cropped_depthmap
 		encoded['lifting_target'] = keypoints_3d
