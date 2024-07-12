@@ -16,10 +16,12 @@ from .udp_heatmap import UDPHeatmap
 from .video_pose_lifting import VideoPoseLifting
 from .custom_codecs import Egoposecodec
 
+from .custom_msra_heatmap import Custom_MSRAHeatmap
+
 __all__ = [
     'MSRAHeatmap', 'MegviiHeatmap', 'UDPHeatmap', 'RegressionLabel',
     'SimCCLabel', 'IntegralRegressionLabel', 'AssociativeEmbedding', 'SPR',
     'DecoupledHeatmap', 'VideoPoseLifting', 'ImagePoseLifting',
     'MotionBERTLabel', 'YOLOXPoseAnnotationProcessor', 'EDPoseLabel',
-    'Hand3DHeatmap', 'Egoposecodec'
+    'Hand3DHeatmap', 'Egoposecodec', 'Custom_MSRAHeatmap'
 ]

@@ -13,7 +13,7 @@ from ..functional import keypoint_mpjpe
 import re
 
 @METRICS.register_module()
-class MPJPE(BaseMetric):
+class Custom_MPJPE(BaseMetric):
     """MPJPE evaluation metric.
 
     Calculate the mean per-joint position error (MPJPE) of keypoints.

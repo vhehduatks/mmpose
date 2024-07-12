@@ -10,7 +10,7 @@ from mmpose.registry import METRICS
 from ..functional import (keypoint_auc, keypoint_epe, keypoint_nme,
                           keypoint_pck_accuracy)
 
-
+# TODO 3d 메트릭 +2D 메트릭 설정
 @METRICS.register_module()
 class PCKAccuracy(BaseMetric):
     """PCK accuracy evaluation metric.

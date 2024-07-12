@@ -113,7 +113,7 @@ model = dict(
 
 # base dataset settings
 dataset_type = 'Human36mDataset'
-data_root = 'data/h36m/'
+data_root = r'C:\Users\user\Documents\GitHub\mmpose\data\h36m'
 
 # pipelines
 train_pipeline = [
