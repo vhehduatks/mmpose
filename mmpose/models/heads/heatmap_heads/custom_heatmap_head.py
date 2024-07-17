@@ -22,6 +22,7 @@ OptIntSeq = Optional[Sequence[int]]
 
 ## A simple yet effective baseline for 3d human pose estimation
 '''
+https://github.com/vhehduatks/3d_pose_baseline_pytorch
 @inproceedings{martinez_2017_3dbaseline,
   title={A simple yet effective baseline for 3d human pose estimation},
   author={Martinez, Julieta and Hossain, Rayat and Romero, Javier and Little, James J.},
@@ -73,7 +74,6 @@ class LinearModel(nn.Module):
 				linear_size=1024,
 				num_stage=2,
 				p_dropout=0.5,
-				HMD_info = False,
 				):
         super(LinearModel, self).__init__()
 
@@ -82,7 +82,7 @@ class LinearModel(nn.Module):
         self.num_stage = num_stage
 
         # 2d joints
-        self.input_size =  17 * 2
+        self.input_size =  17 * 2 
         # 3d joints
         self.output_size = 17 * 3
 
@@ -343,6 +343,11 @@ class CustomHeatmapHead(BaseHead):
 			if not isinstance(args, tuple):
 				args = (args, )
 			return func(*args)
+		
+		def _sigmoid(x):
+			return 1 / (1 + np.exp(-x))
+		
+		MASK_TH = 0.3
 
 		if self.decoder is None:
 			raise RuntimeError(
@@ -363,14 +368,19 @@ class CustomHeatmapHead(BaseHead):
 			batch_keypoints = []
 			batch_scores = []
 			batch_visibility = []
+			batch_masked_keypoints =[]
 			for outputs in batch_output_np:
 				keypoints, scores = _pack_and_call(outputs,
 												   self.decoder.decode)
 				batch_keypoints.append(keypoints)
+				# scores = _sigmoid(scores)
 				if isinstance(scores, tuple) and len(scores) == 2:
 					batch_scores.append(scores[0])
 					batch_visibility.append(scores[1])
 				else:
+					mask = np.expand_dims((scores > MASK_TH),axis=-1)
+					masked_keypoints = keypoints * mask
+					batch_masked_keypoints.append(masked_keypoints)
 					batch_scores.append(scores)
 					batch_visibility.append(None)
 
@@ -379,19 +389,42 @@ class CustomHeatmapHead(BaseHead):
 
 
 		## HMD_info
-		
 		HMD_info = torch.cat([
 			d.gt_instance_labels.hmd_info for d in batch_data_samples
 		])
 		HMD_info = HMD_info.flatten(start_dim=1)
-		HMD_info = self.linear_9_to_34(HMD_info.to(torch.float32))
 		
 
-		## 3d baseline		
-		batch_3d_keypoints = torch.tensor(batch_keypoints,device=batch_outputs.device).squeeze().view(-1,34)
-		
-		batch_3d_keypoints = self.keypoints_3d_module(batch_3d_keypoints+HMD_info)
+		# ## 3d baseline
+		# input_size = 34
+		# batch_3d_keypoints = torch.tensor(batch_keypoints,device=batch_outputs.device).squeeze().view(-1,34)
 		# batch_3d_keypoints = self.keypoints_3d_module(batch_3d_keypoints)
+		# ##
+
+		# ## plus
+		## input_size = 34
+		# HMD_info = self.linear_9_to_34(HMD_info.to(torch.float32))
+		# batch_3d_keypoints = torch.tensor(batch_keypoints,device=batch_outputs.device).squeeze().view(-1,34)
+		# batch_3d_keypoints = self.keypoints_3d_module(batch_3d_keypoints+HMD_info)
+		# ##
+
+		# ## concat
+		## input_size = 34 + 9
+		# batch_3d_keypoints = torch.tensor(batch_keypoints,device=batch_outputs.device).squeeze().view(-1,34)
+		# concat_batch_3d_keypoints = torch.cat((batch_3d_keypoints,HMD_info),dim=1).to(torch.float32)
+		# batch_3d_keypoints = self.keypoints_3d_module(concat_batch_3d_keypoints)
+		# ##
+
+
+		## masking
+		# input_size = 34 + 9
+		batch_3d_keypoints = torch.tensor(batch_masked_keypoints,device=batch_outputs.device).squeeze().view(-1,34)
+		concat_batch_3d_keypoints = torch.cat((batch_3d_keypoints,HMD_info),dim=1).to(torch.float32)
+		batch_3d_keypoints = self.keypoints_3d_module(concat_batch_3d_keypoints)
+		##
+	
+		batch_3d_keypoints = batch_3d_keypoints
+		batch_3d_keypoints = batch_3d_keypoints.view(-1,17,3)
 		##
 
 		for keypoints, keypoint_3d, scores, visibility in zip(batch_keypoints, batch_3d_keypoints, batch_scores,
@@ -492,13 +525,10 @@ class CustomHeatmapHead(BaseHead):
 			d.gt_instance_labels.keypoint3d for d in batch_data_samples
 		])
 
-
-
-		gt_keypoint_3d = gt_keypoint_3d.view(-1,51)
-
-		
+		keypoint_weights_3d = keypoint_weights.unsqueeze(-1)
 		_,pred_batch_3d_keypoints = self.decode(pred_fields,batch_data_samples)
-		loss_3d = self.loss_3d_module(pred_batch_3d_keypoints.to(torch.double),gt_keypoint_3d.to(torch.double))
+		pred_batch_3d_keypoints = pred_batch_3d_keypoints.view(-1,17,3)
+		loss_3d = self.loss_3d_module(pred_batch_3d_keypoints.to(torch.double),gt_keypoint_3d.to(torch.double),keypoint_weights_3d)
 		##
 
 		# calculate losses

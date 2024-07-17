@@ -62,7 +62,7 @@ class Custom_MSRAHeatmap(BaseKeypointCodec):
 		# `head_size` is used for computing MpiiPCKAccuracy metric,
 		# namely, PCKh
 		head_size='head_size',
-		
+		keypoint3d = 'keypoint3d',
 		
 	)
 

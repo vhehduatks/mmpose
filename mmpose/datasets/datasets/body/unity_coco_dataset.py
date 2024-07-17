@@ -203,8 +203,9 @@ class UnityCocoDataset(BaseCocoStyleDataset):
 										bbox_info = origin + dimension  # This will give [x, y, w, h]
 
 						# Check if we found all required annotations
-						assert len(keypoints_info) and len(keypoint3d_info) and len(bbox_info)
-
+						if not isinstance(keypoints_info, list) or not isinstance(keypoint3d_info, list) or not isinstance(bbox_info, list):
+							return None
+							
 						keypoints_info=keypoints_info
 						keypoint3d_info=keypoint3d_info
 						bbox_info=bbox_info
@@ -245,9 +246,11 @@ class UnityCocoDataset(BaseCocoStyleDataset):
 				keypoints_visible.append(0)
 
 		# 3D 키포인트 정보 생성
-		for kp in keypoint3d_info:
-			if kp['label'] in valid_joint_names:
-				keypoint3d.extend(kp['location'])
+		for ordered_kp in valid_joint_names:
+			for kp in keypoint3d_info:
+				if kp['label'] == ordered_kp:
+					keypoint3d.append(kp['location'])
+	
 
 		keypoints = np.array(keypoints).reshape(1, -1, 2)
 		keypoints_visible = np.array(keypoints_visible).reshape(1, -1)
