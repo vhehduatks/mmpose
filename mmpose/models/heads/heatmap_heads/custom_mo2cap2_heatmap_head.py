@@ -82,9 +82,9 @@ class LinearModel(nn.Module):
         self.num_stage = num_stage
 
         # 2d joints
-        self.input_size =  17 * 2
+        self.input_size =  15 * 2
         # 3d joints
-        self.output_size = 17 * 3
+        self.output_size = 15 * 3
 
         # process input to linear size
         self.w1 = nn.Linear(self.input_size, self.linear_size)
@@ -118,7 +118,7 @@ class LinearModel(nn.Module):
 ##
 
 @MODELS.register_module()
-class CustomHeatmapHead(BaseHead):
+class CustomMo2Cap2HeatmapHead(BaseHead):
 	"""Top-down heatmap head introduced in `Simple Baselines`_ by Xiao et al
 	(2018). The head is composed of a few deconvolutional layers followed by a
 	convolutional layer to generate heatmaps from low-resolution feature maps.
@@ -232,7 +232,7 @@ class CustomHeatmapHead(BaseHead):
 			cfg = dict(
 				type='Conv2d',
 				in_channels=in_channels,
-				out_channels=out_channels,
+				out_channels=out_channels, # 요거가 heatmap 차원 결정
 				kernel_size=1)
 			cfg.update(final_layer)
 			self.final_layer = build_conv_layer(cfg)
@@ -389,12 +389,12 @@ class CustomHeatmapHead(BaseHead):
 		preds = []
 
 
-
+		# TODO : test pipeline에서 gt 가 없을 경우, 아니면 pipeline 상으로 통과할때 데이터셋의 hmd info를 추가해주는 pipeline 추가해야할 듯
 		## HMD_info
-		HMD_info = torch.cat([
-			d.gt_instance_labels.hmd_info for d in batch_data_samples
-		])
-		HMD_info = HMD_info.flatten(start_dim=1) # shape (batch_size,9)
+		# HMD_info = torch.cat([
+		# 	d.gt_instance_labels.hmd_info for d in batch_data_samples
+		# ])
+		# HMD_info = HMD_info.flatten(start_dim=1) # shape (batch_size,9)
 		
 
 		# ## 3d baseline
@@ -420,30 +420,35 @@ class CustomHeatmapHead(BaseHead):
 
 		## masking
 		# input_size = 34 + 9
-		# batch_3d_keypoints = torch.tensor(batch_masked_keypoints,device=batch_outputs.device).squeeze().view(-1,34)
+		
+		# TODO
+		# \custom_mo2cap2_heatmap_head.py:423: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at  C:\actions-runner\_work\pytorch\pytorch\builder\windows\pytorch\torch\csrc\utils\tensor_new.cpp:204.)
+		# batch_3d_keypoints = torch.tensor(batch_masked_keypoints,device=batch_outputs.device).squeeze().view(-1,30)
+	
+		batch_3d_keypoints = torch.tensor(batch_masked_keypoints,device=batch_outputs.device).squeeze().view(-1,30)
 		# concat_batch_3d_keypoints = torch.cat((batch_3d_keypoints,HMD_info),dim=1).to(torch.float32)
-		# batch_3d_keypoints = self.keypoints_3d_module(concat_batch_3d_keypoints)
+		batch_3d_keypoints = self.keypoints_3d_module(batch_3d_keypoints)
 		##
 
 		## masking + input origin
 		# input_size = 17 * 2(with masking), output = 17 * 3 인데 0,9,10을 바꿔치기
-		batch_3d_keypoints = torch.tensor(batch_masked_keypoints,device=batch_outputs.device).squeeze().view(-1,34)
-		batch_3d_keypoints = self.keypoints_3d_module(batch_3d_keypoints)
-		# HMD_info = HMD_info.view(-1,3,3) # 0,9,10 # shape (batch_size,3,3)
-		nose = HMD_info[:,:3]
-		left_wrist = HMD_info[:,3:6]
-		right_wrist = HMD_info[:,6:]
-		batch_3d_keypoints[:, :3] = nose
-		batch_3d_keypoints[:, 27:30] = left_wrist
-		batch_3d_keypoints[:, 30:33] = right_wrist
-		##
+		# batch_3d_keypoints = torch.tensor(batch_masked_keypoints,device=batch_outputs.device).squeeze().view(-1,30)
+		# batch_3d_keypoints = self.keypoints_3d_module(batch_3d_keypoints)
+		# # HMD_info = HMD_info.view(-1,3,3) # 0,9,10 # shape (batch_size,3,3)
+		# Neck = HMD_info[:,:3]
+		# RightHand = HMD_info[:,3:6]
+		# LeftHand = HMD_info[:,6:]
+		# batch_3d_keypoints[:, :3] = Neck
+		# batch_3d_keypoints[:, 10:13] = RightHand
+		# batch_3d_keypoints[:, 19:22] = LeftHand
+		# ##
 
 		## add linear
-		HMD_info = self.linear_9_to_51(HMD_info.to(torch.float32))
-		batch_3d_keypoints += HMD_info
+		# HMD_info = self.linear_9_to_51(HMD_info.to(torch.float32))
+		# batch_3d_keypoints += HMD_info
 		##
 
-		batch_3d_keypoints = batch_3d_keypoints.view(-1,17,3)
+		batch_3d_keypoints = batch_3d_keypoints.view(-1,15,3)
 
 		for keypoints, keypoint_3d, scores, visibility in zip(batch_keypoints, batch_3d_keypoints, batch_scores,
 												 batch_visibility):
@@ -545,7 +550,7 @@ class CustomHeatmapHead(BaseHead):
 
 		keypoint_weights_3d = keypoint_weights.unsqueeze(-1)
 		_,pred_batch_3d_keypoints = self.decode(pred_fields,batch_data_samples)
-		pred_batch_3d_keypoints = pred_batch_3d_keypoints.view(-1,17,3)
+		pred_batch_3d_keypoints = pred_batch_3d_keypoints.view(-1,15,3)
 		loss_3d = self.loss_3d_module(pred_batch_3d_keypoints.to(torch.double),gt_keypoint_3d.to(torch.double),keypoint_weights_3d)
 		##
 

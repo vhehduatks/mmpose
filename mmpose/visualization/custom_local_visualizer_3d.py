@@ -85,7 +85,7 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 							  axis_limit: float = 1.7,
 							  axis_dist: float = 10.0,
 							  axis_elev: float = 15.0,
-							  show_kpt_idx: bool = False,
+							  show_kpt_idx: bool = True,
 							  scores_2d: Optional[np.ndarray] = None):
 		"""Draw keypoints and skeletons (optional) of GT or prediction.
 
@@ -236,6 +236,10 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 		# if 'keypoints' in pred_instances:
 		# 	keypoints = pred_instances.get('keypoints',
 		# 								   pred_instances.keypoints)
+		## mo2cap2 joint modify
+		## re scale,
+		##
+
 
 		if 'keypoint_3d' in pred_instances:
 			keypoints = pred_instances.get('keypoint_3d', pred_instances.keypoint_3d)
@@ -323,7 +327,7 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 							 image: np.ndarray,
 							 instances: InstanceData,
 							 kpt_thr: float = 0.3,
-							 show_kpt_idx: bool = False,
+							 show_kpt_idx: bool = True,
 							 skeleton_style: str = 'mmpose'):
 		"""Draw keypoints and skeletons (optional) of GT or prediction.
 

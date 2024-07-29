@@ -22,8 +22,10 @@ from mmpose.registry import KEYPOINT_CODECS, MODELS
 from mmpose.utils.typing import (ConfigType, Features, OptConfigType,
 								 OptSampleList, Predictions, InstanceList)
 
+from . import mo2cap2_evaluate
+
 @METRICS.register_module()
-class CustomCocoMetric(BaseMetric):
+class CustomMo2Cap2Metric(BaseMetric):
 	"""COCO pose estimation task evaluation metric.
 
 	Evaluate AR, AP, and mAP for keypoint detection tasks. Support COCO
@@ -95,10 +97,11 @@ class CustomCocoMetric(BaseMetric):
 			If prefix is not provided in the argument, ``self.default_prefix``
 			will be used instead. Defaults to ``None``
 	"""
-	default_prefix: Optional[str] = 'coco'
+	default_prefix: Optional[str] = 'mo2cap2'
 
 	def __init__(self,
 				ann_file: Optional[str] = None,
+				use_action: bool = False,
 				use_area: bool = True,
 				iou_type: str = 'keypoints',
 				score_mode: str = 'bbox_keypoint',
@@ -161,6 +164,14 @@ class CustomCocoMetric(BaseMetric):
 		self.loss_3d_module = MODELS.build(loss_3d)
 		##
 
+		## mo2cap2 baseline
+		self.use_action = use_action
+		self.eval_body = mo2cap2_evaluate.EvalBody(mode='mo2cap2')
+		self.eval_upper = mo2cap2_evaluate.EvalUpperBody(mode='mo2cap2')
+		self.eval_lower = mo2cap2_evaluate.EvalLowerBody(mode='mo2cap2')
+		self.eval_per_joint = mo2cap2_evaluate.EvalPerJoint(mode='mo2cap2')
+		##
+
 
 	@property
 	def dataset_meta(self) -> Optional[dict]:
@@ -178,16 +189,17 @@ class CustomCocoMetric(BaseMetric):
 		self._dataset_meta = dataset_meta
 
 		if self.coco is None:
-			message = MessageHub.get_current_instance()
-			ann_file = message.get_info(
-				f"{dataset_meta['dataset_name']}_ann_file", None)
-			if ann_file is not None:
-				with get_local_path(ann_file) as local_path:
-					self.coco = COCO(local_path)
-				print_log(
-					f'CocoMetric for dataset '
-					f"{dataset_meta['dataset_name']} has successfully "
-					f'loaded the annotation file from {ann_file}', 'current')
+			pass
+			# message = MessageHub.get_current_instance()
+			# ann_file = message.get_info(
+			# 	f"{dataset_meta['dataset_name']}_ann_file", None)
+			# if ann_file is not None:
+			# 	with get_local_path(ann_file) as local_path:
+			# 		self.coco = COCO(local_path)
+			# 	print_log(
+			# 		f'CocoMetric for dataset '
+			# 		f"{dataset_meta['dataset_name']} has successfully "
+			# 		f'loaded the annotation file from {ann_file}', 'current')
 
 	def process(self, data_batch: Sequence[dict],
 				data_samples: Sequence[dict]) -> None:
@@ -277,6 +289,12 @@ class CustomCocoMetric(BaseMetric):
 			## 3d baseline
 			gt['keypoint3d'] = data_sample['gt_instance_labels']['keypoint3d']
 			##
+
+			## mo2cap2
+			if self.use_action:
+				gt['action'] = data_sample['gt_instances']['action'][0]
+			##
+
 
 ## TODO metric 수정할 것 gt , pred 둘다 data_sample에 있ㅇ므
 			# add converted result to the results list
@@ -383,6 +401,9 @@ class CustomCocoMetric(BaseMetric):
 		converted_json_path = f'{outfile_prefix}.gt.json'
 		dump(coco_json, converted_json_path, sort_keys=True, indent=4)
 		return converted_json_path
+	
+
+
 #TODO : 이거 egostan evaluate compute_metrics 사용해서 배치당 에러 dict에 저장 (process에서 pred,gt 정리해서 result에 저장후 이걸 compute_metrics에서 계산함)
 	def compute_metrics(self, results: list) -> Dict[str, float]:
 		"""Compute the metrics from processed results.
@@ -398,127 +419,132 @@ class CustomCocoMetric(BaseMetric):
 
 		# split prediction and gt list
 		preds, gts = zip(*results)
+		#TODO : 그냥 싹다 지우고 mo2cap2 부분만 남기면 될듯
+		# tmp_dir = None
+		# if self.outfile_prefix is None:
+		# 	tmp_dir = tempfile.TemporaryDirectory()
+		# 	outfile_prefix = osp.join(tmp_dir.name, 'results')
+		# else:
+		# 	outfile_prefix = self.outfile_prefix
 
-		tmp_dir = None
-		if self.outfile_prefix is None:
-			tmp_dir = tempfile.TemporaryDirectory()
-			outfile_prefix = osp.join(tmp_dir.name, 'results')
-		else:
-			outfile_prefix = self.outfile_prefix
+		# if self.coco is None:
+		# 	# use converted gt json file to initialize coco helper
+		# 	logger.info('Converting ground truth to coco format...')
+		# 	coco_json_path = self.gt_to_coco_json(
+		# 		gt_dicts=gts, outfile_prefix=outfile_prefix)
+		# 	self.coco = COCO(coco_json_path)
+		# if self.gt_converter is not None:
+		# 	for id_, ann in self.coco.anns.items():
+		# 		self.coco.anns[id_] = transform_ann(
+		# 			ann, self.gt_converter['num_keypoints'],
+		# 			self.gt_converter['mapping'])
 
-		if self.coco is None:
-			# use converted gt json file to initialize coco helper
-			logger.info('Converting ground truth to coco format...')
-			coco_json_path = self.gt_to_coco_json(
-				gt_dicts=gts, outfile_prefix=outfile_prefix)
-			self.coco = COCO(coco_json_path)
-		if self.gt_converter is not None:
-			for id_, ann in self.coco.anns.items():
-				self.coco.anns[id_] = transform_ann(
-					ann, self.gt_converter['num_keypoints'],
-					self.gt_converter['mapping'])
+		# kpts = defaultdict(list)
 
-		kpts = defaultdict(list)
+		# # group the preds by img_id
+		# for pred in preds:
+		# 	img_id = pred['img_id']
 
-		# group the preds by img_id
-		for pred in preds:
-			img_id = pred['img_id']
+		# 	if self.pred_converter is not None:
+		# 		pred = transform_pred(pred,
+		# 							  self.pred_converter['num_keypoints'],
+		# 							  self.pred_converter['mapping'])
 
-			if self.pred_converter is not None:
-				pred = transform_pred(pred,
-									  self.pred_converter['num_keypoints'],
-									  self.pred_converter['mapping'])
+		# 	for idx, keypoints in enumerate(pred['keypoints']):
 
-			for idx, keypoints in enumerate(pred['keypoints']):
+		# 		instance = {
+		# 			'id': pred['id'],
+		# 			'img_id': pred['img_id'],
+		# 			'category_id': pred['category_id'],
+		# 			'keypoints': keypoints,
+		# 			'keypoint_scores': pred['keypoint_scores'][idx],
+		# 			'bbox_score': pred['bbox_scores'][idx],
+		# 		}
+		# 		if 'bbox' in pred:
+		# 			instance['bbox'] = pred['bbox'][idx]
 
-				instance = {
-					'id': pred['id'],
-					'img_id': pred['img_id'],
-					'category_id': pred['category_id'],
-					'keypoints': keypoints,
-					'keypoint_scores': pred['keypoint_scores'][idx],
-					'bbox_score': pred['bbox_scores'][idx],
-				}
-				if 'bbox' in pred:
-					instance['bbox'] = pred['bbox'][idx]
+		# 		if 'areas' in pred:
+		# 			instance['area'] = pred['areas'][idx]
+		# 		else:
+		# 			# use keypoint to calculate bbox and get area
+		# 			area = (
+		# 				np.max(keypoints[:, 0]) - np.min(keypoints[:, 0])) * (
+		# 					np.max(keypoints[:, 1]) - np.min(keypoints[:, 1]))
+		# 			instance['area'] = area
 
-				if 'areas' in pred:
-					instance['area'] = pred['areas'][idx]
-				else:
-					# use keypoint to calculate bbox and get area
-					area = (
-						np.max(keypoints[:, 0]) - np.min(keypoints[:, 0])) * (
-							np.max(keypoints[:, 1]) - np.min(keypoints[:, 1]))
-					instance['area'] = area
+		# 		kpts[img_id].append(instance)
 
-				kpts[img_id].append(instance)
+		# # sort keypoint results according to id and remove duplicate ones
+		# kpts = self._sort_and_unique_bboxes(kpts, key='id')
 
-		# sort keypoint results according to id and remove duplicate ones
-		kpts = self._sort_and_unique_bboxes(kpts, key='id')
+		# # score the prediction results according to `score_mode`
+		# # and perform NMS according to `nms_mode`
+		# valid_kpts = defaultdict(list)
+		# if self.pred_converter is not None:
+		# 	num_keypoints = self.pred_converter['num_keypoints']
+		# else:
+		# 	num_keypoints = self.dataset_meta['num_keypoints']
+		# for img_id, instances in kpts.items():
+		# 	for instance in instances:
+		# 		# concatenate the keypoint coordinates and scores
+		# 		instance['keypoints'] = np.concatenate([
+		# 			instance['keypoints'], instance['keypoint_scores'][:, None]
+		# 		],
+		# 											   axis=-1)
+		# 		if self.score_mode == 'bbox':
+		# 			instance['score'] = instance['bbox_score']
+		# 		elif self.score_mode == 'keypoint':
+		# 			instance['score'] = np.mean(instance['keypoint_scores'])
+		# 		else:
+		# 			bbox_score = instance['bbox_score']
+		# 			if self.score_mode == 'bbox_rle':
+		# 				keypoint_scores = instance['keypoint_scores']
+		# 				instance['score'] = float(bbox_score +
+		# 										  np.mean(keypoint_scores) +
+		# 										  np.max(keypoint_scores))
 
-		# score the prediction results according to `score_mode`
-		# and perform NMS according to `nms_mode`
-		valid_kpts = defaultdict(list)
-		if self.pred_converter is not None:
-			num_keypoints = self.pred_converter['num_keypoints']
-		else:
-			num_keypoints = self.dataset_meta['num_keypoints']
-		for img_id, instances in kpts.items():
-			for instance in instances:
-				# concatenate the keypoint coordinates and scores
-				instance['keypoints'] = np.concatenate([
-					instance['keypoints'], instance['keypoint_scores'][:, None]
-				],
-													   axis=-1)
-				if self.score_mode == 'bbox':
-					instance['score'] = instance['bbox_score']
-				elif self.score_mode == 'keypoint':
-					instance['score'] = np.mean(instance['keypoint_scores'])
-				else:
-					bbox_score = instance['bbox_score']
-					if self.score_mode == 'bbox_rle':
-						keypoint_scores = instance['keypoint_scores']
-						instance['score'] = float(bbox_score +
-												  np.mean(keypoint_scores) +
-												  np.max(keypoint_scores))
+		# 			else:  # self.score_mode == 'bbox_keypoint':
+		# 				mean_kpt_score = 0
+		# 				valid_num = 0
+		# 				for kpt_idx in range(num_keypoints):
+		# 					kpt_score = instance['keypoint_scores'][kpt_idx]
+		# 					if kpt_score > self.keypoint_score_thr:
+		# 						mean_kpt_score += kpt_score
+		# 						valid_num += 1
+		# 				if valid_num != 0:
+		# 					mean_kpt_score /= valid_num
+		# 				instance['score'] = bbox_score * mean_kpt_score
+		# 	# perform nms
+		# 	if self.nms_mode == 'none':
+		# 		valid_kpts[img_id] = instances
+		# 	else:
+		# 		nms = oks_nms if self.nms_mode == 'oks_nms' else soft_oks_nms
+		# 		keep = nms(
+		# 			instances,
+		# 			self.nms_thr,
+		# 			sigmas=self.dataset_meta['sigmas'])
+		# 		valid_kpts[img_id] = [instances[_keep] for _keep in keep]
 
-					else:  # self.score_mode == 'bbox_keypoint':
-						mean_kpt_score = 0
-						valid_num = 0
-						for kpt_idx in range(num_keypoints):
-							kpt_score = instance['keypoint_scores'][kpt_idx]
-							if kpt_score > self.keypoint_score_thr:
-								mean_kpt_score += kpt_score
-								valid_num += 1
-						if valid_num != 0:
-							mean_kpt_score /= valid_num
-						instance['score'] = bbox_score * mean_kpt_score
-			# perform nms
-			if self.nms_mode == 'none':
-				valid_kpts[img_id] = instances
-			else:
-				nms = oks_nms if self.nms_mode == 'oks_nms' else soft_oks_nms
-				keep = nms(
-					instances,
-					self.nms_thr,
-					sigmas=self.dataset_meta['sigmas'])
-				valid_kpts[img_id] = [instances[_keep] for _keep in keep]
+		# # convert results to coco style and dump into a json file
+		# self.results2json(valid_kpts, outfile_prefix=outfile_prefix)
 
-		# convert results to coco style and dump into a json file
-		self.results2json(valid_kpts, outfile_prefix=outfile_prefix)
-
-		# only format the results without doing quantitative evaluation
-		if self.format_only:
-			logger.info('results are saved in '
-						f'{osp.dirname(outfile_prefix)}')
-			return {}
+		# # only format the results without doing quantitative evaluation
+		# if self.format_only:
+		# 	logger.info('results are saved in '
+		# 				f'{osp.dirname(outfile_prefix)}')
+		# 	return {}
 
 		## 3d baseline
 		pred_batch_3d_keypoints = []
 		gt_batch_keypoint_3d = []
+		# if self.use_action:
+		batch_actions = []
+
 		for pred_, gt_ in zip(preds,gts):
 			pred_batch_3d_keypoints.append(pred_['keypoint3d'])
 			gt_batch_keypoint_3d.append(gt_['keypoint3d'])
+			if self.use_action:
+				batch_actions.append(gt_['action'])
 		
 		pred_batch_3d_keypoints = torch.stack(pred_batch_3d_keypoints).squeeze()
 		gt_batch_keypoint_3d = torch.stack(gt_batch_keypoint_3d).squeeze()
@@ -527,16 +553,58 @@ class CustomCocoMetric(BaseMetric):
 		MPJPELoss = {'MPJPELoss' : loss_3d}
 		##
 
+		##mo2cap2 baseline
+		self.eval_body.eval(pred_batch_3d_keypoints, gt_batch_keypoint_3d, batch_actions, use_action_ = self.use_action)
+		self.eval_upper.eval(pred_batch_3d_keypoints, gt_batch_keypoint_3d, batch_actions, use_action_ = self.use_action)
+		self.eval_lower.eval(pred_batch_3d_keypoints, gt_batch_keypoint_3d, batch_actions, use_action_ = self.use_action)
+		self.eval_per_joint.eval(pred_batch_3d_keypoints, gt_batch_keypoint_3d)
+
+		test_mpjpe = self.eval_body.get_results()
+		test_mpjpe_upper = self.eval_upper.get_results()
+		test_mpjpe_lower = self.eval_lower.get_results()
+		test_mpjpe_per_joint = self.eval_per_joint.get_results()
+
+
+		'''
+		coco/Full Body: {
+		'All': {'mpjpe': 206.74012547793745, 'std_mpjpe': 2.3492799070270713, 'num_samples': 34},
+		'walking': {'mpjpe': 206.74012547793745, 'std_mpjpe': 2.3492799070270713, 'num_samples': 34}
+		}
+		coco/Upper Body: {'All': {'mpjpe': 98.853390965369, 'std_mpjpe': 1.8284284966864535, 'num_samples': 34}, 'walking': {'mpjpe': 98.853390965369, 'std_mpjpe': 1.8284284966864535, 'num_samples': 34}}  coco/Lower Body: {'All': {'mpjpe': 301.1410181764348, 'std_mpjpe': 4.4306975170390555, 'num_samples': 34}, 'walking': {'mpjpe': 301.1410181764348, 'std_mpjpe': 4.4306975170390555, 'num_samples': 34}} 
+		coco/Per Joint: 
+		[ 89.73435511  55.46927861  56.26292247  93.79446133 121.92435555
+		146.15558961 128.6327741  145.93864229 268.94727702 381.7553911
+		398.04040747 153.16333653 276.8626541  384.93890462 399.48153228]
+		'''
+
+		mo2cap2_results = {
+			"Full Body": test_mpjpe,
+			"Upper Body": test_mpjpe_upper,
+			"Lower Body": test_mpjpe_lower,
+			"Per Joint": test_mpjpe_per_joint
+		}
+		# TODO : 전체결과는 저장하고 mpjpe 는 wandb로
+		# mo2cap2_evaluate.create_results_csv(mo2cap2_results)
+		##
+		wandb_results = OrderedDict()
+		for k,v in mo2cap2_results.items():
+			loss_name = k
+			if k == 'Per Joint': continue
+			for k_,v_ in v.items():
+				loss_name += f'_{k_}_mpjpe'
+				wandb_results.update({loss_name:v_['mpjpe']})
+
 		# evaluation results
 		eval_results = OrderedDict()
 		logger.info(f'Evaluating {self.__class__.__name__}...')
-		info_str = self._do_python_keypoint_eval(outfile_prefix)
-		name_value = OrderedDict(info_str)
-		eval_results.update(name_value)
+		# info_str = self._do_python_keypoint_eval(outfile_prefix)
+		# name_value = OrderedDict(info_str)
+		# eval_results.update(name_value)
 		eval_results.update(MPJPELoss)
+		eval_results.update(wandb_results)
 
-		if tmp_dir is not None:
-			tmp_dir.cleanup()
+		# if tmp_dir is not None:
+		# 	tmp_dir.cleanup()
 		return eval_results
 
 	def results2json(self, keypoints: Dict[int, list],

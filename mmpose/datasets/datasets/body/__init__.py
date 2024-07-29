@@ -14,10 +14,11 @@ from .posetrack18_dataset import PoseTrack18Dataset
 from .posetrack18_video_dataset import PoseTrack18VideoDataset
 
 from .unity_coco_dataset import UnityCocoDataset
+from .mo2cap2_coco_dataset import Mo2Cap2CocoDataset
 
 __all__ = [
     'CocoDataset', 'MpiiDataset', 'MpiiTrbDataset', 'AicDataset',
     'CrowdPoseDataset', 'OCHumanDataset', 'MhpDataset', 'PoseTrack18Dataset',
     'JhmdbDataset', 'PoseTrack18VideoDataset', 'HumanArtDataset',
-    'HumanArt21Dataset', 'ExlposeDataset', 'UnityCocoDataset'
+    'HumanArt21Dataset', 'ExlposeDataset', 'UnityCocoDataset', 'Mo2Cap2CocoDataset'
 ]

@@ -17,11 +17,12 @@ from .video_pose_lifting import VideoPoseLifting
 from .custom_codecs import Egoposecodec
 
 from .custom_msra_heatmap import Custom_MSRAHeatmap
+from .custom_mo2cap2_msra_heatmap import Custom_mo2cap2_MSRAHeatmap
 
 __all__ = [
     'MSRAHeatmap', 'MegviiHeatmap', 'UDPHeatmap', 'RegressionLabel',
     'SimCCLabel', 'IntegralRegressionLabel', 'AssociativeEmbedding', 'SPR',
     'DecoupledHeatmap', 'VideoPoseLifting', 'ImagePoseLifting',
     'MotionBERTLabel', 'YOLOXPoseAnnotationProcessor', 'EDPoseLabel',
-    'Hand3DHeatmap', 'Egoposecodec', 'Custom_MSRAHeatmap'
+    'Hand3DHeatmap', 'Egoposecodec', 'Custom_MSRAHeatmap', 'Custom_mo2cap2_MSRAHeatmap'
 ]

@@ -31,7 +31,7 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 	# METAPATH = r'C:\Users\user\Documents\GitHub\mmpose\temp_modify\HMD_metainfo\annotation_definitions.json'
 	# with open(METAPATH,'r') as _meta:
 	# 	METAINFO: dict = json.load(_meta)
-	METAINFO: dict = dict(from_file='configs/_base_/datasets/coco.py')
+	METAINFO: dict = dict(from_file=r'C:\Users\user\Documents\GitHub\mmpose\configs\_base_\datasets\custom_mo2cap2.py')
 
 	MM_TO_M = 1000
 
@@ -145,36 +145,37 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 		return data_files
 
 	def _index_dir(self, path):
-
 		indexed_paths = {
 			'rgba': [],
-			'depth': [],
+			# 'depth': [],
 			'frame_data': [],
-			'segmentation': []
+			# 'segmentation': []
 		}
 
 		for root, dirs, files in os.walk(path):
-			if root.split(os.path.sep)[-1].startswith('sequence.'):
+			# if self.test_mode:
+			# 	if root.split(os.path.sep)[-1].startswith('olek') or root.split(os.path.sep)[-1].startswith('weipeng'):
+			# else:
+			# 	if root.split(os.path.sep)[-1].startswith('mo2cap2_'):
+			# 		pass
+
+			if root.split(os.path.sep)[-1].startswith('json') or root.split(os.path.sep)[-1].startswith('rgba'):
 				for file in files:
 					full_path = os.path.join(root, file)
-					if file.endswith('camera.png'):
+					if file.endswith('.png'):
 						indexed_paths['rgba'].append(full_path.encode('utf8'))
-					elif file.endswith('Depth.exr'):
-						indexed_paths['depth'].append(full_path.encode('utf8'))
-					elif file.endswith('frame_data.json'):
+					elif file.endswith('.json'):
 						indexed_paths['frame_data'].append(full_path.encode('utf8'))
-					elif file.endswith('instance segmentation.png'):
-						indexed_paths['segmentation'].append(full_path.encode('utf8'))
+
 
 		return indexed_paths
 
 
-	def parse_data_info(self, _rgba, _depth, _segmentation, _frame_data) -> Optional[dict]:
+	def parse_data_info(self, _rgba, _frame_data) -> Optional[dict]:
 		# JSON 파일 읽기
 		_rgba = _rgba.decode('utf8')
-		_depth = _depth.decode('utf8')
-		_segmentation = _segmentation.decode('utf8')
 		_frame_data = _frame_data.decode('utf8')
+
 		try:
 			with open(_frame_data, 'r') as f:
 				frame_data = json.load(f)
@@ -185,108 +186,139 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 			print(f"Error: Invalid JSON format in file - {_frame_data}")
 			return None
 		try:
-			for _cap in frame_data['captures']:
-				if isinstance(_cap, dict):
-					if isinstance(_cap['annotations'], list):
-						keypoints_info = None
-						keypoint3d_info = None
-						bbox_info = None
 
-						for _ann in _cap['annotations']:
-							if isinstance(_ann, dict):
-								if _ann.get('@type', '').endswith('KeypointAnnotation'):
-									keypoints_info = _ann.get('values', [{}])[0].get('keypoints')
-								elif _ann.get('@type', '').endswith('Keypoint3dAnnotation'):
-									keypoint3d_info = _ann.get('keypoints', [{}])[0].get('keypoints')
-								elif _ann.get('@type', '').endswith('BoundingBox2DAnnotation'):
-									bbox_values = _ann.get('values', [{}])[0]
-									origin = bbox_values.get('origin', [])
-									dimension = bbox_values.get('dimension', [])
-									if origin and dimension:
-										bbox_info = origin + dimension  # This will give [x, y, w, h]
+			p2d = np.zeros((15, 2))
+			p3d = np.zeros((15, 3))
 
-						# Check if we found all required annotations
-						if not isinstance(keypoints_info, list) or not isinstance(keypoint3d_info, list) or not isinstance(bbox_info, list):
-							return None
-							
-						keypoints_info=keypoints_info
-						keypoint3d_info=keypoint3d_info
-						bbox_info=bbox_info
+			joint_names = []
+			for key in frame_data.keys():
+				if key not in ['action', 'Head']: # keys to skip from json
+					joint_names.append(key)
 
 
+			x_min, y_min = 300,300
+			x_max, y_max = 0,0
+			# TODO : joint_names 순서랑 metainfo 순서랑 다름. 순서확인할것 joint_names 배열 순서 수정할 것 metainfo 있는걸로
+			# 근데 왜 visuall hook에는 예측된 2d 가 정상으로 보이지?
+			for jid, joint_name in enumerate(joint_names):
+				p2d[jid][0] = frame_data[joint_name]['2d'][0] - 33
+				p2d[jid][1] = frame_data[joint_name]['2d'][1]
+				# if frame_data[joint_name]['2d'][0] < x_min: x_min = frame_data[joint_name]['2d'][0]
+				# if frame_data[joint_name]['2d'][1] < y_min: y_min = frame_data[joint_name]['2d'][1]
+				# if frame_data[joint_name]['2d'][0] > x_max: x_max = frame_data[joint_name]['2d'][0]
+				# if frame_data[joint_name]['2d'][1] > y_max: y_max = frame_data[joint_name]['2d'][1]
+				
+				p3d[jid][0] = frame_data[joint_name]['3d'][0]
+				p3d[jid][1] = frame_data[joint_name]['3d'][1]
+				p3d[jid][2] = frame_data[joint_name]['3d'][2]
 
-			x_min, y_min = bbox_info[:2]
-			w, h = bbox_info[2:]
-			x_max, y_max = x_min + w, y_min + h
-			bbox = np.array([x_min, y_min, x_max, y_max])
+	
+			
+			p3d /= self.MM_TO_M
+			
+			# bbox = np.array([x_min-10, y_min-10, x_max+10, y_max+10])
+			# bbox = np.clip(bbox,0,256)
+			# 어차피 mo2cap2 dataset의 testset에는 2차원 keypoint에 대한 정보가 없음. 그냥 이미지 전체가 bbox로 취급
+			# TODO : 이거 bbox 가 달라짐(test set 이미지의 크기가1280x1024이고 , trainset의  이미지 크기는 256x256임)
+			if self.test_mode:
+				#img = img[:, 180:1120, :] # no-crop
+				bbox = np.array([180,0,1120,1024]) #xyxy
+				# bbox = np.array([0,0,1280,1024]) #xyxy
+		
+			else:
+				bbox = np.array([0,0,256,256])
 			bbox = bbox[np.newaxis,:]
 
 		except KeyError as e:
 			print(f'Error: key{e}')
 			return None
 
-		# 사용할 joint_name 목록 생성
-		valid_joint_names = []
-		for k,v in self.metainfo['keypoint_id2name'].items():
-			if v=='nose' : valid_joint_names.append(v)
-			elif '_' in v :
-				temp_joint_ = v.split('_')
-				valid_joint_names.append(temp_joint_[-1]+'_'+temp_joint_[0])
-		assert valid_joint_names 
-		# 키포인트 및 가시성 정보 생성
-		keypoints = []
-		keypoints_visible = []
-		keypoint3d = []
-		num_keypoints = 0
+		def extract_and_combine_numbers(file_path):
+			# Split the file path by the directory separator
+			parts = file_path.split('\\')
+			file_part = parts[-1]
+			if self.test_mode:
+				if 'olek_outdoor' in parts: # fc2_save_2017-10-11-135418-0538
+					file_number = file_part.split('-')[-1].split('.')[0].lstrip('0')
+					state_number = file_part.split('-')[-2].lstrip('0')
+				elif 'weipeng_studio' in parts: # frame_c_0_f_0387
+					file_number = file_part.split('_')[-1].split('.')[0].lstrip('0')
+					state_number = ''
+			else:	
+				# Extract the numbers and strip leading zeros
+				file_number = file_part.split('_')[-1].split('.')[0].lstrip('0')
+				state_number = file_part.split('_')[-2].lstrip('0')
 
-		for kp in keypoints_info:
-			if kp['state'] != 0:
-				keypoints.extend(kp['location'])
-				keypoints_visible.append(1)
-				num_keypoints += 1
-			else:
-				keypoints.extend([0, 0])
-				keypoints_visible.append(0)
+			# Combine the numbers
+			try:
+				combined_number = int(state_number + file_number)
+			except Exception as e:
+				print(e)
+			return combined_number
 
-		# 3D 키포인트 정보 생성
-		for ordered_kp in valid_joint_names:
-			for kp in keypoint3d_info:
-				if kp['label'] == ordered_kp:
-					keypoint3d.append(kp['location'])
-	
+		img_id = extract_and_combine_numbers(_frame_data)
 
+
+		keypoints = p2d
+		keypoints_visible = np.ones((1,15),dtype=np.float32)
+		keypoint3d = p3d
 		keypoints = np.array(keypoints).reshape(1, -1, 2)
-		keypoints_visible = np.array(keypoints_visible).reshape(1, -1)
 		keypoint3d = np.array(keypoint3d).reshape(1, -1, 3)
 
 		area = np.clip((x_max - x_min) * (y_max  - y_min) * 0.53, a_min=1.0, a_max=None)
 		area = np.array(area, dtype=np.float32)
 
 		# data_info 딕셔너리 생성
-		data_info = {
-			'img_id': frame_data['frame'],
-			'img_path': _rgba,
-			'depth_path': _depth,
-			'segmentation_path': _segmentation,
-			'num_keypoints': num_keypoints,
-			'keypoints': keypoints,
-			'keypoints_visible': keypoints_visible,
-			'keypoint3d': keypoint3d,
-			'bbox' : bbox, 
-			'bbox_score': np.ones(1, dtype=np.float32),
-			'area': area,
-			'raw_ann_info':dict(
-					id=1,
-					image_id=frame_data['frame'],
-					category_id=np.ones(1, dtype=np.float32),
-					bbox=bbox,
-					keypoints=keypoints,
-					keypoint3d=keypoint3d,
-					iscrowd=0,
-					area=area,
-					num_keypoints = num_keypoints,
-				),
-		}
+		if self.test_mode:
+			data_info = {
+				'img_id': img_id,
+				'img_path': _rgba,
+				'num_keypoints': 15,
+				'keypoints': keypoints, # mo2cap test set 에는 2d keypoint가 0 임.
+				'keypoints_visible': keypoints_visible,
+				'keypoint3d': keypoint3d,
+				'action': [frame_data['action']],
+				'bbox' : bbox, 
+				'bbox_score': np.ones(1, dtype=np.float32),
+				'area': area,
+				'raw_ann_info':dict(
+						id=1,
+						image_id=img_id,
+						category_id=np.ones(1, dtype=np.float32),
+						# bbox=bbox,
+						# keypoints=keypoints,
+						keypoint3d=keypoint3d,
+						iscrowd=0,
+						# area=area,
+						num_keypoints = 15,
+					),
+			}
+		else:
+			data_info = {
+				'img_id': img_id,
+				'img_path': _rgba,
+				'depth_path': None,
+				'segmentation_path': None,
+				'num_keypoints': 15,
+				'keypoints': keypoints,
+				'keypoints_visible': keypoints_visible,
+				'keypoint3d': keypoint3d,
+				'bbox' : bbox, 
+				'bbox_score': np.ones(1, dtype=np.float32),
+				'area': area,
+				'raw_ann_info':dict(
+						id=1,
+						image_id=img_id,
+						category_id=np.ones(1, dtype=np.float32),
+						bbox=bbox,
+						keypoints=keypoints,
+						keypoint3d=keypoint3d,
+						iscrowd=0,
+						area=area,
+						num_keypoints = 15,
+					),
+			}
+
 
 		return data_info
 
@@ -308,11 +340,9 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 		instance_list = []
 		image_list = []
 
-		for _rgba, _depth, _segmentation, _frame_data in zip(self.index['rgba'],
-													   self.index['depth'],
-													   self.index['segmentation'],
+		for _rgba, _frame_data in zip(self.index['rgba'],
 													   self.index['frame_data']):
-			instance_info = self.parse_data_info(_rgba, _depth, _segmentation, _frame_data)
+			instance_info = self.parse_data_info(_rgba, _frame_data)
 
 				# skip invalid instance annotation.
 			if not instance_info:
@@ -332,7 +362,10 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 			instance_list, image_list = self._load_annotations()
 
 			if self.data_mode == 'topdown':
-				data_list = self._get_topdown_data_infos(instance_list)
+				if self.test_mode:
+					data_list = instance_list
+				else:
+					data_list = self._get_topdown_data_infos(instance_list)
 			else:
 				data_list = self._get_bottomup_data_infos(
 					instance_list, image_list)

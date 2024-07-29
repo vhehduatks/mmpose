@@ -7,9 +7,10 @@ from .internet_head import InternetHead
 from .mspn_head import MSPNHead
 from .vipnas_head import ViPNASHead
 from .custom_heatmap_head import CustomHeatmapHead
+from .custom_mo2cap2_heatmap_head import CustomMo2Cap2HeatmapHead
 
 __all__ = [
     'HeatmapHead', 'CPMHead', 'MSPNHead', 'ViPNASHead',
     'AssociativeEmbeddingHead', 'CIDHead', 'InternetHead',
-	'CustomHeatmapHead'
+	'CustomHeatmapHead', 'CustomMo2Cap2HeatmapHead'
 ]
