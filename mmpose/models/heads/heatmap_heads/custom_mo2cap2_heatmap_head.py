@@ -424,8 +424,14 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 		# TODO
 		# \custom_mo2cap2_heatmap_head.py:423: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at  C:\actions-runner\_work\pytorch\pytorch\builder\windows\pytorch\torch\csrc\utils\tensor_new.cpp:204.)
 		# batch_3d_keypoints = torch.tensor(batch_masked_keypoints,device=batch_outputs.device).squeeze().view(-1,30)
-	
-		batch_3d_keypoints = torch.tensor(batch_masked_keypoints,device=batch_outputs.device).squeeze().view(-1,30)
+		batch_masked_keypoints_np = np.array(batch_masked_keypoints)
+
+		# numpy 배열을 텐서로 변환
+		batch_3d_keypoints = torch.from_numpy(batch_masked_keypoints_np).to(device=batch_outputs.device)
+
+		# 필요한 경우 차원 조정
+		batch_3d_keypoints = batch_3d_keypoints.squeeze().view(-1, 30)
+		# batch_3d_keypoints = torch.tensor(batch_masked_keypoints,device=batch_outputs.device).squeeze().view(-1,30)
 		# concat_batch_3d_keypoints = torch.cat((batch_3d_keypoints,HMD_info),dim=1).to(torch.float32)
 		batch_3d_keypoints = self.keypoints_3d_module(batch_3d_keypoints)
 		##

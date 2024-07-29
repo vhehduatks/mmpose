@@ -167,6 +167,7 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 				ax = fig.add_subplot(
 					1, num_fig, fig_idx * (idx + 1), projection='3d')
 				ax.view_init(elev=axis_elev, azim=axis_azimuth)
+				print(axis_elev, axis_azimuth)
 				ax.set_aspect('auto')
 				ax.set_xticks([])
 				ax.set_yticks([])
@@ -518,10 +519,10 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 					   dataset_2d: str = 'coco',
 					   dataset_3d: str = 'coco',
 					   convert_keypoint: bool = False,
-					   axis_azimuth: float = 90,
+					   axis_azimuth: float = 80,
 					   axis_limit: float = 1.7,
 					   axis_dist: float = 10.0,
-					   axis_elev: float = -90.0,
+					   axis_elev: float = 170.0,
 					   num_instances: int = -1,
 					   show: bool = False,
 					   wait_time: float = 0,
