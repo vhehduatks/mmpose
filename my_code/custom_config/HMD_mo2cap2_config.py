@@ -67,7 +67,7 @@ model = dict(
 # data
 dataset_type = 'Mo2Cap2CocoDataset'
 data_mode = 'topdown'
-data_root = r'C:\Users\user\Documents\GitHub\mmpose\data'
+# data_root = r'C:\Users\user\Documents\GitHub\mmpose\data'
 
 # ann_file_val = r'C:\Users\user\AppData\LocalLow\DefaultCompany\perception tutorial\solo_72'
 # ann_file_train = r'C:\Users\user\AppData\LocalLow\DefaultCompany\perception tutorial\solo_73' # 68:1000개 짜리 ,64 : 10개짜리, 66 : 500개짜리, 67 : 50개 짜리
@@ -120,11 +120,17 @@ ann_file_train = r'F:\mo2cap2_data_half\TrainSet'
 # ann_file_val = r'F:\extracted_mo2cap2_dataset\TestSet'
 # ann_file_train = r'F:\extracted_mo2cap2_dataset\TrainSet'
 
+####
+# ann_file_test = r'F:\mo2cap2_one_data\TestSet'
+# ann_file_val = r'F:\mo2cap2_one_data\ValSet'
+# ann_file_train = r'F:\mo2cap2_one_data\TrainSet'
+###
+
 
 train_pipeline = [
     dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale',padding=1.),
-    dict(type='RandomFlip', direction='horizontal'),
+    # dict(type='RandomFlip', direction='horizontal'), # 3d keypoints도 플립시켜야됨.
     # # dict(type='RandomHalfBody'),
     # # dict(type='RandomBBoxTransform'),
     dict(type='TopdownAffine', input_size=codec['input_size']),
@@ -181,29 +187,29 @@ dataset_mo2cap2_test = dict(
 
 # 1000,500 할때는 16:2,8:2
 train_dataloader = dict(
-    batch_size=64,
-    num_workers=4,
+    batch_size=128,
+    num_workers=8,
     persistent_workers=False,
     pin_memory=True,
 	drop_last=True,
-    sampler=dict(type='DefaultSampler', shuffle=True),
+    sampler=dict(type='DefaultSampler', shuffle=True, round_up=True),
     dataset=dataset_mo2cap2_train)
 
 
 val_dataloader = dict(
-    batch_size=32,
-    num_workers=4,
+    batch_size=64,
+    num_workers=0,
     persistent_workers=False,
     pin_memory=True,
     drop_last=False,
-    sampler=dict(type='DefaultSampler', shuffle=True, round_up=False),
+    sampler=dict(type='DefaultSampler', shuffle=False, round_up=False),
     dataset=dataset_mo2cap2_val
 	)
 
 ## test_data : no 2d kpts
 test_dataloader = dict(
-    batch_size=32,
-    num_workers=4,
+    batch_size=1,
+    num_workers=0,
     persistent_workers=False,
     pin_memory=True,
     drop_last=False,
@@ -233,7 +239,7 @@ vis_backends = [
 		type='WandbVisBackend',
 		init_kwargs=dict(
 			# entity = "cv04",
-			project="mmpose_mo2cap2dataset",
+			project="mmpose_mo2cap2dataset_hotfix",
 			),
 		),
 ]
