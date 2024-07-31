@@ -118,8 +118,11 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 		Returns:
 			Tuple(np.ndarray): the drawn image which channel is RGB.
 		"""
-		vis_width = max(image.shape)
-		vis_height = vis_width
+		# vis_width = max(image.shape)
+		# vis_height = vis_width
+		vis_width = 256
+		vis_height = 256
+
 
 		if 'pred_instances' in pose_samples:
 			pred_instances = pose_samples.pred_instances
@@ -147,7 +150,8 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 
 		plt.ioff()
 		fig = plt.figure(
-			figsize=(vis_width * num_instances * 0.01, vis_height * 0.015))
+			# figsize=(vis_width * num_instances * 0.01, vis_height * 0.015))
+			figsize=(vis_width * num_instances * 0.02, vis_height * 0.030))
 
 		def _draw_3d_instances_kpts(keypoints,
 									scores,
@@ -169,14 +173,17 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 				ax.view_init(elev=axis_elev, azim=axis_azimuth)
 				print(axis_elev, axis_azimuth)
 				ax.set_aspect('auto')
-				ax.set_xticks([])
-				ax.set_yticks([])
-				ax.set_zticks([])
-				ax.set_xticklabels([])
-				ax.set_yticklabels([])
-				ax.set_zticklabels([])
+				# ax.set_xticks([])
+				# ax.set_yticks([])
+				# ax.set_zticks([])
+				# ax.set_xticklabels([])
+				# ax.set_yticklabels([])
+				# ax.set_zticklabels([])
+				ax.set_xlabel('X axis')
+				ax.set_ylabel('Y axis')
+				ax.set_zlabel('Z axis')
 				if title:
-					ax.set_title(f'{title} ({idx})')
+					ax.set_title(f'{title} ({idx})', y=1.2)
 				ax.dist = axis_dist
 
 				x_c = np.mean(kpts_valid[:, 0]) if valid.any() else 0
@@ -635,6 +642,43 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 		if det_img_data is not None:
 			width = max(pred_img_data.shape[1] - det_img_data.shape[1], 0)
 			height = max(pred_img_data.shape[0] - det_img_data.shape[0], 0)
+	
+
+			# max_height = max(det_img_data.shape[0], pred_img_data.shape[0])
+			
+			# # det_img_data의 높이 조정
+			# if det_img_data.shape[0] < max_height:
+			# 	height_diff = max_height - det_img_data.shape[0]
+			# 	det_img_data = cv2.copyMakeBorder(
+			# 		det_img_data,
+			# 		height_diff // 2,
+			# 		(height_diff // 2 + 1) if height_diff % 2 == 1 else height_diff // 2,
+			# 		0, 0,
+			# 		cv2.BORDER_CONSTANT,
+			# 		value=(255, 255, 255))
+			
+			# # pred_img_data의 높이 조정
+			# if pred_img_data.shape[0] < max_height:
+			# 	height_diff = max_height - pred_img_data.shape[0]
+			# 	pred_img_data = cv2.copyMakeBorder(
+			# 		pred_img_data,
+			# 		height_diff // 2,
+			# 		(height_diff // 2 + 1) if height_diff % 2 == 1 else height_diff // 2,
+			# 		0, 0,
+			# 		cv2.BORDER_CONSTANT,
+			# 		value=(255, 255, 255))
+			
+			# # 가로 방향으로 마진 추가 (원하는 경우)
+			# margin = 300  # 원하는 마진 크기
+			# det_img_data = cv2.copyMakeBorder(
+			# 	det_img_data,
+			# 	0, 0,
+			# 	margin, margin,
+			# 	cv2.BORDER_CONSTANT,
+			# 	value=(255, 255, 255))
+
+
+
 			det_img_data = cv2.copyMakeBorder(
 				det_img_data,
 				height // 2,
@@ -642,6 +686,9 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 				width // 2, (width // 2 + 1) if width % 2 == 1 else width // 2,
 				cv2.BORDER_CONSTANT,
 				value=(255, 255, 255))
+			
+			
+
 			drawn_img = np.concatenate((det_img_data, pred_img_data), axis=1)
 		else:
 			drawn_img = pred_img_data
