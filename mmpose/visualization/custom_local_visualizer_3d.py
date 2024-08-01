@@ -644,48 +644,48 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 			height = max(pred_img_data.shape[0] - det_img_data.shape[0], 0)
 	
 
-			# max_height = max(det_img_data.shape[0], pred_img_data.shape[0])
+			max_height = max(det_img_data.shape[0], pred_img_data.shape[0])
 			
-			# # det_img_data의 높이 조정
-			# if det_img_data.shape[0] < max_height:
-			# 	height_diff = max_height - det_img_data.shape[0]
-			# 	det_img_data = cv2.copyMakeBorder(
-			# 		det_img_data,
-			# 		height_diff // 2,
-			# 		(height_diff // 2 + 1) if height_diff % 2 == 1 else height_diff // 2,
-			# 		0, 0,
-			# 		cv2.BORDER_CONSTANT,
-			# 		value=(255, 255, 255))
+			# det_img_data의 높이 조정
+			if det_img_data.shape[0] < max_height:
+				height_diff = max_height - det_img_data.shape[0]
+				det_img_data = cv2.copyMakeBorder(
+					det_img_data,
+					height_diff // 2,
+					(height_diff // 2 + 1) if height_diff % 2 == 1 else height_diff // 2,
+					0, 0,
+					cv2.BORDER_CONSTANT,
+					value=(255, 255, 255))
 			
-			# # pred_img_data의 높이 조정
-			# if pred_img_data.shape[0] < max_height:
-			# 	height_diff = max_height - pred_img_data.shape[0]
-			# 	pred_img_data = cv2.copyMakeBorder(
-			# 		pred_img_data,
-			# 		height_diff // 2,
-			# 		(height_diff // 2 + 1) if height_diff % 2 == 1 else height_diff // 2,
-			# 		0, 0,
-			# 		cv2.BORDER_CONSTANT,
-			# 		value=(255, 255, 255))
+			# pred_img_data의 높이 조정
+			if pred_img_data.shape[0] < max_height:
+				height_diff = max_height - pred_img_data.shape[0]
+				pred_img_data = cv2.copyMakeBorder(
+					pred_img_data,
+					height_diff // 2,
+					(height_diff // 2 + 1) if height_diff % 2 == 1 else height_diff // 2,
+					0, 0,
+					cv2.BORDER_CONSTANT,
+					value=(255, 255, 255))
 			
-			# # 가로 방향으로 마진 추가 (원하는 경우)
-			# margin = 300  # 원하는 마진 크기
-			# det_img_data = cv2.copyMakeBorder(
-			# 	det_img_data,
-			# 	0, 0,
-			# 	margin, margin,
-			# 	cv2.BORDER_CONSTANT,
-			# 	value=(255, 255, 255))
-
-
-
+			# 가로 방향으로 마진 추가 (원하는 경우)
+			margin = 300  # 원하는 마진 크기
 			det_img_data = cv2.copyMakeBorder(
 				det_img_data,
-				height // 2,
-				(height // 2 + 1) if height % 2 == 1 else height // 2,
-				width // 2, (width // 2 + 1) if width % 2 == 1 else width // 2,
+				0, 0,
+				margin, margin,
 				cv2.BORDER_CONSTANT,
 				value=(255, 255, 255))
+
+
+
+			# det_img_data = cv2.copyMakeBorder(
+			# 	det_img_data,
+			# 	height // 2,
+			# 	(height // 2 + 1) if height % 2 == 1 else height // 2,
+			# 	width // 2, (width // 2 + 1) if width % 2 == 1 else width // 2,
+			# 	cv2.BORDER_CONSTANT,
+			# 	value=(255, 255, 255))
 			
 			
 

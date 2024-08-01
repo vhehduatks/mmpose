@@ -112,13 +112,13 @@ data_mode = 'topdown'
 # ann_file_train = r'F:\mo2cap2_data_small\TrainSet'
 # ---
 # mo2cap2 dataset train middel, test all
-ann_file_test = r'F:\mo2cap2_data_half\TestSet'
-ann_file_val = r'F:\mo2cap2_data_half\ValSet'
-ann_file_train = r'F:\mo2cap2_data_half\TrainSet'
+# ann_file_test = r'F:\mo2cap2_data_half\TestSet'
+# ann_file_val = r'F:\mo2cap2_data_half\ValSet'
+# ann_file_train = r'F:\mo2cap2_data_half\TrainSet'
 # ---
 # # mo2cap2 dataset train all, test all
-# ann_file_val = r'F:\extracted_mo2cap2_dataset\TestSet'
-# ann_file_train = r'F:\extracted_mo2cap2_dataset\TrainSet'
+ann_file_val = r'F:\extracted_mo2cap2_dataset\TestSet'
+ann_file_train = r'F:\extracted_mo2cap2_dataset\TrainSet'
 
 ####
 # ann_file_test = r'F:\mo2cap2_one_data\TestSet'
@@ -171,19 +171,19 @@ dataset_mo2cap2_val = dict(
     ann_file=ann_file_val,
     # data_prefix=dict(img=r'C:\Users\user\Documents\GitHub\mmpose\data\coco\train2017'),
     pipeline=val_pipeline,
-	test_mode = False,
-)
-
-dataset_mo2cap2_test = dict(
-	type=dataset_type,
-    # data_root=data_root,
-    data_mode=data_mode,
-    filter_cfg=dict(filter_empty_gt=False, min_size=32),
-    ann_file=ann_file_test,
-    # data_prefix=dict(img=r'C:\Users\user\Documents\GitHub\mmpose\data\coco\train2017'),
-    pipeline=test_pipeline,
 	test_mode = True,
 )
+
+# dataset_mo2cap2_test = dict(
+# 	type=dataset_type,
+#     # data_root=data_root,
+#     data_mode=data_mode,
+#     filter_cfg=dict(filter_empty_gt=False, min_size=32),
+#     ann_file=ann_file_test,
+#     # data_prefix=dict(img=r'C:\Users\user\Documents\GitHub\mmpose\data\coco\train2017'),
+#     pipeline=test_pipeline,
+# 	test_mode = True,
+# )
 
 # 1000,500 할때는 16:2,8:2
 train_dataloader = dict(
@@ -198,7 +198,7 @@ train_dataloader = dict(
 
 val_dataloader = dict(
     batch_size=64,
-    num_workers=0,
+    num_workers=8,
     persistent_workers=False,
     pin_memory=True,
     drop_last=False,
@@ -206,16 +206,17 @@ val_dataloader = dict(
     dataset=dataset_mo2cap2_val
 	)
 
-## test_data : no 2d kpts
-test_dataloader = dict(
-    batch_size=1,
-    num_workers=0,
-    persistent_workers=False,
-    pin_memory=True,
-    drop_last=False,
-    sampler=dict(type='DefaultSampler', shuffle=True, round_up=False),
-    dataset=dataset_mo2cap2_test
-	)
+test_dataloader =val_dataloader
+# ## test_data : no 2d kpts
+# test_dataloader = dict(
+#     batch_size=1,
+#     num_workers=0,
+#     persistent_workers=False,
+#     pin_memory=True,
+#     drop_last=False,
+#     sampler=dict(type='DefaultSampler', shuffle=True, round_up=False),
+#     dataset=dataset_mo2cap2_test
+# 	)
 
 # evaluators
 # evaluators
@@ -235,13 +236,13 @@ test_evaluator = dict(
 vis_backends = [
     dict(type='LocalVisBackend'),
     # dict(type='TensorboardVisBackend'),
-    dict(
-		type='WandbVisBackend',
-		init_kwargs=dict(
-			# entity = "cv04",
-			project="mmpose_mo2cap2dataset_hotfix",
-			),
-		),
+    # dict(
+	# 	type='WandbVisBackend',
+	# 	init_kwargs=dict(
+	# 		# entity = "cv04",
+	# 		project="mmpose_mo2cap2dataset_hotfix",
+	# 		),
+	# 	),
 ]
 visualizer = dict(
     # type='PoseLocalVisualizer', vis_backends=vis_backends, name='visualizer'
