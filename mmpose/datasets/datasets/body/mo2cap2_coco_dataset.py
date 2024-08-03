@@ -50,7 +50,9 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 				lazy_init: bool = False,
 				max_refetch: int = 1000,
 				sample_interval: int = 1):
+		
 
+		
 		if data_mode not in {'topdown', 'bottomup'}:
 			raise ValueError(
 				f'{self.__class__.__name__} got invalid data_mode: '
@@ -73,7 +75,10 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 		self.sample_interval = sample_interval
 
 		self.ann_file = ann_file
-		self.index = self._load_index()
+		# self.index = self._load_index()
+		self.test_mode = test_mode
+		self.data_root = data_root
+		self.chunk_folders = self._get_chunk_folders()
 
 		super().__init__(
 			ann_file=ann_file,
@@ -87,94 +92,99 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 			test_mode=test_mode,
 			lazy_init=lazy_init,
 			max_refetch=max_refetch)
-
 		
 
+		# if self.test_mode:
+		# 	# save the ann_file into MessageHub for CocoMetric
+		# 	message = MessageHub.get_current_instance()
+		# 	dataset_name = self.metainfo['dataset_name']
+		# 	message.update_info_dict(
+		# 		{f'{dataset_name}_ann_file': self.ann_file})
+
+	def _get_chunk_folders(self):
 		if self.test_mode:
-			# save the ann_file into MessageHub for CocoMetric
-			message = MessageHub.get_current_instance()
-			dataset_name = self.metainfo['dataset_name']
-			message.update_info_dict(
-				{f'{dataset_name}_ann_file': self.ann_file})
-
-
-	def index_db(self):
-		return self._index_dir(self.ann_file)
-		
-	def _load_index(self):
-		idx_path = os.path.join(self.ann_file, 'index.h5')
-		
-		if os.path.exists(idx_path):
-			return self.read_h5(idx_path)
-
-		index = self.index_db()
-		self.write_h5(idx_path, index)
-		return index
-
-	def write_h5(self, path, data):
-		if '.h5' not in path[-3:]:
-			path += '.h5'
-
-		hf = h5py.File(path, 'w')
-
-		if isinstance(data, dict):
-			for k, v in data.items():
-				if isinstance(v[0], str):
-					v = [a.encode('utf8') for a in v]
-				hf.create_dataset(k, data=v)
-		elif isinstance(data, list):
-			hf.create_dataset('val', data=data)
-		elif isinstance(data, np.ndarray):
-			hf.create_dataset('val', data=data)
+			res_path = [f for f in os.listdir(self.data_root) if f in ['olek_outdoor','weipeng_studio']]
 		else:
-			raise NotImplementedError
-		hf.close()
+			res_path = [f for f in os.listdir(self.data_root) if f.startswith('mo2cap2_chunk_')]
+		return res_path
 
-	def read_h5(self, path):
-		if not os.path.isfile(path):
-			raise FileNotFoundError()
+	# def index_db(self):
+	# 	return self._index_dir(self.ann_file)
+		
+	# def _load_index(self):
+	# 	idx_path = os.path.join(self.ann_file, 'index.h5')
+		
+	# 	if os.path.exists(idx_path):
+	# 		return self.read_h5(idx_path)
 
-		data_files = dict()
-		h5_data = h5py.File(path)
-		tags = list(h5_data.keys())
-		for tag in tags:
-			tag_data = np.asarray(h5_data[tag]).copy()
-			data_files.update({tag: tag_data})
-		h5_data.close()
+	# 	index = self.index_db()
+	# 	self.write_h5(idx_path, index)
+	# 	return index
 
-		return data_files
+	# def write_h5(self, path, data):
+	# 	if '.h5' not in path[-3:]:
+	# 		path += '.h5'
 
-	def _index_dir(self, path):
-		indexed_paths = {
-			'rgba': [],
-			# 'depth': [],
-			'frame_data': [],
-			# 'segmentation': []
-		}
+	# 	hf = h5py.File(path, 'w')
 
-		for root, dirs, files in os.walk(path):
-			# if self.test_mode:
-			# 	if root.split(os.path.sep)[-1].startswith('olek') or root.split(os.path.sep)[-1].startswith('weipeng'):
-			# else:
-			# 	if root.split(os.path.sep)[-1].startswith('mo2cap2_'):
-			# 		pass
+	# 	if isinstance(data, dict):
+	# 		for k, v in data.items():
+	# 			if isinstance(v[0], str):
+	# 				v = [a.encode('utf8') for a in v]
+	# 			hf.create_dataset(k, data=v)
+	# 	elif isinstance(data, list):
+	# 		hf.create_dataset('val', data=data)
+	# 	elif isinstance(data, np.ndarray):
+	# 		hf.create_dataset('val', data=data)
+	# 	else:
+	# 		raise NotImplementedError
+	# 	hf.close()
 
-			if root.split(os.path.sep)[-1].startswith('json') or root.split(os.path.sep)[-1].startswith('rgba'):
-				for file in files:
-					full_path = os.path.join(root, file)
-					if file.endswith('.png'):
-						indexed_paths['rgba'].append(full_path.encode('utf8'))
-					elif file.endswith('.json'):
-						indexed_paths['frame_data'].append(full_path.encode('utf8'))
+	# def read_h5(self, path):
+	# 	if not os.path.isfile(path):
+	# 		raise FileNotFoundError()
+
+	# 	data_files = dict()
+	# 	h5_data = h5py.File(path)
+	# 	tags = list(h5_data.keys())
+	# 	for tag in tags:
+	# 		tag_data = np.asarray(h5_data[tag]).copy()
+	# 		data_files.update({tag: tag_data})
+	# 	h5_data.close()
+
+	# 	return data_files
+
+	# def _index_dir(self, path): # png와 json 순서가 다르게 들어감
+	# 	indexed_paths = {
+	# 		'rgba': [],
+	# 		# 'depth': [],
+	# 		'frame_data': [],
+	# 		# 'segmentation': []
+	# 	}
+
+	# 	for root, dirs, files in os.walk(path):
+	# 		# if self.test_mode:
+	# 		# 	if root.split(os.path.sep)[-1].startswith('olek') or root.split(os.path.sep)[-1].startswith('weipeng'):
+	# 		# else:
+	# 		# 	if root.split(os.path.sep)[-1].startswith('mo2cap2_'):
+	# 		# 		pass
+
+	# 		if root.split(os.path.sep)[-1].startswith('json') or root.split(os.path.sep)[-1].startswith('rgba'):
+	# 			for file in files:
+	# 				full_path = os.path.join(root, file)
+	# 				if file.endswith('.png'):
+	# 					indexed_paths['rgba'].append(full_path.encode('utf8'))
+	# 				elif file.endswith('.json'):
+	# 					indexed_paths['frame_data'].append(full_path.encode('utf8'))
 
 
-		return indexed_paths
+	# 	return indexed_paths
 
 
 	def parse_data_info(self, _rgba, _frame_data) -> Optional[dict]:
 		# JSON 파일 읽기
-		_rgba = _rgba.decode('utf8')
-		_frame_data = _frame_data.decode('utf8')
+		# _rgba = _rgba.decode('utf8')
+		# _frame_data = _frame_data.decode('utf8')
 
 		try:
 			with open(_frame_data, 'r') as f:
@@ -322,52 +332,82 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 
 		return data_info
 
-	def _load_annotations(self) -> Tuple[List[dict], List[dict]]:
-		"""Load data from annotations in COCO format."""
 
-		assert exists(self.ann_file), (
-			f'Annotation file `{self.ann_file}`does not exist')
-		temp_path = r'C:\\Users\\user\\Documents\\GitHub\\mmpose\\data\\coco\\annotations\\person_keypoints_test-dev-2017.json'
-		# with get_local_path(self.ann_file) as local_path:
-		self.temp_coco = COCO(temp_path)
-		# set the metainfo about categories, which is a list of dict
-		# and each dict contains the 'id', 'name', etc. about this category
-		if 'categories' in self.temp_coco.dataset:
-			self._metainfo['CLASSES'] = self.temp_coco.loadCats(
-				self.temp_coco.getCatIds())
-
-
-		instance_list = []
-		image_list = []
-
-		for _rgba, _frame_data in zip(self.index['rgba'],
-													   self.index['frame_data']):
-			instance_info = self.parse_data_info(_rgba, _frame_data)
-
-				# skip invalid instance annotation.
-			if not instance_info:
-				continue
-
-			instance_list.append(instance_info)			 
-
-		return instance_list, image_list
 
 	def load_data_list(self) -> List[dict]:
 		"""Load data list from COCO annotation file or person detection result
 		file."""
 
-		if self.bbox_file:
-			data_list = self._load_detection_results()
-		else:
-			instance_list, image_list = self._load_annotations()
+				# assert exists(self.ann_file), (
+		# 	f'Annotation file `{self.ann_file}`does not exist')
+		# temp_path = r'C:\\Users\\user\\Documents\\GitHub\\mmpose\\data\\coco\\annotations\\person_keypoints_test-dev-2017.json'
+		# # with get_local_path(self.ann_file) as local_path:
+		# self.temp_coco = COCO(temp_path)
+		# # set the metainfo about categories, which is a list of dict
+		# # and each dict contains the 'id', 'name', etc. about this category
+		# if 'categories' in self.temp_coco.dataset:
+		# 	self._metainfo['CLASSES'] = self.temp_coco.loadCats(
+		# 		self.temp_coco.getCatIds())
+			
+		person_info = {
+			'supercategory': 'person',
+			'id': 1,
+			'name': 'person',
+			'skeleton': [
+				[16, 14], [14, 12], [17, 15], [15, 13], [12, 13], [6, 12], [7, 13], [6, 7], 
+				[6, 8], [7, 9], [8, 10], [9, 11], [2, 3], [1, 2], [1, 3], [2, 4], [3, 5], 
+				[4, 6], [5, 7]
+			],
+			'keypoints': [
+				'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear', 'left_shoulder', 
+				'right_shoulder', 'left_elbow', 'right_elbow', 'left_wrist', 'right_wrist', 
+				'left_hip', 'right_hip', 'left_knee', 'right_knee', 'left_ankle', 'right_ankle'
+			]
+		}
 
-			if self.data_mode == 'topdown':
-				if self.test_mode:
-					data_list = instance_list
-				else:
-					data_list = self._get_topdown_data_infos(instance_list)
-			else:
-				data_list = self._get_bottomup_data_infos(
-					instance_list, image_list)
+		self._metainfo['CLASSES'] = person_info
+
+
+		file_path_list = []
+		data_list = []
+		for chunk_folder in self.chunk_folders:
+			img_folder = os.path.join(self.data_root, chunk_folder, 'rgba')
+			json_folder = os.path.join(self.data_root, chunk_folder, 'json')
+
+			img_files = sorted([f for f in os.listdir(img_folder) if f.endswith('.png')])
+
+			for img_file in img_files:
+				img_path = os.path.join(img_folder, img_file)
+				json_file = img_file.replace('.png', '.json')
+				json_path = os.path.join(json_folder, json_file)
+				
+				if os.path.exists(json_path):
+					file_path_list.append({
+						'img_path': img_path,
+						'ann_path': json_path
+					})
+
+		for file_path in file_path_list:
+			data_info = self.parse_data_info(file_path['img_path'],file_path['ann_path'])
+			if not data_info: continue
+			data_list.append(data_info)	 
 
 		return data_list
+
+
+
+		# if self.bbox_file:
+		# 	data_list = self._load_detection_results()
+		# else:
+		# 	instance_list, image_list = self._load_annotations()
+
+		# 	if self.data_mode == 'topdown':
+		# 		if self.test_mode:
+		# 			data_list = instance_list
+		# 		else:
+		# 			data_list = self._get_topdown_data_infos(instance_list)
+		# 	else:
+		# 		data_list = self._get_bottomup_data_infos(
+		# 			instance_list, image_list)
+
+		
