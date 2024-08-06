@@ -646,11 +646,11 @@ def compute_error(pred, gt, return_mean=True, mode='baseline', protocol=None, _S
 		bone_length = np.sqrt(np.sum(np.power(bones_mean, 2), axis=0)) # 15 shape
 		gt_rescale = skeleton_rescale(gt, bone_length[1:], kinematic_parents)
 		pred_rescale = skeleton_rescale(pred, bone_length[1:], kinematic_parents)
-		_, gt_rot, _ = procrustes(np.transpose(pred_rescale), np.transpose(gt_rescale), True, False)
+		_, gt_rot, _ = procrustes(gt_rescale, pred_rescale, True, False)
 		if _SEL:
 			pred_rescale = pred_rescale[:,_SEL]
-			gt_rot = gt_rot[_SEL]
-		error = pred_rescale - np.transpose(gt_rot)
+			gt_rot = gt_rot[:,_SEL]
+		error = pred_rescale - gt_rot
 		joint_error = np.sqrt(np.sum(np.power(error, 2), axis=0)) 
 		if return_mean:
 			return np.mean(joint_error)

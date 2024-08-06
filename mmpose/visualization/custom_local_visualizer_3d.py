@@ -13,7 +13,8 @@ from mmpose.apis import convert_keypoint_definition
 from mmpose.registry import VISUALIZERS
 from mmpose.structures import PoseDataSample
 from . import PoseLocalVisualizer
-
+from ..evaluation.metrics import mo2cap2_evaluate
+import scipy.io
 
 @VISUALIZERS.register_module()
 class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
@@ -186,13 +187,13 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 					ax.set_title(f'{title} ({idx})', y=1.2)
 				ax.dist = axis_dist
 
-				x_c = np.mean(kpts_valid[:, 0]) if valid.any() else 0
-				y_c = np.mean(kpts_valid[:, 1]) if valid.any() else 0
-				z_c = np.mean(kpts_valid[:, 2]) if valid.any() else 0
+				# x_c = np.mean(kpts_valid[:, 0]) if valid.any() else 0
+				# y_c = np.mean(kpts_valid[:, 1]) if valid.any() else 0
+				# z_c = np.mean(kpts_valid[:, 2]) if valid.any() else 0
 
-				ax.set_xlim3d([x_c - axis_limit / 2, x_c + axis_limit / 2])
-				ax.set_ylim3d([y_c - axis_limit / 2, y_c + axis_limit / 2])
-				ax.set_zlim3d([ z_c + axis_limit / 2, min(0, z_c - axis_limit / 2)])
+				# ax.set_xlim3d([x_c - axis_limit / 2, x_c + axis_limit / 2])
+				# ax.set_ylim3d([y_c - axis_limit / 2, y_c + axis_limit / 2])
+				# ax.set_zlim3d([ z_c + axis_limit / 2, min(0, z_c - axis_limit / 2)])
 
 				if self.kpt_color is None or isinstance(self.kpt_color, str):
 					kpt_color = [self.kpt_color] * len(kpts)
@@ -246,7 +247,26 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 		# 								   pred_instances.keypoints)
 		## mo2cap2 joint modify
 		## re scale,
+		mean3D = scipy.io.loadmat(r'C:\Users\user\Documents\GitHub\mmpose\mmpose\utils\mean3D.mat')['mean3D'] # 3x15 shape
+		
+		kinematic_parents = np.array([ 0, 0, 1, 2, 0, 4, 5, 1, 7, 8, 9, 4, 11, 12, 13]) #TODO : upper bodys는 7개 관절이니까 parents 도 수정해야 함
+
+		# _mean3D = mean3D
+		# if _SEL:
+		# 	kinematic_parents = kinematic_parents[_SEL]
+		# 	_mean3D = mean3D[:,_SEL]
+			
+
+		bones_mean = mean3D - mean3D[:,kinematic_parents]
+		bone_length = np.sqrt(np.sum(np.power(bones_mean, 2), axis=0)) # 15 shape
+		# gt_rescale = mo2cap2_evaluate.skeleton_rescale(gt, bone_length[1:], kinematic_parents)
+		# pred_rescale = mo2cap2_evaluate.skeleton_rescale(pred, bone_length[1:], kinematic_parents)
+		# _, gt_rot, _ = mo2cap2_evaluate.procrustes(np.transpose(pred_rescale), np.transpose(gt_rescale), True, False)
+		
 		##
+
+
+
 
 
 		if 'keypoint_3d' in pred_instances:
@@ -265,8 +285,11 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 				keypoints_visible = pred_instances.keypoints_visible
 			else:
 				keypoints_visible = np.ones(keypoints.shape[:-1])
-
-			_draw_3d_instances_kpts(keypoints, scores, scores_2d,
+			pred_kpt = keypoints # (1, 15, 3)
+			pred_kpt = pred_kpt.reshape(15,3).T
+			pred_rescale = mo2cap2_evaluate.skeleton_rescale(pred_kpt, bone_length[1:], kinematic_parents)
+			pred_rescale_input = pred_rescale.T.reshape(1,15,3)
+			_draw_3d_instances_kpts(pred_rescale_input, scores, scores_2d,
 									keypoints_visible, 1, show_kpt_idx,
 									'Prediction')
 
@@ -307,8 +330,13 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 
 			if scores_2d is None:
 				scores_2d = np.ones(keypoints.shape[:-1])
+			gt_kpt = keypoints
 
-			_draw_3d_instances_kpts(keypoints, scores, scores_2d,
+			gt_kpt = gt_kpt.reshape(15,3).T
+			gt_rescale = mo2cap2_evaluate.skeleton_rescale(gt_kpt, bone_length[1:], kinematic_parents)
+			_, gt_rot, _ = mo2cap2_evaluate.procrustes(np.transpose(gt_rescale.T), np.transpose(pred_rescale.T), True, False)
+			gt_rescale_input = gt_rot.T.reshape(1,15,3)
+			_draw_3d_instances_kpts(gt_rescale_input, scores, scores_2d,
 									keypoints_visible, 2, show_kpt_idx,
 									'Ground Truth')
 
