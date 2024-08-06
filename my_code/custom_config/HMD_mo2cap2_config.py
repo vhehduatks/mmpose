@@ -56,6 +56,7 @@ model = dict(
         out_channels=15, # keypoint num
         loss=dict(type='KeypointMSELoss', use_target_weight=True, loss_weight = 1000),
 		loss_3d=dict(type='MSELoss', use_target_weight=False, loss_weight = 10),
+		loss_hmd=dict(type='MSELoss', use_target_weight=False, loss_weight = 10),
         decoder=codec),
     test_cfg=dict(
         flip_test=True,
@@ -112,19 +113,23 @@ data_mode = 'topdown'
 # ann_file_train = r'F:\mo2cap2_data_small\TrainSet'
 # ---
 # mo2cap2 dataset train middel, test all
-# ann_file_test = r'F:\mo2cap2_data_half\TestSet'
-# ann_file_val = r'F:\mo2cap2_data_half\ValSet'
-# ann_file_train = r'F:\mo2cap2_data_half\TrainSet'
+ann_file_test = r'F:\mo2cap2_data_half\TestSet'
+ann_file_val = r'F:\mo2cap2_data_half\ValSet'
+ann_file_train = r'F:\mo2cap2_data_half\TrainSet'
 # ---
 # # mo2cap2 dataset train all, test all
-ann_file_val = r'F:\extracted_mo2cap2_dataset\TestSet'
-ann_file_train = r'F:\extracted_mo2cap2_dataset\TrainSet'
+# ann_file_val = r'F:\extracted_mo2cap2_dataset\TestSet'
+# ann_file_train = r'F:\extracted_mo2cap2_dataset\TrainSet'
 
 ####
 # ann_file_test = r'F:\mo2cap2_one_data\TestSet'
 # ann_file_val = r'F:\mo2cap2_one_data\ValSet'
 # ann_file_train = r'F:\mo2cap2_one_data\TrainSet'
 ###
+
+# ann_file_test = r'D:\cross_plat\mo2cap2_data_half\TestSet'
+# ann_file_val = r'D:\cross_plat\mo2cap2_data_half\ValSet'
+# ann_file_train = r'D:\cross_plat\mo2cap2_data_half\TrainSet'
 
 
 train_pipeline = [
@@ -145,30 +150,30 @@ val_pipeline = [
 	dict(type='GenerateTarget', encoder=codec),
     dict(type='PackPoseInputs')
 ]
-test_pipeline = [
-    dict(type='LoadImage'),
-    dict(type='GetBBoxCenterScale',padding=1.),
-    dict(type='TopdownAffine', input_size=codec['input_size']),
-	# dict(type='GenerateTarget', encoder=codec),
-    dict(type='PackPoseInputs')
-]
+# test_pipeline = [
+#     dict(type='LoadImage'),
+#     dict(type='GetBBoxCenterScale',padding=1.),
+#     dict(type='TopdownAffine', input_size=codec['input_size']),
+# 	# dict(type='GenerateTarget', encoder=codec),
+#     dict(type='PackPoseInputs')
+# ]
 
 dataset_mo2cap2_train = dict(
 	type=dataset_type,
-    # data_root=data_root,
+    data_root=ann_file_train,
     data_mode=data_mode,
     filter_cfg=dict(filter_empty_gt=False, min_size=32),
-    ann_file=ann_file_train,
+    # ann_file=ann_file_train,
     # data_prefix=dict(img=r'C:\Users\user\Documents\GitHub\mmpose\data\coco\train2017'),
     pipeline=train_pipeline,
 )
 
 dataset_mo2cap2_val = dict(
 	type=dataset_type,
-    # data_root=data_root,
+    data_root=ann_file_test,
     data_mode=data_mode,
     filter_cfg=dict(filter_empty_gt=False, min_size=32),
-    ann_file=ann_file_val,
+    # ann_file=ann_file_val,
     # data_prefix=dict(img=r'C:\Users\user\Documents\GitHub\mmpose\data\coco\train2017'),
     pipeline=val_pipeline,
 	test_mode = True,
@@ -176,10 +181,10 @@ dataset_mo2cap2_val = dict(
 
 # dataset_mo2cap2_test = dict(
 # 	type=dataset_type,
-#     # data_root=data_root,
+#     data_root=ann_file_test,
 #     data_mode=data_mode,
 #     filter_cfg=dict(filter_empty_gt=False, min_size=32),
-#     ann_file=ann_file_test,
+#     # ann_file=ann_file_test,
 #     # data_prefix=dict(img=r'C:\Users\user\Documents\GitHub\mmpose\data\coco\train2017'),
 #     pipeline=test_pipeline,
 # 	test_mode = True,
@@ -187,8 +192,8 @@ dataset_mo2cap2_val = dict(
 
 # 1000,500 할때는 16:2,8:2
 train_dataloader = dict(
-    batch_size=128,
-    num_workers=8,
+    batch_size=64,
+    num_workers=6,
     persistent_workers=False,
     pin_memory=True,
 	drop_last=True,
@@ -198,7 +203,7 @@ train_dataloader = dict(
 
 val_dataloader = dict(
     batch_size=64,
-    num_workers=8,
+    num_workers=6,
     persistent_workers=False,
     pin_memory=True,
     drop_last=False,
@@ -236,13 +241,13 @@ test_evaluator = dict(
 vis_backends = [
     dict(type='LocalVisBackend'),
     # dict(type='TensorboardVisBackend'),
-    # dict(
-	# 	type='WandbVisBackend',
-	# 	init_kwargs=dict(
-	# 		# entity = "cv04",
-	# 		project="mmpose_mo2cap2dataset_hotfix",
-	# 		),
-	# 	),
+    dict(
+		type='WandbVisBackend',
+		init_kwargs=dict(
+			# entity = "cv04",
+			project="mmpose_mo2cap2dataset_hotfix",
+			),
+		),
 ]
 visualizer = dict(
     # type='PoseLocalVisualizer', vis_backends=vis_backends, name='visualizer'

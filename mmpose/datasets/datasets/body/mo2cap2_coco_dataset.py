@@ -218,14 +218,27 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 				# if frame_data[joint_name]['2d'][0] > x_max: x_max = frame_data[joint_name]['2d'][0]
 				# if frame_data[joint_name]['2d'][1] > y_max: y_max = frame_data[joint_name]['2d'][1]
 				
-				p3d[jid][0] = frame_data[joint_name]['3d'][0]
-				p3d[jid][1] = frame_data[joint_name]['3d'][1]
-				p3d[jid][2] = frame_data[joint_name]['3d'][2]
+				#test 셋 좌표계와 동일하게
+				# p3d[jid][0] = frame_data[joint_name]['3d'][0]
+				# p3d[jid][1] = frame_data[joint_name]['3d'][1]
+				# p3d[jid][2] = frame_data[joint_name]['3d'][2]
+				if not self.test_mode:
+					p3d[jid][0] = frame_data[joint_name]['3d'][0]
+					p3d[jid][1] = frame_data[joint_name]['3d'][2] * -1
+					p3d[jid][2] = frame_data[joint_name]['3d'][1] 
+				else:
+					p3d[jid][0] = frame_data[joint_name]['3d'][0]
+					p3d[jid][1] = frame_data[joint_name]['3d'][1]
+					p3d[jid][2] = frame_data[joint_name]['3d'][2]
 
-	
-			
+			# 둘다 neck이 000
+			p3d -= p3d[0]
+			hmd_info = p3d[[0,3,6],:].reshape(1,3,3)
+			rand_val = np.random.randint(-10, 10, hmd_info.shape)
+			hmd_info_w_noise = (hmd_info + rand_val).reshape(1,-3,3)
 			p3d /= self.MM_TO_M
-			
+			hmd_info /= self.MM_TO_M
+			hmd_info_w_noise /= self.MM_TO_M
 			# bbox = np.array([x_min-10, y_min-10, x_max+10, y_max+10])
 			# bbox = np.clip(bbox,0,256)
 			# 어차피 mo2cap2 dataset의 testset에는 2차원 keypoint에 대한 정보가 없음. 그냥 이미지 전체가 bbox로 취급
@@ -279,55 +292,48 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 		area = np.array(area, dtype=np.float32)
 
 		# data_info 딕셔너리 생성
-		if self.test_mode:
-			data_info = {
-				'img_id': img_id,
-				'img_path': _rgba,
-				'num_keypoints': 15,
-				'keypoints': keypoints, # mo2cap test set 에는 2d keypoint가 0 임.
-				'keypoints_visible': keypoints_visible,
+
+		data_info = {
+			'img_id': img_id,
+			'img_path': _rgba,
+			'num_keypoints': 15,
+			'keypoints': keypoints,
+			'keypoints_visible': keypoints_visible,
+			'keypoint3d': keypoint3d,
+			'bbox' : bbox,
+			'bbox_score': np.ones(1, dtype=np.float32),
+			'area': area,
+			'hmd_info':hmd_info,
+			'hmd_info_w_noise':hmd_info_w_noise,
+			'raw_ann_info': {
+				'id': 1,
+				'image_id': img_id,
+				'category_id': np.ones(1, dtype=np.float32),
 				'keypoint3d': keypoint3d,
+				'iscrowd': 0,
+				'num_keypoints': 15,
+			},
+		}
+		if self.test_mode:
+			test_mode_update = {
 				'action': [frame_data['action']],
-				'bbox' : bbox, 
-				'bbox_score': np.ones(1, dtype=np.float32),
-				'area': area,
-				'raw_ann_info':dict(
-						id=1,
-						image_id=img_id,
-						category_id=np.ones(1, dtype=np.float32),
-						# bbox=bbox,
-						# keypoints=keypoints,
-						keypoint3d=keypoint3d,
-						iscrowd=0,
-						# area=area,
-						num_keypoints = 15,
-					),
+				'raw_ann_info': {
+				}
 			}
+			# data_info 업데이트
+			data_info.update(test_mode_update)
 		else:
-			data_info = {
-				'img_id': img_id,
-				'img_path': _rgba,
+			not_test_mode_update = {
 				'depth_path': None,
 				'segmentation_path': None,
-				'num_keypoints': 15,
-				'keypoints': keypoints,
-				'keypoints_visible': keypoints_visible,
-				'keypoint3d': keypoint3d,
-				'bbox' : bbox, 
-				'bbox_score': np.ones(1, dtype=np.float32),
-				'area': area,
-				'raw_ann_info':dict(
-						id=1,
-						image_id=img_id,
-						category_id=np.ones(1, dtype=np.float32),
-						bbox=bbox,
-						keypoints=keypoints,
-						keypoint3d=keypoint3d,
-						iscrowd=0,
-						area=area,
-						num_keypoints = 15,
-					),
+				'raw_ann_info': {
+					'bbox': bbox,
+					'keypoints': keypoints,
+					'area': area,
+				}
 			}
+			# data_info 업데이트
+			data_info.update(not_test_mode_update)
 
 
 		return data_info
@@ -374,7 +380,7 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 			img_folder = os.path.join(self.data_root, chunk_folder, 'rgba')
 			json_folder = os.path.join(self.data_root, chunk_folder, 'json')
 
-			img_files = sorted([f for f in os.listdir(img_folder) if f.endswith('.png')])
+			img_files = sorted([f for f in os.listdir(img_folder) if f.endswith('.png') or f.endswith('.jpg')])
 
 			for img_file in img_files:
 				img_path = os.path.join(img_folder, img_file)

@@ -529,7 +529,7 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 					   axis_azimuth: float = 90,
 					   axis_limit: float = 1.7,
 					   axis_dist: float = 10.0,
-					   axis_elev: float = -10.0,
+					   axis_elev: float = -50.0,
 					   num_instances: int = -1,
 					   show: bool = False,
 					   wait_time: float = 0,

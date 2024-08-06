@@ -77,7 +77,7 @@ class Custom_mo2cap2_MSRAHeatmap(BaseKeypointCodec):
 	# PoseDataSample.gt_instance_labels and converted to Tensor. These items
 	# will be used for computing losses
 	label_mapping_table = dict(
-		keypoint_weights='keypoint_weights',keypoint3d = 'keypoint3d', hmd_info = 'hmd_info',)
+		keypoint_weights='keypoint_weights',keypoint3d = 'keypoint3d', hmd_info = 'hmd_info', hmd_info_w_noise ='hmd_info_w_noise')
 
 
 	auxiliary_encode_keys = {'keypoint3d',}
@@ -148,10 +148,25 @@ class Custom_mo2cap2_MSRAHeatmap(BaseKeypointCodec):
 				keypoints=keypoints / self.scale_factor,
 				keypoints_visible=keypoints_visible,
 				sigma=self.sigma)
+		'''
+		hmd 정보 임베딩으로 보내고, hmd 정보는 벡터로?..왜냐면 모델의 아웃풋이 trainset에 맞춰져 있으니까, 
+		예를들어 trainset에서 xy평면에 발이 있으면, testset은 zy 평면에 발이 있는 거임.
+		문제가 뭐냐, trainset은 훈련할때 gt의 좌표가 실제 pred의 gt 좌표와 일치함
+		근데 testset은 gt의 좌표가 pred의 좌표와 일치하지않음.
+		0. trainset의 좌표계로 testset을 수정
+		1. 둘다 머리가 0,0,0으로 맞춰버릴까?.. = 카메라자체가 계속 이동함.심지어 test셋은 0,0,0이 카메라가 아님.
+		2. test eval metric에 있는 rescale-prosuto 과정을 평가 때 사용하면? 
+		3. hmd_info를 머리에서 팔로 가는 두개의 벡터로 ?
+		4. 어차피 ego view의 좌표계는 카메라 좌표계고 그건 머리의 좌표가 000 인거랑 똑같음. 그럼 그냥 머리나 목을 000으로 치고 상대좌표화시켜버려도 된다는 소리 아닌가?
+		5. 4로 가고 trainset 의 좌표계와 testset 의 좌표계를 일치시킨 다음 머리를 000으로 만들자.
 
-		hmd_info = keypoint3d[:,[0,3,6],:]
+		발은 근데 그냥 0에 맞춰버리면 되는데 머리랑 손은 좌표가 변하
+		그래서 hmd_i
+		'''
 
-		encoded = dict(heatmaps=heatmaps, keypoint_weights=keypoint_weights, hmd_info=hmd_info)
+
+
+		encoded = dict(heatmaps=heatmaps, keypoint_weights=keypoint_weights)
 
 		return encoded
 

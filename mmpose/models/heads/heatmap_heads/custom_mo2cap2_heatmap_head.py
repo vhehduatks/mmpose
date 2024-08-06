@@ -17,6 +17,7 @@ from ..base_head import BaseHead
 from mmengine.structures import InstanceData
 
 import numpy as np
+import math
 
 OptIntSeq = Optional[Sequence[int]]
 
@@ -35,86 +36,125 @@ import torch.nn as nn
 
 
 def weight_init(m):
-    if isinstance(m, nn.Linear):
-        nn.init.kaiming_normal(m.weight)
+	if isinstance(m, nn.Linear):
+		nn.init.kaiming_normal(m.weight)
+
+
+class Encoder(nn.Module):
+	def __init__(self, num_classes=15):
+		super(Encoder, self).__init__()
+		self.conv1 = nn.Conv2d(num_classes, 64, kernel_size=4, stride=2, padding=2)
+		self.lrelu1 = nn.LeakyReLU(0.2)
+		self.conv2 = nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1)
+		self.lrelu2 = nn.LeakyReLU(0.2)
+		self.conv3 = nn.Conv2d(128, 512, kernel_size=4, stride=2, padding=1)
+		self.lrelu3 = nn.LeakyReLU(0.2)
+		self.avr_pool = nn.AdaptiveAvgPool2d((1, 1))
+		
+		self.linear1 = nn.Linear(9,36)
+		self.lrelu4 = nn.LeakyReLU(0.2)
+
+		self.linear2 = nn.Linear(512+36, 162)
+		self.lrelu5 = nn.LeakyReLU(0.2)
+
+	def forward(self, hm, hmd):
+		hm = self.conv1(hm)
+		hm = self.lrelu1(hm)
+		hm = self.conv2(hm)
+		hm = self.lrelu2(hm)
+		hm = self.conv3(hm)
+		hm = self.lrelu3(hm)
+
+		hm_avgpool = self.avr_pool(hm).view(-1,512)
+
+
+		hmd = self.linear1(hmd)
+		hmd = self.lrelu4(hmd)
+		
+		x = torch.cat((hm_avgpool,hmd),dim=1).to(torch.float32)
+		
+		x = self.linear2(x)
+		x = self.lrelu5(x)
+
+		return x
 
 
 class Linear(nn.Module):
-    def __init__(self, linear_size, p_dropout=0.5):
-        super(Linear, self).__init__()
-        self.l_size = linear_size
+	def __init__(self, linear_size, p_dropout=0.5):
+		super(Linear, self).__init__()
+		self.l_size = linear_size
 
-        self.relu = nn.ReLU(inplace=True)
-        self.dropout = nn.Dropout(p_dropout)
+		self.relu = nn.ReLU(inplace=True)
+		self.dropout = nn.Dropout(p_dropout)
 
-        self.w1 = nn.Linear(self.l_size, self.l_size)
-        self.batch_norm1 = nn.BatchNorm1d(self.l_size)
+		self.w1 = nn.Linear(self.l_size, self.l_size)
+		self.batch_norm1 = nn.BatchNorm1d(self.l_size)
 
-        self.w2 = nn.Linear(self.l_size, self.l_size)
-        self.batch_norm2 = nn.BatchNorm1d(self.l_size)
+		self.w2 = nn.Linear(self.l_size, self.l_size)
+		self.batch_norm2 = nn.BatchNorm1d(self.l_size)
 
-    def forward(self, x):
-        y = self.w1(x)
-        y = self.batch_norm1(y)
-        y = self.relu(y)
-        y = self.dropout(y)
+	def forward(self, x):
+		y = self.w1(x)
+		y = self.batch_norm1(y)
+		y = self.relu(y)
+		y = self.dropout(y)
 
-        y = self.w2(y)
-        y = self.batch_norm2(y)
-        y = self.relu(y)
-        y = self.dropout(y)
+		y = self.w2(y)
+		y = self.batch_norm2(y)
+		y = self.relu(y)
+		y = self.dropout(y)
 
-        out = x + y
+		out = x + y
 
-        return out
+		return out
 
 
 class LinearModel(nn.Module):
-    def __init__(self,
-				linear_size=1024,
-				num_stage=2,
+	def __init__(self,
+				linear_size=512,
+				num_stage=1,
 				p_dropout=0.5,
 				):
-        super(LinearModel, self).__init__()
+		super(LinearModel, self).__init__()
 
-        self.linear_size = linear_size
-        self.p_dropout = p_dropout
-        self.num_stage = num_stage
+		self.linear_size = linear_size
+		self.p_dropout = p_dropout
+		self.num_stage = num_stage
 
-        # 2d joints
-        self.input_size =  15 * 2
-        # 3d joints
-        self.output_size = 15 * 3
+		# 2d joints
+		self.input_size =  162
+		# 3d joints
+		self.output_size = 15 * 3
 
-        # process input to linear size
-        self.w1 = nn.Linear(self.input_size, self.linear_size)
-        self.batch_norm1 = nn.BatchNorm1d(self.linear_size)
+		# process input to linear size
+		self.w1 = nn.Linear(self.input_size, self.linear_size)
+		self.batch_norm1 = nn.BatchNorm1d(self.linear_size)
 
-        self.linear_stages = []
-        for l in range(num_stage):
-            self.linear_stages.append(Linear(self.linear_size, self.p_dropout))
-        self.linear_stages = nn.ModuleList(self.linear_stages)
+		self.linear_stages = []
+		for l in range(num_stage):
+			self.linear_stages.append(Linear(self.linear_size, self.p_dropout))
+		self.linear_stages = nn.ModuleList(self.linear_stages)
 
-        # post processing
-        self.w2 = nn.Linear(self.linear_size, self.output_size)
+		# post processing
+		self.w2 = nn.Linear(self.linear_size, self.output_size)
 
-        self.relu = nn.ReLU(inplace=True)
-        self.dropout = nn.Dropout(self.p_dropout)
+		self.relu = nn.ReLU(inplace=True)
+		self.dropout = nn.Dropout(self.p_dropout)
 
-    def forward(self, x):
-        # pre-processing
-        y = self.w1(x)
-        y = self.batch_norm1(y)
-        y = self.relu(y)
-        y = self.dropout(y)
+	def forward(self, x):
+		# pre-processing
+		y = self.w1(x)
+		y = self.batch_norm1(y)
+		y = self.relu(y)
+		y = self.dropout(y)
 
-        # linear layers
-        for i in range(self.num_stage):
-            y = self.linear_stages[i](y)
+		# linear layers
+		for i in range(self.num_stage):
+			y = self.linear_stages[i](y)
 
-        y = self.w2(y)
+		y = self.w2(y)
 
-        return y
+		return y
 ##
 
 @MODELS.register_module()
@@ -166,6 +206,8 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 					type='KeypointMSELoss', use_target_weight=True),
 				loss_3d: ConfigType = dict(
 					type='MSELoss'),
+				loss_hmd: ConfigType = dict(
+					type='MSELoss'),
 				decoder: OptConfigType = None,
 				init_cfg: OptConfigType = None):
 
@@ -173,20 +215,19 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 			init_cfg = self.default_init_cfg
 
 		super().__init__(init_cfg)
-
+		self.hm_iteration = 2000
 		self.in_channels = in_channels
 		self.out_channels = out_channels
 		self.loss_module = MODELS.build(loss)
 		self.loss_3d_module = MODELS.build(loss_3d) # 수정
+		self.loss_hmd_module = MODELS.build(loss_hmd)
+
 
 		## 3d baseline
 		self.keypoints_3d_module = LinearModel()
 		##
-		## HMD_info
-		self.linear_9_to_34 = nn.Linear(9,34)
+		self.encoder = Encoder()
 
-		## hmd_info_origin 
-		self.linear_9_to_51 = nn.Linear(9,51)
 
 		if decoder is not None:
 			self.decoder = KEYPOINT_CODECS.build(decoder)
@@ -346,8 +387,6 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 				args = (args, )
 			return func(*args)
 		
-		def _sigmoid(x):
-			return 1 / (1 + np.exp(-x))
 		
 		MASK_TH = 0.3
 
@@ -370,7 +409,7 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 			batch_keypoints = []
 			batch_scores = []
 			batch_visibility = []
-			batch_masked_keypoints =[]
+			# batch_masked_keypoints =[]
 			for outputs in batch_output_np:
 				keypoints, scores = _pack_and_call(outputs,
 												   self.decoder.decode)
@@ -380,67 +419,28 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 					batch_scores.append(scores[0])
 					batch_visibility.append(scores[1])
 				else:
-					mask = np.expand_dims((scores > MASK_TH),axis=-1)
-					masked_keypoints = keypoints * mask
-					batch_masked_keypoints.append(masked_keypoints)
+					# mask = np.expand_dims((scores > MASK_TH),axis=-1)
+					# masked_keypoints = keypoints * mask
+					# batch_masked_keypoints.append(masked_keypoints)
 					batch_scores.append(scores)
 					batch_visibility.append(None)
 
 		preds = []
 
 
-		# TODO : test pipeline에서 gt 가 없을 경우, 아니면 pipeline 상으로 통과할때 데이터셋의 hmd info를 추가해주는 pipeline 추가해야할 듯
 		## HMD_info
-		# HMD_info = torch.cat([
-		# 	d.gt_instance_labels.hmd_info for d in batch_data_samples
-		# ])
-		# HMD_info = HMD_info.flatten(start_dim=1) # shape (batch_size,9)
+		HMD_info = torch.cat([
+			d.gt_instance_labels.hmd_info for d in batch_data_samples
+		])
+		HMD_info = HMD_info.flatten(start_dim=1) # shape (batch_size,9)
 		
-
-		# ## 3d baseline
-		# input_size = 34
-		# batch_3d_keypoints = torch.tensor(batch_keypoints,device=batch_outputs.device).squeeze().view(-1,34)
-		# batch_3d_keypoints = self.keypoints_3d_module(batch_3d_keypoints)
-		# ##
-
-		# ## plus
-		## input_size = 34
-		# HMD_info = self.linear_9_to_34(HMD_info.to(torch.float32))
-		# batch_3d_keypoints = torch.tensor(batch_keypoints,device=batch_outputs.device).squeeze().view(-1,34)
-		# batch_3d_keypoints = self.keypoints_3d_module(batch_3d_keypoints+HMD_info)
-		# ##
-
-		# ## concat
-		## input_size = 34 + 9
-		# batch_3d_keypoints = torch.tensor(batch_keypoints,device=batch_outputs.device).squeeze().view(-1,34)
-		# concat_batch_3d_keypoints = torch.cat((batch_3d_keypoints,HMD_info),dim=1).to(torch.float32)
-		# batch_3d_keypoints = self.keypoints_3d_module(concat_batch_3d_keypoints)
-		# ##
-
-
-		## masking
-		# input_size = 34 + 9
 		
-		# TODO
-		# \custom_mo2cap2_heatmap_head.py:423: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at  C:\actions-runner\_work\pytorch\pytorch\builder\windows\pytorch\torch\csrc\utils\tensor_new.cpp:204.)
-		# batch_3d_keypoints = torch.tensor(batch_masked_keypoints,device=batch_outputs.device).squeeze().view(-1,30)
-		batch_masked_keypoints_np = np.array(batch_masked_keypoints)
+		z = self.encoder(batch_outputs.to(torch.float32),HMD_info.to(torch.float32))
+	
+		batch_3d_keypoints = self.keypoints_3d_module(z)
 
-		# numpy 배열을 텐서로 변환
-		batch_3d_keypoints = torch.from_numpy(batch_masked_keypoints_np).to(device=batch_outputs.device)
 
-		# 필요한 경우 차원 조정
-		batch_3d_keypoints = batch_3d_keypoints.squeeze().view(-1, 30)
-		# batch_3d_keypoints = torch.tensor(batch_masked_keypoints,device=batch_outputs.device).squeeze().view(-1,30)
-		# concat_batch_3d_keypoints = torch.cat((batch_3d_keypoints,HMD_info),dim=1).to(torch.float32)
-		batch_3d_keypoints = self.keypoints_3d_module(batch_3d_keypoints)
-		##
-
-		## masking + input origin
-		# input_size = 17 * 2(with masking), output = 17 * 3 인데 0,9,10을 바꿔치기
-		# batch_3d_keypoints = torch.tensor(batch_masked_keypoints,device=batch_outputs.device).squeeze().view(-1,30)
-		# batch_3d_keypoints = self.keypoints_3d_module(batch_3d_keypoints)
-		# # HMD_info = HMD_info.view(-1,3,3) # 0,9,10 # shape (batch_size,3,3)
+		# HMD_info = HMD_info.view(-1,3,3) # 0,9,10 # shape (batch_size,3,3)
 		# Neck = HMD_info[:,:3]
 		# RightHand = HMD_info[:,3:6]
 		# LeftHand = HMD_info[:,6:]
@@ -553,11 +553,16 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 		gt_keypoint_3d = torch.cat([
 			d.gt_instance_labels.keypoint3d for d in batch_data_samples
 		])
+		HMD_info = torch.cat([
+			d.gt_instance_labels.hmd_info for d in batch_data_samples
+		])
 
 		keypoint_weights_3d = keypoint_weights.unsqueeze(-1)
 		_,pred_batch_3d_keypoints = self.decode(pred_fields,batch_data_samples)
 		pred_batch_3d_keypoints = pred_batch_3d_keypoints.view(-1,15,3)
-		loss_3d = self.loss_3d_module(pred_batch_3d_keypoints.to(torch.double),gt_keypoint_3d.to(torch.double),keypoint_weights_3d)
+		pred_hmd_info = pred_batch_3d_keypoints[:,[0,3,6],:]
+		loss_hmd = self.loss_hmd_module(pred_hmd_info.to(torch.double),HMD_info.to(torch.double))
+		loss_kpt3d = self.loss_3d_module(pred_batch_3d_keypoints.to(torch.double),gt_keypoint_3d.to(torch.double),keypoint_weights_3d)
 		##
 
 		# calculate losses
@@ -565,7 +570,9 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 		loss = self.loss_module(pred_fields, gt_heatmaps, keypoint_weights)
 		
 		## 3d baseline
-		losses.update(loss_kpt3d = loss_3d)
+		if self.hm_iteration >= 0:
+			losses.update(loss_hmd = loss_hmd)
+			losses.update(loss_kpt3d = loss_kpt3d)
 		##
 		
 		losses.update(loss_kpt=loss)
@@ -579,7 +586,9 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 
 			acc_pose = torch.tensor(avg_acc, device=gt_heatmaps.device)
 			losses.update(acc_pose=acc_pose)
-
+		
+		self.hm_iteration += 1
+		
 		return losses
 
 	def _load_state_dict_pre_hook(self, state_dict, prefix, local_meta, *args,
