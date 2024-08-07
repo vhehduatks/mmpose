@@ -384,7 +384,13 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 
 			for img_file in img_files:
 				img_path = os.path.join(img_folder, img_file)
-				json_file = img_file.replace('.png', '.json')
+				json_file = None
+				if img_file.endswith('.png'):
+					json_file = img_file.replace('.png', '.json')
+				elif img_file.endswith('.jpg'):
+					json_file = img_file.replace('.jpg', '.json')
+				assert json_file is not None
+				# jpg도 추가
 				json_path = os.path.join(json_folder, json_file)
 				
 				if os.path.exists(json_path):
