@@ -636,21 +636,18 @@ def compute_error(pred, gt, return_mean=True, mode='baseline', protocol=None, _S
 		
 		kinematic_parents = np.array([ 0, 0, 1, 2, 0, 4, 5, 1, 7, 8, 9, 4, 11, 12, 13]) #TODO : upper bodys는 7개 관절이니까 parents 도 수정해야 함
 
-		# _mean3D = mean3D
-		# if _SEL:
-		# 	kinematic_parents = kinematic_parents[_SEL]
-		# 	_mean3D = mean3D[:,_SEL]
 			
 
 		bones_mean = mean3D - mean3D[:,kinematic_parents]
 		bone_length = np.sqrt(np.sum(np.power(bones_mean, 2), axis=0)) # 15 shape
 		gt_rescale = skeleton_rescale(gt, bone_length[1:], kinematic_parents)
 		pred_rescale = skeleton_rescale(pred, bone_length[1:], kinematic_parents)
-		_, gt_rot, _ = procrustes(gt_rescale, pred_rescale, True, False)
+		assert gt_rescale.shape == (3,15) and pred_rescale.shape == (3,15)
+		_, gt_rot, _ = procrustes(np.transpose(pred_rescale), np.transpose(gt_rescale), True, False) # gt_rot.shape : 15,3
 		if _SEL:
 			pred_rescale = pred_rescale[:,_SEL]
-			gt_rot = gt_rot[:,_SEL]
-		error = pred_rescale - gt_rot
+			gt_rot = gt_rot[_SEL,:]
+		error = pred_rescale - np.transpose(gt_rot)
 		joint_error = np.sqrt(np.sum(np.power(error, 2), axis=0)) 
 		if return_mean:
 			return np.mean(joint_error)

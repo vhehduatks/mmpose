@@ -286,8 +286,9 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 			else:
 				keypoints_visible = np.ones(keypoints.shape[:-1])
 			pred_kpt = keypoints # (1, 15, 3)
-			pred_kpt = pred_kpt.reshape(15,3).T
-			pred_rescale = mo2cap2_evaluate.skeleton_rescale(pred_kpt, bone_length[1:], kinematic_parents)
+			pred_kpt = pred_kpt.reshape(15,3).T # 3,15
+			pred_rescale = mo2cap2_evaluate.skeleton_rescale(pred_kpt, bone_length[1:], kinematic_parents) 
+			assert pred_kpt.shape == (3,15) and pred_rescale.shape ==(3,15)
 			pred_rescale_input = pred_rescale.T.reshape(1,15,3)
 			_draw_3d_instances_kpts(pred_rescale_input, scores, scores_2d,
 									keypoints_visible, 1, show_kpt_idx,
@@ -331,11 +332,11 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 			if scores_2d is None:
 				scores_2d = np.ones(keypoints.shape[:-1])
 			gt_kpt = keypoints
-
-			gt_kpt = gt_kpt.reshape(15,3).T
+			gt_kpt = gt_kpt.reshape(15,3).T # 3,15
 			gt_rescale = mo2cap2_evaluate.skeleton_rescale(gt_kpt, bone_length[1:], kinematic_parents)
-			_, gt_rot, _ = mo2cap2_evaluate.procrustes(np.transpose(gt_rescale.T), np.transpose(pred_rescale.T), True, False)
-			gt_rescale_input = gt_rot.T.reshape(1,15,3)
+			assert gt_kpt.shape == (3,15) and gt_rescale.shape == (3,15), 'shape error'
+			_, gt_rot, _ = mo2cap2_evaluate.procrustes(np.transpose(pred_rescale), np.transpose(gt_rescale), True, False)# gt_rot.shape : 15,3
+			gt_rescale_input = gt_rot.reshape(1,15,3)
 			_draw_3d_instances_kpts(gt_rescale_input, scores, scores_2d,
 									keypoints_visible, 2, show_kpt_idx,
 									'Ground Truth')
