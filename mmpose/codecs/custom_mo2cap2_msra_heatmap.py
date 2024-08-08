@@ -48,7 +48,7 @@ class Custom_mo2cap2_MSRAHeatmap(BaseKeypointCodec):
 	"""
 
 	## 3d baseline
-
+	# instance_mapping_table  -> gt_instance
 	instance_mapping_table = dict(
 		bbox='bboxes',
 		bbox_score='bbox_scores',
@@ -76,8 +76,9 @@ class Custom_mo2cap2_MSRAHeatmap(BaseKeypointCodec):
 	# items in `label_mapping_table` will be packed into
 	# PoseDataSample.gt_instance_labels and converted to Tensor. These items
 	# will be used for computing losses
+	# label_mapping_table -> gt_instance_labels
 	label_mapping_table = dict(
-		keypoint_weights='keypoint_weights',keypoint3d = 'keypoint3d', hmd_info = 'hmd_info', hmd_info_w_noise ='hmd_info_w_noise')
+		keypoint_weights='keypoint_weights',keypoint3d = 'keypoint3d',keypoints='keypoints', hmd_info = 'hmd_info', hmd_info_w_noise ='hmd_info_w_noise')
 
 
 	auxiliary_encode_keys = {'keypoint3d',}

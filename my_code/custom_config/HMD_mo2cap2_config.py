@@ -54,9 +54,11 @@ model = dict(
         type='CustomMo2Cap2HeatmapHead',
         in_channels=2048,
         out_channels=15, # keypoint num
+		input_size = codec['input_size'],
         loss=dict(type='KeypointMSELoss', use_target_weight=True, loss_weight = 1000),
 		loss_3d=dict(type='MSELoss', use_target_weight=False, loss_weight = 10),
 		loss_hmd=dict(type='MSELoss', use_target_weight=False, loss_weight = 10),
+		loss_recon2d=dict(type='MSELoss', use_target_weight=False, loss_weight = 10),
         decoder=codec),
     test_cfg=dict(
         flip_test=True,
@@ -107,7 +109,7 @@ data_mode = 'topdown'
 # ann_file_val = r'F:\mo2cap2_data_temp_extracted\TestSet'
 # ann_file_train = r'F:\mo2cap2_data_temp_extracted\TrainSet'
 # ---
-# ## mo2cap2 dataset small, test small
+# # ## mo2cap2 dataset small, test small
 # ann_file_test = r'F:\mo2cap2_data_small\TestSet'
 # ann_file_val = r'F:\mo2cap2_data_small\ValSet'
 # ann_file_train = r'F:\mo2cap2_data_small\TrainSet'
@@ -192,7 +194,7 @@ dataset_mo2cap2_val = dict(
 
 # 1000,500 할때는 16:2,8:2
 train_dataloader = dict(
-    batch_size=64,
+    batch_size=128,
     num_workers=6,
     persistent_workers=False,
     pin_memory=True,
@@ -245,7 +247,7 @@ vis_backends = [
 		type='WandbVisBackend',
 		init_kwargs=dict(
 			# entity = "cv04",
-			project="mmpose_mo2cap2dataset_hotfix",
+			project="mmpose_mo2cap2_middel",
 			),
 		),
 ]
