@@ -13,6 +13,8 @@ from .regression_loss import (BoneLoss, L1Loss, MPJPELoss,
                               RLELoss, SemiSupervisionLoss, SmoothL1Loss,
                               SoftWeightSmoothL1Loss, SoftWingLoss, WingLoss)
 
+from .mo2cap2_loss import (pose_l2norm, cosine_similarity, limb_length, heatmap_recon)
+
 __all__ = [
     'KeypointMSELoss', 'KeypointOHKMMSELoss', 'SmoothL1Loss', 'WingLoss',
     'MPJPELoss', 'MSELoss', 'L1Loss', 'BCELoss', 'BoneLoss',
