@@ -71,7 +71,10 @@ class CustomMo2Cap2Baselinel1(BaseHead):
 					type='limb_length'
 				),
 				loss_heatmap_recon:ConfigType = dict(
-					type='heatmap_recon'
+					type='KeypointMSELoss'
+				),
+				loss_hmd:ConfigType = dict(
+					type='MSELoss'
 				),
 				decoder: OptConfigType = None,
 				init_cfg: OptConfigType = None):
@@ -88,6 +91,9 @@ class CustomMo2Cap2Baselinel1(BaseHead):
 		self.loss_cosine_similarity_module = MODELS.build(loss_cosine_similarity)
 		self.loss_limb_length_module = MODELS.build(loss_limb_length)
 		self.loss_heatmap_recon_module = MODELS.build(loss_heatmap_recon)
+		self.loss_hmd_module = MODELS.build(loss_hmd)
+
+
 		self.pose_decoder = PoseDecoder(num_classes = out_channels)
 		# Heatmap decoder that takes latent vector Z and generates the original 2D heatmap
 		self.heatmap_decoder = HeatmapDecoder(out_channels)
@@ -461,7 +467,7 @@ class CustomMo2Cap2Baselinel1(BaseHead):
 		loss_pose_l2norm = self.loss_pose_l2norm_module(pred_batch_3d_keypoints, gt_keypoint_3d)
 		loss_cosine_similarity = self.loss_cosine_similarity_module(pred_batch_3d_keypoints, gt_keypoint_3d)
 		loss_limb_length = self.loss_limb_length_module(pred_batch_3d_keypoints, gt_keypoint_3d)
-		loss_heatmap_recon = self.loss_heatmap_recon_module(pred_fields,pred_recon_heatmap)
+		loss_heatmap_recon = self.loss_heatmap_recon_module(pred_recon_heatmap,gt_heatmaps,keypoint_weights)
 		loss = self.loss_module(pred_fields, gt_heatmaps, keypoint_weights)
 		# loss_hmd = self.loss_hmd_module(pred_hmd_info.to(torch.double),HMD_info.to(torch.double))
 		# loss_kpt3d = self.loss_3d_module(pred_batch_3d_keypoints.to(torch.double),gt_keypoint_3d.to(torch.double),keypoint_weights_3d)
@@ -473,7 +479,9 @@ class CustomMo2Cap2Baselinel1(BaseHead):
 		losses.update(loss_pose_l2norm = torch.mean(loss_pose_l2norm))
 		losses.update(loss_cosine_similarity = torch.mean(loss_cosine_similarity))
 		losses.update(loss_limb_length = torch.mean(loss_limb_length))
-		losses.update(loss_heatmap_recon = torch.mean(loss_heatmap_recon))
+		# losses.update(loss_heatmap_recon = torch.mean(loss_heatmap_recon))
+		losses.update(loss_heatmap_recon = loss_heatmap_recon)
+		# losses.update(loss_hmd = loss_hmd)
 		## 3d baseline
 		# if self.hm_iteration >= 0:
 		# 	losses.update(loss_hmd = loss_hmd)

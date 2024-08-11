@@ -219,17 +219,17 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 				# if frame_data[joint_name]['2d'][1] > y_max: y_max = frame_data[joint_name]['2d'][1]
 				
 				#test 셋 좌표계와 동일하게
-				# p3d[jid][0] = frame_data[joint_name]['3d'][0]
-				# p3d[jid][1] = frame_data[joint_name]['3d'][1]
-				# p3d[jid][2] = frame_data[joint_name]['3d'][2]
-				if not self.test_mode:
-					p3d[jid][0] = frame_data[joint_name]['3d'][0]
-					p3d[jid][1] = frame_data[joint_name]['3d'][2] * -1
-					p3d[jid][2] = frame_data[joint_name]['3d'][1] 
-				else:
-					p3d[jid][0] = frame_data[joint_name]['3d'][0]
-					p3d[jid][1] = frame_data[joint_name]['3d'][1]
-					p3d[jid][2] = frame_data[joint_name]['3d'][2]
+				p3d[jid][0] = frame_data[joint_name]['3d'][0]
+				p3d[jid][1] = frame_data[joint_name]['3d'][1]
+				p3d[jid][2] = frame_data[joint_name]['3d'][2]
+				# if not self.test_mode:
+				# 	p3d[jid][0] = frame_data[joint_name]['3d'][0]
+				# 	p3d[jid][1] = frame_data[joint_name]['3d'][2] * -1
+				# 	p3d[jid][2] = frame_data[joint_name]['3d'][1] 
+				# else:
+				# 	p3d[jid][0] = frame_data[joint_name]['3d'][0]
+				# 	p3d[jid][1] = frame_data[joint_name]['3d'][1]
+				# 	p3d[jid][2] = frame_data[joint_name]['3d'][2]
 
 			# 둘다 neck이 000
 			p3d -= p3d[0]
