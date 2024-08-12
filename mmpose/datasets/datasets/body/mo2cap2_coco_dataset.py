@@ -103,9 +103,9 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 
 	def _get_chunk_folders(self):
 		if self.test_mode:
-			res_path = [f for f in os.listdir(self.data_root) if f in ['olek_outdoor','weipeng_studio']]
+			res_path = sorted([f for f in os.listdir(self.data_root) if f in ['olek_outdoor','weipeng_studio']])
 		else:
-			res_path = [f for f in os.listdir(self.data_root) if f.startswith('mo2cap2_chunk_')]
+			res_path = sorted([f for f in os.listdir(self.data_root) if f.startswith('mo2cap2_chunk_')])
 		return res_path
 
 	# def index_db(self):
@@ -305,19 +305,13 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 			'area': area,
 			'hmd_info':hmd_info,
 			'hmd_info_w_noise':hmd_info_w_noise,
-			'raw_ann_info': {
-				'id': 1,
-				'image_id': img_id,
-				'category_id': np.ones(1, dtype=np.float32),
-				'keypoint3d': keypoint3d,
-				'iscrowd': 0,
-				'num_keypoints': 15,
-			},
 		}
 		if self.test_mode:
 			test_mode_update = {
 				'action': [frame_data['action']],
 				'raw_ann_info': {
+				'img_path': _rgba,
+				'json_path' : _frame_data,
 				}
 			}
 			# data_info 업데이트
@@ -327,6 +321,8 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 				'depth_path': None,
 				'segmentation_path': None,
 				'raw_ann_info': {
+					'img_path': _rgba,
+					'json_path' : _frame_data,
 					'bbox': bbox,
 					'keypoints': keypoints,
 					'area': area,

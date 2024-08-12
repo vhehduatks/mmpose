@@ -1,39 +1,90 @@
 _base_ = r'C:\Users\user\Documents\GitHub\mmpose\configs\_base_\default_runtime.py'
 
 # runtime
+# train_cfg = dict(
+# 	_delete_=True,
+# 	type='EpochBasedTrainLoop',
+# 	max_epochs=10,
+# 	val_interval=1,
+# 	dynamic_intervals=[(280, 1)])
 train_cfg = dict(
-	_delete_=True,
-	type='EpochBasedTrainLoop',
-	max_epochs=10,
-	val_interval=1,
-	dynamic_intervals=[(280, 1)])
-
+    _delete_=True,
+    type='IterBasedTrainLoop',  # Change to iteration-based training loop
+    max_iters=70000,            # Set the maximum number of iterations
+    val_interval=1000           # Validation interval in iterations
+)
 auto_scale_lr = dict(base_batch_size=256)
 
+# default_hooks = dict(
+# 	checkpoint=dict(type='CheckpointHook', interval=10, max_keep_ckpts=3),
+# 	visualization=dict(type='PoseVisualizationHook', enable=True, interval = 15,kpt_thr=0.3),
+# 	)
 default_hooks = dict(
-	checkpoint=dict(type='CheckpointHook', interval=10, max_keep_ckpts=3),
-	visualization=dict(type='PoseVisualizationHook', enable=True, interval = 15,kpt_thr=0.3),
-	)
+    checkpoint=dict(type='CheckpointHook', interval=10000, max_keep_ckpts=3),
+    visualization=dict(type='PoseVisualizationHook', enable=True, interval=15, kpt_thr=0.3),
+)
+# # optimizer
+# optim_wrapper = dict(optimizer=dict(
+# 	type='AdamW',
+# 	lr=5e-4,
+# ))
+
+# # learning policy
+# param_scheduler = [
+# 	dict(
+# 		type='LinearLR', begin=0, end=500, start_factor=0.001,
+# 		by_epoch=False),  # warm-up
+# 	dict(
+# 		type='MultiStepLR',
+# 		begin=0,
+# 		end=210,
+# 		milestones=[170, 200],
+# 		gamma=0.1,
+# 		by_epoch=True)
+# ]
+
+param_scheduler = [
+    dict(
+        type='LinearLR', 
+        begin=0, 
+        end=500, 
+        start_factor=0.001,
+        by_epoch=False
+    ),
+    dict(
+        type='MultiStepLR',
+        begin=0,
+        end=70000,
+        milestones=[5000 * i for i in range(1, 15)],  # Every 5000 iterations
+        gamma=0.5,
+        by_epoch=False
+    )
+]
 
 # optimizer
-optim_wrapper = dict(optimizer=dict(
-	type='Adam',
-	lr=5e-4,
-))
+optim_wrapper = dict(
+    optimizer=dict(
+        type='AdamW',
+        lr=5e-4,
+    )
+)
 
-# learning policy
-param_scheduler = [
-	dict(
-		type='LinearLR', begin=0, end=500, start_factor=0.001,
-		by_epoch=False),  # warm-up
-	dict(
-		type='MultiStepLR',
-		begin=0,
-		end=210,
-		milestones=[170, 200],
-		gamma=0.1,
-		by_epoch=True)
-]
+# # learning policy
+# param_scheduler = [
+#     dict(
+#         type='ReduceOnPlateauLR',
+#         mode='min',
+#         factor=0.1,
+#         patience=7,  # Adjusted to match your es_patience-3
+#         threshold=0.0001,
+#         threshold_mode='rel',
+#         cooldown=0,
+#         min_lr=1e-8,
+#         eps=1e-08,
+#         verbose=True
+#     )
+# ]
+
 # model
 codec = dict(
 	type='Custom_mo2cap2_MSRAHeatmap', input_size=(256, 256), heatmap_size=(47, 47), sigma=2)
@@ -48,17 +99,17 @@ model = dict(
 	backbone=dict(
 		type='ResNet',
 		depth=101,
-		init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50'),
+		init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet101'),
 	),
 	head=dict(
 		type='CustomMo2Cap2Baselinel1',
 		in_channels=2048,
 		out_channels=15, # keypoint num
 		loss=dict(type='KeypointMSELoss', use_target_weight=True, loss_weight = 1000),
-		loss_pose_l2norm = dict(type='pose_l2norm'),
-		loss_cosine_similarity = dict(type='cosine_similarity'),
-		loss_limb_length = dict(type='limb_length'),
-		loss_heatmap_recon = dict(type='heatmap_recon'),
+		loss_pose_l2norm = dict(type='pose_l2norm', loss_weight = 1.),
+		loss_cosine_similarity = dict(type='cosine_similarity', loss_weight = 0.1),
+		loss_limb_length = dict(type='limb_length', loss_weight = 0.5),
+		loss_heatmap_recon = dict(type='KeypointMSELoss', use_target_weight=True, loss_weight = 500),
 		decoder=codec),
 	test_cfg=dict(
 		flip_test=True,
@@ -162,7 +213,7 @@ dataset_mo2cap2_val = dict(
 
 # 1000,500 할때는 16:2,8:2
 train_dataloader = dict(
-	batch_size=128,
+	batch_size=64,
 	num_workers=6,
 	persistent_workers=False,
 	pin_memory=True,
@@ -202,7 +253,7 @@ val_evaluator = dict(
 	use_action = False,
 	)
 test_evaluator = dict(
-	type='CustomMo2Cap2Metric',
+type='CustomMo2Cap2Metric',
 	ann_file=None,
 	use_action = True,
 	)
@@ -215,7 +266,7 @@ vis_backends = [
 		type='WandbVisBackend',
 		init_kwargs=dict(
 			# entity = "cv04",
-			project="mmpose_mo2cap2_baseline_middle",
+			project="mmpose_mo2cap2_baseline_os_test",
 			),
 		),
 ]
