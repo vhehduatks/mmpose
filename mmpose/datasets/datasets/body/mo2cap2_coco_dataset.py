@@ -49,7 +49,8 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 				test_mode: bool = False,
 				lazy_init: bool = False,
 				max_refetch: int = 1000,
-				sample_interval: int = 1):
+				sample_interval: int = 1,
+				input_size:tuple = (256,256)):
 		
 
 		
@@ -79,7 +80,7 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 		self.test_mode = test_mode
 		self.data_root = data_root
 		self.chunk_folders = self._get_chunk_folders()
-
+		self.input_size = input_size
 		super().__init__(
 			ann_file=ann_file,
 			metainfo=metainfo,
@@ -249,7 +250,7 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 				# bbox = np.array([0,0,1280,1024]) #xyxy
 		
 			else:
-				bbox = np.array([0,0,256,256])
+				bbox = np.array([0,0,self.input_size[0],self.input_size[1]])
 			bbox = bbox[np.newaxis,:]
 
 		except KeyError as e:

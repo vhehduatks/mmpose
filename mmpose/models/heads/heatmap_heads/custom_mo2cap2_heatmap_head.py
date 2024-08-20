@@ -73,9 +73,10 @@ class Encoder(nn.Module):
 		self.lrelu4 = nn.LeakyReLU(0.2)
 
 		self.linear2 = nn.Linear(256+36, 64)
+		self.linear2_ = nn.Linear(256, 64)
 		self.lrelu5 = nn.LeakyReLU(0.2)
 
-	def forward(self, hm, hmd):
+	def forward(self, hm, hmd = None):
 		hm = self.conv1(hm)
 		hm = self.lrelu1(hm)
 		hm = self.conv2(hm)
@@ -86,12 +87,16 @@ class Encoder(nn.Module):
 		hm_avgpool = self.avr_pool(hm).view(-1,256)
 
 
-		hmd = self.linear1(hmd)
-		hmd = self.lrelu4(hmd)
+		if hmd is not None:
+			hmd = self.linear1(hmd)
+			hmd = self.lrelu4(hmd)
+			
+			x = torch.cat((hm_avgpool,hmd),dim=1).to(torch.float32)
 		
-		x = torch.cat((hm_avgpool,hmd),dim=1).to(torch.float32)
-		
-		x = self.linear2(x)
+			x = self.linear2(x)
+		else:
+			x = self.linear2_(hm_avgpool)
+
 		x = self.lrelu5(x)
 
 		return x
@@ -249,7 +254,7 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 		self.keypoints_3d_module = LinearModel()
 		##
 		self.encoder = Encoder()
-		self.posedecoder_2d = PoseDecoder()
+		# self.posedecoder_2d = PoseDecoder()
 
 		if decoder is not None:
 			self.decoder = KEYPOINT_CODECS.build(decoder)
@@ -457,8 +462,9 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 		HMD_info = HMD_info.flatten(start_dim=1) # shape (batch_size,9)
 		
 		
-		z = self.encoder(batch_outputs.to(torch.float32),HMD_info.to(torch.float32)) # z : 162
-		batch_recon2d_keypoints = self.posedecoder_2d(z)
+		# z = self.encoder(batch_outputs.to(torch.float32),HMD_info.to(torch.float32)) # z : 64
+		z = self.encoder(batch_outputs.to(torch.float32)) # z : 64
+		# batch_recon2d_keypoints = self.posedecoder_2d(z)
 		batch_3d_keypoints = self.keypoints_3d_module(z)
 
 
@@ -478,11 +484,11 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 
 		# batch_3d_keypoints = batch_3d_keypoints.view(-1,15,3)
 
-		for keypoints, keypoint_3d, scores, visibility, recon2d_keypoints in zip(batch_keypoints, batch_3d_keypoints, batch_scores,
-												 batch_visibility, batch_recon2d_keypoints):
+		for keypoints, keypoint_3d, scores, visibility in zip(batch_keypoints, batch_3d_keypoints, batch_scores,
+												 batch_visibility):
 			keypoint_3d = keypoint_3d.unsqueeze(dim=0)
-			recon2d_keypoints = recon2d_keypoints.unsqueeze(dim=0)
-			pred = InstanceData(keypoints=keypoints, keypoint_scores=scores, keypoint_3d=keypoint_3d, recon2d_keypoints=recon2d_keypoints)
+			# recon2d_keypoints = recon2d_keypoints.unsqueeze(dim=0)
+			pred = InstanceData(keypoints=keypoints, keypoint_scores=scores, keypoint_3d=keypoint_3d)
 			if visibility is not None:
 				pred.keypoints_visible = visibility
 			preds.append(pred)
@@ -576,16 +582,16 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 		pred,pred_batch_3d_keypoints = self.decode(pred_fields,batch_data_samples)
 
 		## recon2d 
-		gt_keypoints = torch.cat([
-			d.gt_instance_labels.keypoints for d in batch_data_samples
-		])
+		# gt_keypoints = torch.cat([
+		# 	d.gt_instance_labels.keypoints for d in batch_data_samples
+		# ])
 
-		pred_recon2d_keypoints = torch.cat([
-			p.recon2d_keypoints for p in pred
-		])
+		# pred_recon2d_keypoints = torch.cat([
+		# 	p.recon2d_keypoints for p in pred
+		# ])
 		
-		gt_keypoints = gt_keypoints / self.scale_factor.view(1, 1, 2).to(device=gt_keypoints.device)
-		loss_recon2d = self.loss_recon2d_module(pred_recon2d_keypoints.to(torch.double),gt_keypoints.to(torch.double))
+		# gt_keypoints = gt_keypoints / self.scale_factor.view(1, 1, 2).to(device=gt_keypoints.device)
+		# loss_recon2d = self.loss_recon2d_module(pred_recon2d_keypoints.to(torch.double),gt_keypoints.to(torch.double))
 		##
 
 		## 3d baseline
@@ -615,7 +621,7 @@ class CustomMo2Cap2HeatmapHead(BaseHead):
 		losses.update(loss_kpt=loss)
 
 		## recon2d
-		losses.update(loss_recon2d = loss_recon2d)
+		# losses.update(loss_recon2d = loss_recon2d)
 		## TODO : loss, head debug
 
 		# calculate accuracy

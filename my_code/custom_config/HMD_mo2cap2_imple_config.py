@@ -87,7 +87,12 @@ optim_wrapper = dict(
 
 # model
 codec = dict(
-	type='Custom_mo2cap2_MSRAHeatmap', input_size=(256, 256), heatmap_size=(47, 47), sigma=2)
+	type='Custom_mo2cap2_MSRAHeatmap', input_size=(256, 256), heatmap_size=(47, 47), sigma=3)
+#mpii pretrained path 
+mpii_pretrained_resnet101_256x256 = r'C:\Users\user\.cache\torch\hub\checkpoints\pose_resnet_101_256x256.pth.tar'
+mpii_pretrained_resnet101_384x384 = r'C:\Users\user\.cache\torch\hub\checkpoints\pose_resnet_101_384x384.pth.tar'
+#torchvision pretrained path
+torchvision = 'torchvision://resnet101'
 
 model = dict(
 	type='TopdownPoseEstimator',
@@ -99,7 +104,7 @@ model = dict(
 	backbone=dict(
 		type='ResNet',
 		depth=101,
-		init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet101'),
+		init_cfg=dict(type='Pretrained', checkpoint=mpii_pretrained_resnet101_256x256),
 	),
 	head=dict(
 		type='CustomMo2Cap2Baselinel1',
@@ -187,6 +192,7 @@ dataset_mo2cap2_train = dict(
 	# ann_file=ann_file_train,
 	# data_prefix=dict(img=r'C:\Users\user\Documents\GitHub\mmpose\data\coco\train2017'),
 	pipeline=train_pipeline,
+	input_size=codec['input_size'],
 )
 
 dataset_mo2cap2_val = dict(
@@ -198,6 +204,7 @@ dataset_mo2cap2_val = dict(
 	# data_prefix=dict(img=r'C:\Users\user\Documents\GitHub\mmpose\data\coco\train2017'),
 	pipeline=val_pipeline,
 	test_mode = True,
+	input_size=codec['input_size'],
 )
 
 # dataset_mo2cap2_test = dict(
@@ -262,13 +269,13 @@ type='CustomMo2Cap2Metric',
 vis_backends = [
 	dict(type='LocalVisBackend'),
 	# dict(type='TensorboardVisBackend'),
-	dict(
-		type='WandbVisBackend',
-		init_kwargs=dict(
-			# entity = "cv04",
-			project="mmpose_mo2cap2_baseline_os_test",
-			),
-		),
+	# dict(
+	# 	type='WandbVisBackend',
+	# 	init_kwargs=dict(
+	# 		# entity = "cv04",
+	# 		project="mmpose_mo2cap2_baseline_middle",
+	# 		),
+	# 	),
 ]
 visualizer = dict(
 	# type='PoseLocalVisualizer', vis_backends=vis_backends, name='visualizer'
