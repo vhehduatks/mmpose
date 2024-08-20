@@ -10,8 +10,8 @@ _base_ = r'C:\Users\user\Documents\GitHub\mmpose\configs\_base_\default_runtime.
 train_cfg = dict(
     _delete_=True,
     type='IterBasedTrainLoop',  # Change to iteration-based training loop
-    max_iters=70000,            # Set the maximum number of iterations
-    val_interval=1000           # Validation interval in iterations
+    max_iters=500,            # Set the maximum number of iterations
+    val_interval=50           # Validation interval in iterations
 )
 auto_scale_lr = dict(base_batch_size=256)
 
@@ -23,6 +23,27 @@ default_hooks = dict(
     checkpoint=dict(type='CheckpointHook', interval=10000, max_keep_ckpts=3),
     visualization=dict(type='PoseVisualizationHook', enable=True, interval=15, kpt_thr=0.3),
 )
+
+# Early stopping hook configuration
+early_stopping_hook = dict(
+    type='EarlyStoppingHook',
+    monitor='mo2cap2/Full Body_All_mpjpe',  # Metric to monitor
+    rule='less',  # 'less' since MPJPE is an error metric
+    min_delta=1,  # Minimum change to qualify as improvement
+    patience=3,  # Number of validation intervals to wait
+    strict=False,  # Do not crash if the metric is not found
+    check_finite=True,  # Stop if the metric becomes NaN or infinite
+    stopping_threshold=None  # No immediate stopping threshold
+)
+
+# Add the early stopping hook to the list of custom hooks
+custom_hooks = [
+    early_stopping_hook,
+    # Add other hooks if necessary
+]
+
+
+
 # # optimizer
 # optim_wrapper = dict(optimizer=dict(
 # 	type='AdamW',
@@ -134,14 +155,14 @@ data_mode = 'topdown'
 # ann_file_train = r'F:\mo2cap2_data_temp_extracted\TrainSet'
 # ---
 # # ## mo2cap2 dataset small, test small
-# ann_file_test = r'F:\mo2cap2_data_small\TestSet'
-# ann_file_val = r'F:\mo2cap2_data_small\ValSet'
-# ann_file_train = r'F:\mo2cap2_data_small\TrainSet'
+ann_file_test = r'F:\mo2cap2_data_small\TestSet'
+ann_file_val = r'F:\mo2cap2_data_small\ValSet'
+ann_file_train = r'F:\mo2cap2_data_small\TrainSet'
 # ---
 # mo2cap2 dataset train middel, test all
-ann_file_test = r'F:\mo2cap2_data_half\TestSet'
-ann_file_val = r'F:\mo2cap2_data_half\ValSet'
-ann_file_train = r'F:\mo2cap2_data_half\TrainSet'
+# ann_file_test = r'F:\mo2cap2_data_half\TestSet'
+# ann_file_val = r'F:\mo2cap2_data_half\ValSet'
+# ann_file_train = r'F:\mo2cap2_data_half\TrainSet'
 # ---
 # # mo2cap2 dataset train all, test all
 # ann_file_val = r'F:\extracted_mo2cap2_dataset\TestSet'
@@ -268,14 +289,14 @@ type='CustomMo2Cap2Metric',
 # visualizer
 vis_backends = [
 	dict(type='LocalVisBackend'),
-	# dict(type='TensorboardVisBackend'),
-	# dict(
-	# 	type='WandbVisBackend',
-	# 	init_kwargs=dict(
-	# 		# entity = "cv04",
-	# 		project="mmpose_mo2cap2_baseline_middle",
-	# 		),
-	# 	),
+	# # dict(type='TensorboardVisBackend'),
+	dict(
+		type='WandbVisBackend',
+		init_kwargs=dict(
+			# entity = "cv04",
+			project="mmpose_mo2cap2_baseline_earlystop_test",
+			),
+		),
 ]
 visualizer = dict(
 	# type='PoseLocalVisualizer', vis_backends=vis_backends, name='visualizer'

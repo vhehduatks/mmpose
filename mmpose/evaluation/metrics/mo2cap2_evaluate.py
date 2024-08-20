@@ -636,8 +636,6 @@ def compute_error(pred, gt, return_mean=True, mode='baseline', protocol=None, _S
 		
 		kinematic_parents = np.array([ 0, 0, 1, 2, 0, 4, 5, 1, 7, 8, 9, 4, 11, 12, 13]) #TODO : upper bodys는 7개 관절이니까 parents 도 수정해야 함
 
-			
-
 		bones_mean = mean3D - mean3D[:,kinematic_parents]
 		bone_length = np.sqrt(np.sum(np.power(bones_mean, 2), axis=0)) # 15 shape
 		gt_rescale = skeleton_rescale(gt, bone_length[1:], kinematic_parents)
