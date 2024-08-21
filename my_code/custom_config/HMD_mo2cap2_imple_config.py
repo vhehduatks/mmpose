@@ -24,23 +24,23 @@ default_hooks = dict(
     visualization=dict(type='PoseVisualizationHook', enable=True, interval=15, kpt_thr=0.3),
 )
 
-# Early stopping hook configuration
-early_stopping_hook = dict(
-    type='EarlyStoppingHook',
-    monitor='mo2cap2/Full Body_All_mpjpe',  # Metric to monitor
-    rule='less',  # 'less' since MPJPE is an error metric
-    min_delta=1,  # Minimum change to qualify as improvement
-    patience=3,  # Number of validation intervals to wait
-    strict=False,  # Do not crash if the metric is not found
-    check_finite=True,  # Stop if the metric becomes NaN or infinite
-    stopping_threshold=None  # No immediate stopping threshold
-)
+# # Early stopping hook configuration
+# early_stopping_hook = dict(
+#     type='EarlyStoppingHook',
+#     monitor='mo2cap2/Full Body_All_mpjpe',  # Metric to monitor
+#     rule='less',  # 'less' since MPJPE is an error metric
+#     min_delta=1,  # Minimum change to qualify as improvement
+#     patience=3,  # Number of validation intervals to wait
+#     strict=False,  # Do not crash if the metric is not found
+#     check_finite=True,  # Stop if the metric becomes NaN or infinite
+#     stopping_threshold=None  # No immediate stopping threshold
+# )
 
-# Add the early stopping hook to the list of custom hooks
-custom_hooks = [
-    early_stopping_hook,
-    # Add other hooks if necessary
-]
+# # Add the early stopping hook to the list of custom hooks
+# custom_hooks = [
+#     early_stopping_hook,
+#     # Add other hooks if necessary
+# ]
 
 
 
@@ -109,6 +109,7 @@ optim_wrapper = dict(
 # model
 codec = dict(
 	type='Custom_mo2cap2_MSRAHeatmap', input_size=(256, 256), heatmap_size=(47, 47), sigma=3)
+
 #mpii pretrained path 
 mpii_pretrained_resnet101_256x256 = r'C:\Users\user\.cache\torch\hub\checkpoints\pose_resnet_101_256x256.pth.tar'
 mpii_pretrained_resnet101_384x384 = r'C:\Users\user\.cache\torch\hub\checkpoints\pose_resnet_101_384x384.pth.tar'
@@ -125,7 +126,7 @@ model = dict(
 	backbone=dict(
 		type='ResNet',
 		depth=101,
-		init_cfg=dict(type='Pretrained', checkpoint=mpii_pretrained_resnet101_256x256),
+		init_cfg=dict(type='Pretrained', checkpoint=torchvision),
 	),
 	head=dict(
 		type='CustomMo2Cap2Baselinel1',
@@ -290,13 +291,13 @@ type='CustomMo2Cap2Metric',
 vis_backends = [
 	dict(type='LocalVisBackend'),
 	# # dict(type='TensorboardVisBackend'),
-	dict(
-		type='WandbVisBackend',
-		init_kwargs=dict(
-			# entity = "cv04",
-			project="mmpose_mo2cap2_baseline_earlystop_test",
-			),
-		),
+	# dict(
+	# 	type='WandbVisBackend',
+	# 	init_kwargs=dict(
+	# 		# entity = "cv04",
+	# 		project="mmpose_mo2cap2_baseline_earlystop_test",
+	# 		),
+	# 	),
 ]
 visualizer = dict(
 	# type='PoseLocalVisualizer', vis_backends=vis_backends, name='visualizer'
