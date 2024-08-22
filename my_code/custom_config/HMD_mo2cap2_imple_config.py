@@ -10,8 +10,8 @@ _base_ = r'C:\Users\user\Documents\GitHub\mmpose\configs\_base_\default_runtime.
 train_cfg = dict(
     _delete_=True,
     type='IterBasedTrainLoop',  # Change to iteration-based training loop
-    max_iters=500,            # Set the maximum number of iterations
-    val_interval=50           # Validation interval in iterations
+    max_iters=100000,            # Set the maximum number of iterations
+    val_interval=1000           # Validation interval in iterations
 )
 auto_scale_lr = dict(base_batch_size=256)
 
@@ -20,7 +20,13 @@ auto_scale_lr = dict(base_batch_size=256)
 # 	visualization=dict(type='PoseVisualizationHook', enable=True, interval = 15,kpt_thr=0.3),
 # 	)
 default_hooks = dict(
-    checkpoint=dict(type='CheckpointHook', interval=10000, max_keep_ckpts=3),
+        checkpoint=dict(
+        type='CheckpointHook',
+        interval=1000,  # Save a checkpoint every epoch
+        save_best='mo2cap2/Full Body_All_mpjpe',  # Save the best checkpoint based on accuracy
+        rule='less',  # Use 'greater' if a higher metric value is better
+        max_keep_ckpts=3  # Keep the latest 3 checkpoints
+    ),
     visualization=dict(type='PoseVisualizationHook', enable=True, interval=15, kpt_thr=0.3),
 )
 
@@ -112,7 +118,9 @@ codec = dict(
 
 #mpii pretrained path 
 mpii_pretrained_resnet101_256x256 = r'C:\Users\user\.cache\torch\hub\checkpoints\pose_resnet_101_256x256.pth.tar'
-mpii_pretrained_resnet101_384x384 = r'C:\Users\user\.cache\torch\hub\checkpoints\pose_resnet_101_384x384.pth.tar'
+mpii_pretrained_resnet101_384x384 = r'C:\Users\user\Downloads\pose_mpii\pose_resnet_101_384x384.pth.tar'
+coco_pretrained_resnet101_256x192 = r'C:\Users\user\Downloads\pytorch-20240821T053436Z-001\pytorch\pose_coco\coco_pose_resnet_101_256x192.pth.tar'
+
 #torchvision pretrained path
 torchvision = 'torchvision://resnet101'
 
@@ -126,7 +134,7 @@ model = dict(
 	backbone=dict(
 		type='ResNet',
 		depth=101,
-		init_cfg=dict(type='Pretrained', checkpoint=torchvision),
+		init_cfg=dict(type='Pretrained', checkpoint=coco_pretrained_resnet101_256x192),
 	),
 	head=dict(
 		type='CustomMo2Cap2Baselinel1',
@@ -156,14 +164,14 @@ data_mode = 'topdown'
 # ann_file_train = r'F:\mo2cap2_data_temp_extracted\TrainSet'
 # ---
 # # ## mo2cap2 dataset small, test small
-ann_file_test = r'F:\mo2cap2_data_small\TestSet'
-ann_file_val = r'F:\mo2cap2_data_small\ValSet'
-ann_file_train = r'F:\mo2cap2_data_small\TrainSet'
+# ann_file_test = r'F:\mo2cap2_data_small\TestSet'
+# ann_file_val = r'F:\mo2cap2_data_small\ValSet'
+# ann_file_train = r'F:\mo2cap2_data_small\TrainSet'
 # ---
 # mo2cap2 dataset train middel, test all
-# ann_file_test = r'F:\mo2cap2_data_half\TestSet'
-# ann_file_val = r'F:\mo2cap2_data_half\ValSet'
-# ann_file_train = r'F:\mo2cap2_data_half\TrainSet'
+ann_file_test = r'F:\mo2cap2_data_half\TestSet'
+ann_file_val = r'F:\mo2cap2_data_half\ValSet'
+ann_file_train = r'F:\mo2cap2_data_half\TrainSet'
 # ---
 # # mo2cap2 dataset train all, test all
 # ann_file_val = r'F:\extracted_mo2cap2_dataset\TestSet'
@@ -295,7 +303,7 @@ vis_backends = [
 	# 	type='WandbVisBackend',
 	# 	init_kwargs=dict(
 	# 		# entity = "cv04",
-	# 		project="mmpose_mo2cap2_baseline_earlystop_test",
+	# 		project="mmpose_mo2cap2_baseline_middle",
 	# 		),
 	# 	),
 ]

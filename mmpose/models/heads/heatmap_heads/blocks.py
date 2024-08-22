@@ -288,9 +288,9 @@ class PoseDecoder(nn.Module):
         return x
 
 class HeatmapDecoder(nn.Module):
-    def __init__(self, num_classes=16, heatmap_resolution=47):
+    def __init__(self, num_classes=16, heatmap_resolution=47, input_size = 20):
         super(HeatmapDecoder, self).__init__()
-        self.linear1 = nn.Linear(20, 512)
+        self.linear1 = nn.Linear(input_size, 512)
         self.lrelu1 = nn.LeakyReLU(0.2)
         self.linear2 = nn.Linear(512, 2048)
         self.lrelu2 = nn.LeakyReLU(0.2)
