@@ -234,7 +234,15 @@ class CustomMo2Cap2Baselinel1(BaseHead):
 			num_stage=1,
 			p_dropout=0.3
 			)
-
+		
+		self.hmd_linear = nn.Sequential(
+			nn.Linear(9,64),
+			nn.ReLU(inplace=True)
+			)
+		self.hmd_decoder = nn.Sequential(
+			nn.Linear(64,9),
+			)
+		
 		if decoder is not None:
 			self.decoder = KEYPOINT_CODECS.build(decoder)
 		else:
@@ -452,15 +460,18 @@ class CustomMo2Cap2Baselinel1(BaseHead):
 		HMD_info = torch.cat([
 			d.gt_instance_labels.hmd_info for d in batch_data_samples
 		])
-		HMD_info = HMD_info.flatten(start_dim=1) # shape (batch_size,9)
+		# HMD_info = HMD_info.flatten(start_dim=1) # shape (batch_size,9)
 		
 		
-		z = self.encoder(batch_outputs.to(torch.float32),HMD_info.to(torch.float32)) # z : 64
-		# z = self.encoder(batch_outputs.to(torch.float32))
+		# z = self.encoder(batch_outputs.to(torch.float32),HMD_info.to(torch.float32)) # z : 64
+		z = self.encoder(batch_outputs.to(torch.float32))
 		# batch_recon2d_keypoints = self.posedecoder_2d(z)
 		# batch_3d_keypoints = self.keypoints_3d_module(z)
-		batch_3d_keypoints = self.pose_decoder(z)
-		generated_heatmaps = self.heatmap_decoder(z)
+		hmd_info_ = self.hmd_linear(HMD_info.to(torch.float32))
+
+		batch_3d_keypoints = self.pose_decoder(z+hmd_info_)
+		generated_heatmaps = self.heatmap_decoder(z+hmd_info_)
+		hmd_recons = self.hmd_decoder(z+hmd_info_)
 
 		# HMD_info = HMD_info.view(-1,3,3) # 0,9,10 # shape (batch_size,3,3)
 		# Neck = HMD_info[:,:3]
@@ -469,6 +480,9 @@ class CustomMo2Cap2Baselinel1(BaseHead):
 		# batch_3d_keypoints[:, :3] = Neck
 		# batch_3d_keypoints[:, 10:13] = RightHand
 		# batch_3d_keypoints[:, 19:22] = LeftHand
+		# batch_3d_keypoints[:,0,:] = Neck
+		# batch_3d_keypoints[:,3,:] = RightHand
+		# batch_3d_keypoints[:,6,:] = LeftHand
 		# ##
 
 		## add linear
@@ -478,12 +492,13 @@ class CustomMo2Cap2Baselinel1(BaseHead):
 
 		# batch_3d_keypoints = batch_3d_keypoints.view(-1,15,3)
 
-		for keypoints, keypoint_3d, scores, visibility, generated_heatmap in zip(batch_keypoints, batch_3d_keypoints, batch_scores,
-												 batch_visibility, generated_heatmaps):
+		for keypoints, keypoint_3d, scores, visibility, generated_heatmap, hmd_recon in zip(batch_keypoints, batch_3d_keypoints, batch_scores,
+												 batch_visibility, generated_heatmaps, hmd_recons):
 			keypoint_3d = keypoint_3d.unsqueeze(dim=0)
 			# recon2d_keypoints = recon2d_keypoints.unsqueeze(dim=0)
+			hmd_recon = hmd_recon.unsqueeze(dim=0)
 			generated_heatmap = generated_heatmap.unsqueeze(dim=0)
-			pred = InstanceData(keypoints=keypoints, keypoint_scores=scores, keypoint_3d=keypoint_3d, generated_heatmap=generated_heatmap)
+			pred = InstanceData(keypoints=keypoints, keypoint_scores=scores, keypoint_3d=keypoint_3d, generated_heatmap=generated_heatmap, hmd_recon = hmd_recon)
 			if visibility is not None:
 				pred.keypoints_visible = visibility
 			preds.append(pred)
@@ -584,7 +599,10 @@ class CustomMo2Cap2Baselinel1(BaseHead):
 		pred_recon_heatmap = torch.cat([
 			p.generated_heatmap for p in pred
 		])
-		
+
+		pred_recon_hmd = torch.cat([
+			p.hmd_recon for p in pred
+		])
 		# gt_keypoints = gt_keypoints / self.scale_factor.view(1, 1, 2).to(device=gt_keypoints.device)
 		# loss_recon2d = self.loss_recon2d_module(pred_recon2d_keypoints.to(torch.double),gt_keypoints.to(torch.double))
 		##
@@ -598,14 +616,13 @@ class CustomMo2Cap2Baselinel1(BaseHead):
 		])
 
 		pred_batch_3d_keypoints = pred_batch_3d_keypoints.view(-1,15,3)
-		pred_hmd_info = pred_batch_3d_keypoints[:,[0,3,6],:]
-		
+
 		loss_pose_l2norm = self.loss_pose_l2norm_module(pred_batch_3d_keypoints, gt_keypoint_3d)
 		loss_cosine_similarity = self.loss_cosine_similarity_module(pred_batch_3d_keypoints, gt_keypoint_3d)
 		loss_limb_length = self.loss_limb_length_module(pred_batch_3d_keypoints, gt_keypoint_3d)
 		loss_heatmap_recon = self.loss_heatmap_recon_module(pred_recon_heatmap,gt_heatmaps,keypoint_weights)
 		loss = self.loss_module(pred_fields, gt_heatmaps, keypoint_weights)
-		loss_hmd = self.loss_hmd_module(pred_hmd_info.to(torch.double),HMD_info.to(torch.double))
+		loss_hmd = self.loss_hmd_module(pred_recon_hmd.to(torch.double),HMD_info.to(torch.double))
 		# loss_kpt3d = self.loss_3d_module(pred_batch_3d_keypoints.to(torch.double),gt_keypoint_3d.to(torch.double),keypoint_weights_3d)
 		##
 		

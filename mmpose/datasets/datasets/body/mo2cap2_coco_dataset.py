@@ -234,9 +234,55 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 
 			# 둘다 neck이 000
 			p3d -= p3d[0]
-			hmd_info = p3d[[0,3,6],:].reshape(1,3,3)
+			# hmd_info = p3d[[0,3,6],:]
+
+			def preprocess_hmd_data(p3d):
+				# Ensure p3d is a numpy array
+				p3d = np.array(p3d)
+				
+				# Extract head and hand positions
+				head = p3d[0]
+				right_hand = p3d[3]
+				left_hand = p3d[6]
+				
+				# Step 1: Create a local coordinate system
+				# Z-axis: from head to the midpoint between hands
+				midpoint = (right_hand + left_hand) / 2
+				z_axis = midpoint - head
+				z_axis = z_axis / np.linalg.norm(z_axis)
+				
+				# X-axis: perpendicular to Z-axis and the vector between hands
+				hand_vector = right_hand - left_hand
+				x_axis = np.cross(z_axis, hand_vector)
+				x_axis = x_axis / np.linalg.norm(x_axis)
+				
+				# Y-axis: complete the right-handed coordinate system
+				y_axis = np.cross(z_axis, x_axis)
+				
+				# Step 2: Create rotation matrix
+				rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+				
+				# Step 3: Transform hand positions to local coordinate system
+				right_local = np.dot(rotation_matrix.T, (right_hand - head))
+				left_local = np.dot(rotation_matrix.T, (left_hand - head))
+				
+				# Step 4: Compute additional features
+				hand_distance = np.linalg.norm(right_local - left_local)
+				right_distance = np.linalg.norm(right_local)
+				left_distance = np.linalg.norm(left_local)
+				
+				# Create preprocessed feature vector
+				# right_local 3, left_local 3, [hand_distance, right_distance, left_distance] -> total shape (9,)
+				preprocessed_hmd = np.concatenate([
+					right_local, left_local,
+					[hand_distance, right_distance, left_distance]
+				])
+				
+				return preprocessed_hmd
+
+			hmd_info = preprocess_hmd_data(p3d) # shape 9,
 			rand_val = np.random.randint(-10, 10, hmd_info.shape)
-			hmd_info_w_noise = (hmd_info + rand_val).reshape(1,-3,3)
+			hmd_info_w_noise = (hmd_info + rand_val)
 			p3d /= self.MM_TO_M
 			hmd_info /= self.MM_TO_M
 			hmd_info_w_noise /= self.MM_TO_M
@@ -288,6 +334,8 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 		keypoint3d = p3d
 		keypoints = np.array(keypoints).reshape(1, -1, 2)
 		keypoint3d = np.array(keypoint3d).reshape(1, -1, 3)
+		hmd_info = np.array(hmd_info).reshape(1,-1)
+		hmd_info_w_noise = np.array(hmd_info_w_noise).reshape(1,-1)
 
 		area = np.clip((x_max - x_min) * (y_max  - y_min) * 0.53, a_min=1.0, a_max=None)
 		area = np.array(area, dtype=np.float32)
@@ -304,8 +352,8 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 			'bbox' : bbox,
 			'bbox_score': np.ones(1, dtype=np.float32),
 			'area': area,
-			'hmd_info':hmd_info,
-			'hmd_info_w_noise':hmd_info_w_noise,
+			'hmd_info': hmd_info,
+			'hmd_info_w_noise': hmd_info_w_noise,
 		}
 		if self.test_mode:
 			test_mode_update = {
