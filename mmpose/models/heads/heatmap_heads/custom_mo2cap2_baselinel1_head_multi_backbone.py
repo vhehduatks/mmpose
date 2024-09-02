@@ -476,8 +476,53 @@ class CustomMo2Cap2Baselinel1_multi_backbone(BaseHead):
 
 		batch_3d_keypoints = self.pose_decoder(z+hmd_info_)
 		generated_heatmaps = self.heatmap_decoder(z+hmd_info_)
-		hmd_recons = self.hmd_decoder(z+hmd_info_)
+		# hmd_recons = self.hmd_decoder(z+hmd_info_)
 
+		def preprocess_hmd_data_batch(p3d):
+			# Ensure p3d is a PyTorch tensor
+			if not isinstance(p3d, torch.Tensor):
+				p3d = torch.tensor(p3d, dtype=torch.float32)
+			
+			# Extract head and hand positions
+			head = p3d[:, 0]
+			right_hand = p3d[:, 3]
+			left_hand = p3d[:, 6]
+			
+			# Step 1: Create a local coordinate system
+			# Z-axis: from head to the midpoint between hands
+			midpoint = (right_hand + left_hand) / 2
+			z_axis = midpoint - head
+			z_axis = z_axis / torch.norm(z_axis, dim=1, keepdim=True)
+			
+			# X-axis: perpendicular to Z-axis and the vector between hands
+			hand_vector = right_hand - left_hand
+			x_axis = torch.cross(z_axis, hand_vector, dim=1)
+			x_axis = x_axis / torch.norm(x_axis, dim=1, keepdim=True)
+			
+			# Y-axis: complete the right-handed coordinate system
+			y_axis = torch.cross(z_axis, x_axis, dim=1)
+			
+			# Step 2: Create rotation matrices
+			rotation_matrices = torch.stack((x_axis, y_axis, z_axis), dim=2)
+			
+			# Step 3: Transform hand positions to local coordinate system
+			right_local = torch.bmm(rotation_matrices.transpose(1, 2), (right_hand - head).unsqueeze(2)).squeeze(2)
+			left_local = torch.bmm(rotation_matrices.transpose(1, 2), (left_hand - head).unsqueeze(2)).squeeze(2)
+			
+			# Step 4: Compute additional features
+			hand_distance = torch.norm(right_local - left_local, dim=1)
+			right_distance = torch.norm(right_local, dim=1)
+			left_distance = torch.norm(left_local, dim=1)
+			
+			# Create preprocessed feature vector
+			preprocessed_hmd = torch.cat([
+				right_local, left_local,
+				hand_distance.unsqueeze(1), right_distance.unsqueeze(1), left_distance.unsqueeze(1)
+			], dim=1)
+			
+			return preprocessed_hmd
+
+		hmd_recons = preprocess_hmd_data_batch(batch_3d_keypoints)
 		# HMD_info = HMD_info.view(-1,3,3) # 0,9,10 # shape (batch_size,3,3)
 		# Neck = HMD_info[:,:3]
 		# RightHand = HMD_info[:,3:6]
