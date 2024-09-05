@@ -19,13 +19,14 @@ import numpy as np
 from . import config
 
 
+
 class BaseEval(ABC):
 	"""BaseTrasnform class"""
 
 	def __init__(self):
 		super().__init__()
 		# self.logger = ConsoleLogger(self.__class__.__name__)
-
+		np.random.seed(42)
 		self.error = {'All': []}
 		# self.action_map = config.actions
 		_config = config.load_config()
@@ -641,11 +642,14 @@ def compute_error(pred, gt, return_mean=True, mode='baseline', protocol=None, _S
 		gt_rescale = skeleton_rescale(gt, bone_length[1:], kinematic_parents)
 		pred_rescale = skeleton_rescale(pred, bone_length[1:], kinematic_parents)
 		assert gt_rescale.shape == (3,15) and pred_rescale.shape == (3,15)
-		_, gt_rot, _ = procrustes(np.transpose(pred_rescale), np.transpose(gt_rescale), True, False) # gt_rot.shape : 15,3
+		# _, gt_rot, _ = procrustes(np.transpose(pred_rescale), np.transpose(gt_rescale), True, False) # gt_rot.shape : 15,3 # 재현성때문에 gt를 기준으로 하고 pred를 수정해야 함
+		_, pred_rot, _ = procrustes(np.transpose(gt_rescale), np.transpose(pred_rescale), True, False) # gt_rot.shape : 15,3
 		if _SEL:
-			pred_rescale = pred_rescale[:,_SEL]
-			gt_rot = gt_rot[_SEL,:]
-		error = pred_rescale - np.transpose(gt_rot)
+			# pred_rescale = pred_rescale[:,_SEL]
+			# gt_rot = gt_rot[_SEL,:]
+			gt_rescale = gt_rescale[:,_SEL]
+			pred_rot = pred_rot[_SEL,:]
+		error = gt_rescale - np.transpose(pred_rot)
 		joint_error = np.sqrt(np.sum(np.power(error, 2), axis=0)) 
 		if return_mean:
 			return np.mean(joint_error)

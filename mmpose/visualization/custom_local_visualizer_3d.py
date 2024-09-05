@@ -173,7 +173,9 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 					1, num_fig, fig_idx * (idx + 1), projection='3d')
 				ax.view_init(elev=axis_elev, azim=axis_azimuth)
 				# print(axis_elev, axis_azimuth)
-				ax.set_aspect('auto')
+				
+
+
 				# ax.set_xticks([])
 				# ax.set_yticks([])
 				# ax.set_zticks([])
@@ -206,6 +208,9 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 						f'that of keypoints ({len(kpts)})')
 
 				x_3d, y_3d, z_3d = np.split(kpts_valid[:, :3], [1, 2], axis=1)
+
+				ax.set_aspect('auto')
+				# ax.set_box_aspect((np.ptp(x_3d), np.ptp(y_3d), np.ptp(z_3d)))
 
 				kpt_color = kpt_color[valid] / 255.
 
@@ -266,34 +271,6 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 		##
 
 
-
-
-
-		if 'keypoint_3d' in pred_instances:
-			keypoints = pred_instances.get('keypoint_3d', pred_instances.keypoint_3d)
-			keypoints = keypoints.cpu().numpy()
-			if 'keypoint_scores' in pred_instances:
-				# scores = pred_instances.keypoint_scores # 2d heatmap의 max 값을 score로 직접적으로 사용하므로 3d 에 사용하면 안됨 
-				scores = np.ones(keypoints.shape[:-1])
-			else:
-				scores = np.ones(keypoints.shape[:-1])
-
-			if scores_2d is None:
-				scores_2d = np.ones(keypoints.shape[:-1])
-
-			if 'keypoints_visible' in pred_instances:
-				keypoints_visible = pred_instances.keypoints_visible
-			else:
-				keypoints_visible = np.ones(keypoints.shape[:-1])
-			pred_kpt = keypoints # (1, 15, 3)
-			pred_kpt = pred_kpt.reshape(15,3).T # 3,15
-			pred_rescale = mo2cap2_evaluate.skeleton_rescale(pred_kpt, bone_length[1:], kinematic_parents) 
-			assert pred_kpt.shape == (3,15) and pred_rescale.shape ==(3,15)
-			pred_rescale_input = pred_rescale.T.reshape(1,15,3)
-			_draw_3d_instances_kpts(pred_rescale_input, scores, scores_2d,
-									keypoints_visible, 1, show_kpt_idx,
-									'Prediction')
-
 		if draw_gt and 'gt_instances' in pose_samples:
 			gt_instances = pose_samples.gt_instances
 			if 'lifting_target' in gt_instances:
@@ -331,16 +308,45 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 
 			if scores_2d is None:
 				scores_2d = np.ones(keypoints.shape[:-1])
+
 			gt_kpt = keypoints
 			gt_kpt = gt_kpt.reshape(15,3).T # 3,15
 			gt_rescale = mo2cap2_evaluate.skeleton_rescale(gt_kpt, bone_length[1:], kinematic_parents)
 			assert gt_kpt.shape == (3,15) and gt_rescale.shape == (3,15), 'shape error'
-			_, gt_rot, _ = mo2cap2_evaluate.procrustes(np.transpose(pred_rescale), np.transpose(gt_rescale), True, False)# gt_rot.shape : 15,3
-			gt_rescale_input = gt_rot.reshape(1,15,3)
+			# _, gt_rot, _ = mo2cap2_evaluate.procrustes(np.transpose(pred_rescale), np.transpose(gt_rescale), True, False)# gt_rot.shape : 15,3
+			gt_rescale_input = gt_rescale.T[np.newaxis]
 			_draw_3d_instances_kpts(gt_rescale_input, scores, scores_2d,
 									keypoints_visible, 2, show_kpt_idx,
 									'Ground Truth')
+		
+		if 'keypoint_3d' in pred_instances:
+			keypoints = pred_instances.get('keypoint_3d', pred_instances.keypoint_3d)
+			keypoints = keypoints.cpu().numpy().copy()
+			if 'keypoint_scores' in pred_instances:
+				# scores = pred_instances.keypoint_scores # 2d heatmap의 max 값을 score로 직접적으로 사용하므로 3d 에 사용하면 안됨 
+				scores = np.ones(keypoints.shape[:-1])
+			else:
+				scores = np.ones(keypoints.shape[:-1])
 
+			if scores_2d is None:
+				scores_2d = np.ones(keypoints.shape[:-1])
+
+			if 'keypoints_visible' in pred_instances:
+				keypoints_visible = pred_instances.keypoints_visible
+			else:
+				keypoints_visible = np.ones(keypoints.shape[:-1])
+			pred_kpt = keypoints # (1, 15, 3)
+			pred_kpt = pred_kpt.reshape(15,3).T # 3,15
+			pred_rescale = mo2cap2_evaluate.skeleton_rescale(pred_kpt, bone_length[1:], kinematic_parents) 
+			assert pred_kpt.shape == (3,15) and pred_rescale.shape ==(3,15)
+
+			assert gt_kpt.shape == (3,15) and gt_rescale.shape == (3,15), 'shape error'
+			_, pred_rot, _ = mo2cap2_evaluate.procrustes(np.transpose(gt_rescale), np.transpose(pred_rescale), True, False)# gt_rot.shape : 15,3
+			pred_rescale_input = pred_rot[np.newaxis]
+
+			_draw_3d_instances_kpts(pred_rescale_input, scores, scores_2d,
+									keypoints_visible, 1, show_kpt_idx,
+									'Prediction')
 		# convert figure to numpy array
 		fig.tight_layout()
 		fig.canvas.draw()
