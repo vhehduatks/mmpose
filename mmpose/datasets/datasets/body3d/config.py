@@ -95,7 +95,7 @@ def set_action():
 def load_config():
 	"""Load config"""
 
-	with open(r'C:\Users\user\Documents\GitHub\mmpose\mmpose\datasets\datasets\body3d\config.yml') as fin:
+	with open('/home/jovyan/vol_arvr_hyeonghwan/mmpose/mmpose/datasets/datasets/body3d/config.yml') as fin:
 		conf = edict(yaml.safe_load(fin))
 
 	j_0 = set_skeleton()

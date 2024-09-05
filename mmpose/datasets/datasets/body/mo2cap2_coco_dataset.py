@@ -31,7 +31,7 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 	# METAPATH = r'C:\Users\user\Documents\GitHub\mmpose\temp_modify\HMD_metainfo\annotation_definitions.json'
 	# with open(METAPATH,'r') as _meta:
 	# 	METAINFO: dict = json.load(_meta)
-	METAINFO: dict = dict(from_file=r'C:\Users\user\Documents\GitHub\mmpose\configs\_base_\datasets\custom_mo2cap2.py')
+	METAINFO: dict = dict(from_file='/home/jovyan/vol_arvr_hyeonghwan/mmpose/configs/_base_/datasets/custom_mo2cap2.py')
 
 	MM_TO_M = 1000
 
@@ -305,7 +305,7 @@ class Mo2Cap2CocoDataset(BaseCocoStyleDataset):
 
 		def extract_and_combine_numbers(file_path):
 			# Split the file path by the directory separator
-			parts = file_path.split('\\')
+			parts = file_path.split(os.path.sep)
 			file_part = parts[-1]
 			if self.test_mode:
 				if 'olek_outdoor' in parts: # fc2_save_2017-10-11-135418-0538

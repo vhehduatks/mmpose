@@ -197,7 +197,6 @@ class Custom_mo2cap2_MSRAHeatmap(BaseKeypointCodec):
 			# Alleviate biased coordinate
 			keypoints = refine_keypoints_dark(
 				keypoints, heatmaps, blur_kernel_size=self.blur_kernel_size)
-
 		else:
 			keypoints = refine_keypoints(keypoints, heatmaps)
 

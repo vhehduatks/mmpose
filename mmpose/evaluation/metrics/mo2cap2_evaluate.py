@@ -161,7 +161,7 @@ def get_p3ds_t(p3d_preds, p3d_gts):
 		Rescaled Predicted 3D joints, 
 		Rescaled Procrustes Aligned Ground Truth 3D joints 
 	"""
-	mean3D = scipy.io.loadmat(r'C:\Users\user\Documents\GitHub\mmpose\mmpose\utils\mean3D.mat')['mean3D'] # 3x15 shape
+	mean3D = scipy.io.loadmat('/home/jovyan/vol_arvr_hyeonghwan/mmpose/my_code/mean3D.mat')['mean3D'] # 3x15 shape
 	kinematic_parents = [ 0, 0, 1, 2, 0, 4, 5, 1, 7, 8, 9, 4, 11, 12, 13]
 	bones_mean = mean3D - mean3D[:,kinematic_parents]
 	bone_length = np.sqrt(np.sum(np.power(bones_mean, 2), axis=0)) # 15 shape
@@ -632,7 +632,7 @@ def compute_error(pred, gt, return_mean=True, mode='baseline', protocol=None, _S
 		if gt.shape[0] != 3:
 			gt = np.transpose(gt, [1, 0])
 		assert pred.shape == gt.shape
-		mean3D = scipy.io.loadmat(r'C:\Users\user\Documents\GitHub\mmpose\mmpose\utils\mean3D.mat')['mean3D'] # 3x15 shape
+		mean3D = scipy.io.loadmat('/home/jovyan/vol_arvr_hyeonghwan/mmpose/my_code/mean3D.mat')['mean3D'] # 3x15 shape
 		
 		kinematic_parents = np.array([ 0, 0, 1, 2, 0, 4, 5, 1, 7, 8, 9, 4, 11, 12, 13]) #TODO : upper bodys는 7개 관절이니까 parents 도 수정해야 함
 
@@ -641,11 +641,14 @@ def compute_error(pred, gt, return_mean=True, mode='baseline', protocol=None, _S
 		gt_rescale = skeleton_rescale(gt, bone_length[1:], kinematic_parents)
 		pred_rescale = skeleton_rescale(pred, bone_length[1:], kinematic_parents)
 		assert gt_rescale.shape == (3,15) and pred_rescale.shape == (3,15)
-		_, gt_rot, _ = procrustes(np.transpose(pred_rescale), np.transpose(gt_rescale), True, False) # gt_rot.shape : 15,3
+		# _, gt_rot, _ = procrustes(np.transpose(pred_rescale), np.transpose(gt_rescale), True, False) # gt_rot.shape : 15,3 # 재현성때문에 gt를 기준으로 하고 pred를 수정해야 함
+		_, pred_rot, _ = procrustes(np.transpose(gt_rescale), np.transpose(pred_rescale), True, False) # gt_rot.shape : 15,3
 		if _SEL:
-			pred_rescale = pred_rescale[:,_SEL]
-			gt_rot = gt_rot[_SEL,:]
-		error = pred_rescale - np.transpose(gt_rot)
+			# pred_rescale = pred_rescale[:,_SEL]
+			# gt_rot = gt_rot[_SEL,:]
+			gt_rescale = gt_rescale[:,_SEL]
+			pred_rot = pred_rot[_SEL,:]
+		error = gt_rescale - np.transpose(pred_rot)
 		joint_error = np.sqrt(np.sum(np.power(error, 2), axis=0)) 
 		if return_mean:
 			return np.mean(joint_error)

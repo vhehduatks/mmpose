@@ -1,19 +1,17 @@
-ann_file_test = 'F:\\mo2cap2_data_half\\TestSet'
-ann_file_train = 'F:\\mo2cap2_data_half\\TrainSet'
-ann_file_val = 'F:\\mo2cap2_data_half\\ValSet'
-# ---
-# ann_file_test = r'F:\mo2cap2_data_small\TestSet'
-# ann_file_val = r'F:\mo2cap2_data_small\ValSet'
-# ann_file_train = r'F:\mo2cap2_data_small\TrainSet'
+# mo2cap2 dataset train middel, test all
+ann_file_test = '/home/jovyan/vol_arvr_hyeonghwan/Mo2cap2_dataset/mo2cap2_data_half/TestSet'
+ann_file_val = '/home/jovyan/vol_arvr_hyeonghwan/Mo2cap2_dataset/mo2cap2_data_half/ValSet'
+ann_file_train = '/home/jovyan/vol_arvr_hyeonghwan/Mo2cap2_dataset/mo2cap2_data_half/TrainSet'
+# # ---
+# # mo2cap2 dataset train all, test all
+# ann_file_test = '/home/jovyan/vol_arvr_hyeonghwan/Mo2cap2_dataset/extracted_mo2cap2_dataset/TestSet'
+# ann_file_train = '/home/jovyan/vol_arvr_hyeonghwan/Mo2cap2_dataset/extracted_mo2cap2_dataset/TrainSet'
+
 
 auto_scale_lr = dict(base_batch_size=256)
 backend_args = dict(backend='local')
-coco_pretrained_resnet101_256x192 = 'C:\\Users\\user\\Downloads\\pytorch-20240821T053436Z-001\\pytorch\\pose_coco\\coco_pose_resnet_101_256x192.pth.tar'
-mpii_pretrained_resnet101_256x256 = 'C:\\Users\\user\\.cache\\torch\\hub\\checkpoints\\pose_resnet_101_256x256.pth.tar'
-mpii_pretrained_resnet101_384x384 = 'C:\\Users\\user\\Downloads\\pose_mpii\\pose_resnet_101_384x384.pth.tar'
-
-# coco_pretrained_resnet101_256x192 = '/workspace/mmpose/my_code/coco_pose_resnet_101_256x192.pth.tar'
-# mpii_pretrained_resnet101_256x256 = '/workspace/mmpose/my_code/pose_resnet_101_256x256.pth.tar'
+coco_pretrained_resnet101_256x192 = '/home/jovyan/vol_arvr_hyeonghwan/mmpose/coco_pose_resnet_101_256x192.pth.tar'
+mpii_pretrained_resnet101_256x256 = '/home/jovyan/vol_arvr_hyeonghwan/mmpose/pose_resnet_101_256x256.pth.tar'
 torchvision = 'torchvision://resnet101'
 
 optim_wrapper = dict(
@@ -31,14 +29,18 @@ param_scheduler = [
         type='MultiStepLR',
         begin=0,
         end=70000,
-        milestones=[35000],  # Every 5000 iterations
-		# milestones=[5000 * i for i in range(1, 15)],  # Every 5000 iterations
+        # milestones=[35000],  # Every 5000 iterations
+		milestones=[5000 * i for i in range(1, 15)],  # Every 5000 iterations
         gamma=0.5,
         by_epoch=False
     ),
 ]
 
-randomness = dict(seed=42)
+randomness = dict(
+	seed=42,
+	diff_rank_seed=True,
+    deterministic=True
+	)
 resume = False
 
 codec = dict(
@@ -50,7 +52,13 @@ codec = dict(
         256,
         256,
     ),
-    sigma=3,
+	sigma=3,
+    # sigma=[2.,2.,2.,2.,2.,2.,2.,
+	# 	   3.,3.,3.,3.,3.,3.,3.,3.],
+	# sigma=[3.,3.,3.,3.,3.,3.,3.,
+	# 	   3.,3.,3.,3.,3.,3.,3.,3.],
+	# unbiased = False,
+	# blur_kernel_size= 11,
     type='Custom_mo2cap2_MSRAHeatmap')
 
 custom_hooks = [
@@ -64,7 +72,7 @@ test_cfg = dict()
 
 default_hooks = dict(
     checkpoint=dict(
-        interval=1000,
+        interval=3000,
         max_keep_ckpts=3,
         rule='less',
         save_best='mo2cap2/Full Body_All_mpjpe',
@@ -112,25 +120,19 @@ model = dict(
         ],
         type='PoseDataPreprocessor'),
     head=dict(
-        decoder=dict(
-            heatmap_size=(
-                47,
-                47,
-            ),
-            input_size=(
-                256,
-                256,
-            ),
-            sigma=3,
-            type='Custom_mo2cap2_MSRAHeatmap'),
+        decoder=codec,
         in_channels=2048,
         loss=dict(
-            loss_weight=1000, type='KeypointMSELoss', use_target_weight=True),
-        loss_cosine_similarity=dict(loss_weight=0.1, type='cosine_similarity'),
+			loss_weight=1000, type='KeypointMSELoss', use_target_weight=False),
+        loss_cosine_similarity=dict(loss_weight=1., type='cosine_similarity'), # .1
         loss_heatmap_recon=dict(
-            loss_weight=500, type='KeypointMSELoss', use_target_weight=True),
-        loss_limb_length=dict(loss_weight=0.5, type='limb_length'),
-        loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'),
+            loss_weight=500, type='KeypointMSELoss', use_target_weight=False),
+        loss_limb_length=dict(loss_weight=1., type='limb_length'), # .5
+        loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'), # 1.
+		loss_hmd = dict(type='MSELoss'),
+		loss_backbone_latant = dict(type='MSELoss',loss_weight = 1.),
+		# loss_backbone_heatmap =dict(
+        #     loss_weight=1000, type='KeypointMSELoss', use_target_weight=False),
         out_channels=15,
         type='CustomMo2Cap2Baselinel1_multi_backbone'),
     test_cfg=dict(
@@ -217,7 +219,7 @@ train_dataloader = dict(
     num_workers=6,
     persistent_workers=False,
     pin_memory=True,
-    sampler=dict(round_up=True, shuffle=True, type='DefaultSampler'))
+    sampler=dict(round_up=False, shuffle=False, type='DefaultSampler'))
 
 
 val_dataloader = dict(
@@ -241,7 +243,8 @@ test_evaluator = dict(
 vis_backends = [
     dict(type='LocalVisBackend'),
     dict(
-        init_kwargs=dict(project='mmpose_mo2cap2_baseline_middle'),
+		init_kwargs=dict(project='mmpose_mo2cap2_baseline_recall_test'),
+        # init_kwargs=dict(project='mmpose_mo2cap2_baseline_middle'),
 		# init_kwargs=dict(project='mmpose_mo2cap2_baseline_all'),
         type='WandbVisBackend'),
 ]

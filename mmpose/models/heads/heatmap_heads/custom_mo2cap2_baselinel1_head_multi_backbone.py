@@ -187,7 +187,7 @@ class CustomMo2Cap2Baselinel1_multi_backbone(BaseHead):
 				conv_kernel_sizes: OptIntSeq = None,
 				final_layer: dict = dict(kernel_size=1),
 				loss: ConfigType = dict(
-					type='KeypointMSELoss', use_target_weight=True),
+					type='KeypointMSELoss'),
 				loss_pose_l2norm: ConfigType = dict(
 					type='pose_l2norm'),
 				loss_cosine_similarity: ConfigType = dict(
@@ -201,9 +201,11 @@ class CustomMo2Cap2Baselinel1_multi_backbone(BaseHead):
 				loss_hmd:ConfigType = dict(
 					type='MSELoss'
 				),
-				loss_backbone:ConfigType = dict(
+				loss_backbone_latant:ConfigType = dict(
 					type='MSELoss'
 				),
+				loss_backbone_heatmap: ConfigType = dict(
+					type='KeypointMSELoss'),
 				decoder: OptConfigType = None,
 				init_cfg: OptConfigType = None):
 
@@ -220,7 +222,9 @@ class CustomMo2Cap2Baselinel1_multi_backbone(BaseHead):
 		self.loss_limb_length_module = MODELS.build(loss_limb_length)
 		self.loss_heatmap_recon_module = MODELS.build(loss_heatmap_recon)
 		self.loss_hmd_module = MODELS.build(loss_hmd)
-		self.loss_backbone_module = MODELS.build(loss_backbone)
+		self.loss_backbone_latant_module = MODELS.build(loss_backbone_latant)
+		self.loss_backbone_heatmap_module = MODELS.build(loss_backbone_heatmap)
+		# self.loss_module_ = MODELS.build(loss_)
 
 
 		# self.pose_decoder = PoseDecoder(num_classes = out_channels)
@@ -243,10 +247,10 @@ class CustomMo2Cap2Baselinel1_multi_backbone(BaseHead):
 			nn.Linear(9,64),
 			nn.ReLU(inplace=True)
 			)
-		self.hmd_decoder = nn.Sequential(
-			nn.Linear(64,9),
-			)
-		
+		# self.hmd_decoder = nn.Sequential(
+		# 	nn.Linear(64,9),
+		# 	)
+		self.avr_pool = nn.AdaptiveAvgPool2d((1, 1))
 		if decoder is not None:
 			self.decoder = KEYPOINT_CODECS.build(decoder)
 		else:
@@ -262,6 +266,12 @@ class CustomMo2Cap2Baselinel1_multi_backbone(BaseHead):
 					f'{deconv_kernel_sizes}')
 
 			self.deconv_layers = self._make_deconv_layers(
+				in_channels=in_channels,
+				layer_out_channels=deconv_out_channels,
+				layer_kernel_sizes=deconv_kernel_sizes,
+				layer_stride_sizes=deconv_stride_sizes,
+			)
+			self.deconv_layers_ = self._make_deconv_layers(
 				in_channels=in_channels,
 				layer_out_channels=deconv_out_channels,
 				layer_kernel_sizes=deconv_kernel_sizes,
@@ -284,9 +294,14 @@ class CustomMo2Cap2Baselinel1_multi_backbone(BaseHead):
 				in_channels=in_channels,
 				layer_out_channels=conv_out_channels,
 				layer_kernel_sizes=conv_kernel_sizes)
+			self.conv_layers_ = self._make_conv_layers(
+				in_channels=in_channels,
+				layer_out_channels=conv_out_channels,
+				layer_kernel_sizes=conv_kernel_sizes)
 			in_channels = conv_out_channels[-1]
 		else:
 			self.conv_layers = nn.Identity()
+			self.conv_layers_ = nn.Identity()
 
 		if final_layer is not None:
 			cfg = dict(
@@ -296,11 +311,19 @@ class CustomMo2Cap2Baselinel1_multi_backbone(BaseHead):
 				kernel_size=1)
 			cfg.update(final_layer)
 			self.final_layer = build_conv_layer(cfg)
+			self.final_layer_ = build_conv_layer(cfg)
 		else:
 			self.final_layer = nn.Identity()
 
 		## heatmap to 47
 		self.add_deconv_layers = nn.Sequential(
+			nn.Upsample(size=(47, 47), mode='bilinear', align_corners=False),
+			nn.Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False),
+			nn.BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True),
+			nn.ReLU(inplace=True)
+		)
+
+		self.add_deconv_layers_ = nn.Sequential(
 			nn.Upsample(size=(47, 47), mode='bilinear', align_corners=False),
 			nn.Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False),
 			nn.BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True),
@@ -400,6 +423,13 @@ class CustomMo2Cap2Baselinel1_multi_backbone(BaseHead):
 		##
 		x = self.conv_layers(x)
 		x = self.final_layer(x)
+
+		# x_ = self.deconv_layers_(backbone_feat2)
+		# ## heatmap 47
+		# x_ = self.add_deconv_layers_(x_)
+		# ##
+		# x_ = self.conv_layers_(x_)
+		# x_ = self.final_layer_(x_)
 
 		return x, backbone_feat, backbone_feat2
 
@@ -631,7 +661,7 @@ class CustomMo2Cap2Baselinel1_multi_backbone(BaseHead):
 		Returns:
 			dict: A dictionary of losses.
 		"""
-		pred_fields,backbone_feat,backbone_feat2 = self.forward(feats)
+		pred_fields,backbone_feat, backbone_feat2 = self.forward(feats)
 		gt_heatmaps = torch.stack(
 			[d.gt_fields.heatmaps for d in batch_data_samples])
 		keypoint_weights = torch.cat([
@@ -671,10 +701,12 @@ class CustomMo2Cap2Baselinel1_multi_backbone(BaseHead):
 		loss_cosine_similarity = self.loss_cosine_similarity_module(pred_batch_3d_keypoints, gt_keypoint_3d)
 		loss_limb_length = self.loss_limb_length_module(pred_batch_3d_keypoints, gt_keypoint_3d)
 		loss_heatmap_recon = self.loss_heatmap_recon_module(pred_recon_heatmap,gt_heatmaps,keypoint_weights)
-		loss = self.loss_module(pred_fields, gt_heatmaps, keypoint_weights)
+		loss_2dkpt = self.loss_module(pred_fields, gt_heatmaps, keypoint_weights)
 		loss_hmd = self.loss_hmd_module(pred_recon_hmd.to(torch.double),HMD_info.to(torch.double))
 		
-		loss_backbone = self.loss_backbone_module(backbone_feat,backbone_feat2)
+		# loss_ = self.loss_module_(pred_fields_, gt_heatmaps, keypoint_weights)
+		loss_backbone_latant = self.loss_backbone_latant_module(backbone_feat, backbone_feat2)
+		# loss_backone_heatmap = self.loss_backbone_heatmap_module(pred_fields,pred_fields_)
 		# loss_kpt3d = self.loss_3d_module(pred_batch_3d_keypoints.to(torch.double),gt_keypoint_3d.to(torch.double),keypoint_weights_3d)
 		##
 		
@@ -688,14 +720,16 @@ class CustomMo2Cap2Baselinel1_multi_backbone(BaseHead):
 		losses.update(loss_heatmap_recon = loss_heatmap_recon)
 		losses.update(loss_hmd = loss_hmd)
 
-		losses.update(loss_backbone = loss_backbone)
+		# losses.update(loss_ = loss_)
+		losses.update(loss_backbone_latant = loss_backbone_latant)
+		# losses.update(loss_backbone_heatmap = loss_backone_heatmap)
 		## 3d baseline
 		# if self.hm_iteration >= 0:
 		# 	losses.update(loss_hmd = loss_hmd)
 		# 	losses.update(loss_kpt3d = loss_kpt3d)
 		##
 		
-		losses.update(loss_kpt=loss)
+		losses.update(loss_kpt=loss_2dkpt)
 
 		## recon2d
 		# losses.update(loss_recon2d = loss_recon2d)

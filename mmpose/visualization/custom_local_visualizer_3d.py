@@ -247,7 +247,7 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 		# 								   pred_instances.keypoints)
 		## mo2cap2 joint modify
 		## re scale,
-		mean3D = scipy.io.loadmat(r'C:\Users\user\Documents\GitHub\mmpose\mmpose\utils\mean3D.mat')['mean3D'] # 3x15 shape
+		mean3D = scipy.io.loadmat('/home/jovyan/vol_arvr_hyeonghwan/mmpose/my_code/mean3D.mat')['mean3D'] # 3x15 shape
 		
 		kinematic_parents = np.array([ 0, 0, 1, 2, 0, 4, 5, 1, 7, 8, 9, 4, 11, 12, 13]) #TODO : upper bodys는 7개 관절이니까 parents 도 수정해야 함
 
