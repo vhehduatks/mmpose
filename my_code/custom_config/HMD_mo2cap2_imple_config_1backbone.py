@@ -100,19 +100,14 @@ log_processor = dict(
 
 
 model = dict(
-	type='Custom_TopdownPoseEstimator',
+	type='TopdownPoseEstimator',
     backbone=dict(
         depth=101,
         init_cfg=dict(
             checkpoint=coco_pretrained_resnet101_256x192,
             type='Pretrained'),
         type='ResNet'),
-	backbone2=dict(
-        depth=101,
-        init_cfg=dict(
-            checkpoint=mpii_pretrained_resnet101_256x256,
-            type='Pretrained'),
-        type='ResNet'),
+
     data_preprocessor=dict(
         bgr_to_rgb=True,
         mean=[
@@ -137,11 +132,11 @@ model = dict(
         loss_limb_length=dict(loss_weight=1., type='limb_length'), # .5
         loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'), # 1.
 		loss_hmd = dict(type='MSELoss'),
-		loss_backbone_latant = dict(type='MSELoss',loss_weight = 1.),
-		loss_backbone_heatmap =dict(
-            loss_weight=1000, type='KeypointMSELoss', use_target_weight=False),
+		# loss_backbone_latant = dict(type='MSELoss',loss_weight = 1.),
+		# loss_backbone_heatmap =dict(
+        #     loss_weight=1000, type='KeypointMSELoss', use_target_weight=False),
         out_channels=15,
-        type='CustomMo2Cap2Baselinel1_multi_backbone'),
+        type='CustomMo2Cap2Baselinel1'),
     test_cfg=dict(
         flip_mode='heatmap',
         flip_test=False,
