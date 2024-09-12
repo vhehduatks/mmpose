@@ -621,7 +621,10 @@ def compute_error(pred, gt, return_mean=True, mode='baseline', protocol=None, _S
 			gt = np.transpose(gt, [1, 0])
 
 		assert pred.shape == gt.shape
-		error = np.sqrt(np.sum((pred - gt) ** 2, axis=1))
+		if _SEL:
+			gt = gt[_SEL,:]
+			pred = pred[_SEL,:]
+		error = np.sqrt(np.sum((pred - gt) ** 2, axis=1)) * 1000
 		if return_mean:
 			return np.mean(error)
 		else:

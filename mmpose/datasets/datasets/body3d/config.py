@@ -18,29 +18,30 @@ def set_skeleton(skip_list=[]):
 	"""
 	
 	joints = {
-		'Hips': {'parent': None, 'col': 0}, #
-		'Spine': {'parent': 'Hips', 'col': 0}, #
-		'Spine1': {'parent': 'Spine', 'col': 0}, #
-		'Spine2': {'parent': None, 'col': 0},
-		'Neck': {'parent': None, 'col': 5},
-		'Head': {'parent': 'Spine2', 'col': 5},
-		'LeftShoulder': {'parent': 'Neck', 'col': 0},
-		'LeftArm': {'parent': 'Spine2', 'col': 3},
+		# 'Hips': {'parent': None, 'col': 0},
+		# 'Spine': {'parent': 'Hips', 'col': 0},
+		# 'Spine1': {'parent': 'Spine', 'col': 0},
+		# 'Spine2': {'parent': 'Spine1', 'col': 0},
+		'Head': {'parent': 'Neck', 'col': 5},
+		'Neck': {'parent': 'Spine2', 'col': 5},
+		# 'LeftShoulder': {'parent': 'Spine2', 'col': 0},
+		'LeftArm': {'parent': 'LeftShoulder', 'col': 3},
 		'LeftForeArm': {'parent': 'LeftArm', 'col': 3},
 		'LeftHand': {'parent': 'LeftForeArm', 'col': 4},
-		'RightShoulder': {'parent': 'Neck', 'col': 0},
-		'RightArm':  {'parent': 'Spine2', 'col': 1},
+		# 'RightShoulder': {'parent': 'Spine2', 'col': 0},
+		'RightArm':  {'parent': 'RightShoulder', 'col': 1},
 		'RightForeArm':  {'parent': 'RightArm', 'col': 1},
 		'RightHand':  {'parent': 'RightForeArm', 'col': 2},
-		'LeftUpLeg': {'parent': 'Spine2', 'col': 8},
+		'LeftUpLeg': {'parent': 'Hips', 'col': 8},
 		'LeftLeg': {'parent': 'LeftUpLeg', 'col': 8},
 		'LeftFoot': {'parent': 'LeftLeg', 'col': 9},
-		'LeftToeBase': {'parent': 'LeftFoot', 'col': 9}, #
-		'RightUpLeg': {'parent': 'Spine2', 'col': 6},
+		'LeftToeBase': {'parent': 'LeftFoot', 'col': 9},
+		'RightUpLeg': {'parent': 'Hips', 'col': 6},
 		'RightLeg': {'parent': 'RightUpLeg', 'col': 6},
 		'RightFoot': {'parent': 'RightLeg', 'col': 7},
-		'RightToeBase': {'parent': 'RightFoot', 'col': 7}, #
+		'RightToeBase': {'parent': 'RightFoot', 'col': 7},
 	}
+
 	for k in skip_list:
 		joints.pop(k)
 		
@@ -98,12 +99,8 @@ def load_config():
 	with open(r'C:\Users\user\Documents\GitHub\mmpose\mmpose\datasets\datasets\body3d\config.yml') as fin:
 		conf = edict(yaml.safe_load(fin))
 
-	j_0 = set_skeleton()
-	conf['skel_22'] = j_0
-	j_1 = set_skeleton(['Hips','Spine','Spine1','Neck','LeftShoulder','RightShoulder'])
-	conf['skel_16'] = j_1
-	j_2 = set_skeleton(['Hips','Spine','Spine1','Neck','Head','LeftShoulder','RightShoulder'])
-	conf['skel_15'] = j_2
+	j = set_skeleton()
+	conf['skel'] = j
 
 	act = set_action()
 	conf['actions'] = act

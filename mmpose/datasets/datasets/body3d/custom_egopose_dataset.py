@@ -38,14 +38,14 @@ from ..utils import parse_pose_metainfo
 @DATASETS.register_module(name='CustomEgoposeDataset')
 class CustomEgoposeDataset(BaseDataset):
 
-	ROOT_DIRS = ['rgba','depth','json','objectId']
+	ROOT_DIRS = ['rgba','json']
 	CM_TO_M = 100
 	METAINFO: dict = dict(from_file=r'C:\Users\user\Documents\GitHub\mmpose\mmpose\datasets\datasets\body3d\egopose_info.py')
 
 	def __init__(self, 
-			  transform=None,
-			  ann_file: str = '',
-			  bbox_file: Optional[str] = None,
+			#   transform=None,
+			#   ann_file: str = '',
+			#   bbox_file: Optional[str] = None,
 			  data_mode: str = 'topdown',
 			  metainfo: Optional[dict] = None,
 			  data_root: Optional[str] = None,
@@ -67,11 +67,11 @@ class CustomEgoposeDataset(BaseDataset):
 		Keyword Arguments:
 			transform {BaseTransform} -- transformation to apply to data (default: {None})
 		"""
-		self.ann_file = ann_file
+		self.data_root = data_root
 		self.index = self._load_index()
 
 		super().__init__(
-			ann_file=ann_file,
+			# ann_file=ann_file,
 			metainfo=metainfo,
 			data_root=data_root,
 			data_prefix=data_prefix,
@@ -107,7 +107,7 @@ class CustomEgoposeDataset(BaseDataset):
 		return metainfo
 		
 	def index_db(self):
-		return self._index_dir(self.ann_file)
+		return self._index_dir(self.data_root)
 	
 	def _load_index(self):
 		"""Get indexed set. If the set has already been
@@ -117,7 +117,7 @@ class CustomEgoposeDataset(BaseDataset):
 			dict -- index set
 		"""
 
-		idx_path = os.path.join(self.ann_file, 'index.h5')
+		idx_path = os.path.join(self.data_root, 'index.h5')
 		
 		if os.path.exists(idx_path):
 			return self.read_h5(idx_path)
@@ -324,16 +324,11 @@ class CustomEgoposeDataset(BaseDataset):
 
 		# load and parse data_infos.
 		data_list = []
-		for img_path, depth_path, seg_path, json_path in zip(self.index['rgba'], 
-													   self.index['depth'], 
-													   self.index['objectId'], 
-													   self.index['json']):
+		for img_path, json_path in zip(self.index['rgba'], self.index['json']):
 			
 			# parse raw data information to target format
 			data_info = self.parse_data_info(
 				img_path.decode('utf8'), 
-				depth_path.decode('utf8'), 
-				seg_path.decode('utf8'), 
 				json_path.decode('utf8')
 				)
 			
@@ -355,11 +350,53 @@ class CustomEgoposeDataset(BaseDataset):
 				raise TypeError('data_info should be a dict or list of dict, '
 								f'but got {type(data_info)}')
 		
-		people_len = len(data_list)
 		
 		return data_list
+	def _preprocess_hmd_data(self,p3d):
+		# Ensure p3d is a numpy array
+		p3d = np.array(p3d)
+		
+		# Extract head and hand positions
+		head = p3d[0]
+		right_hand = p3d[7]
+		left_hand = p3d[4]
+		
+		# Step 1: Create a local coordinate system
+		# Z-axis: from head to the midpoint between hands
+		midpoint = (right_hand + left_hand) / 2
+		z_axis = midpoint - head
+		z_axis = z_axis / np.linalg.norm(z_axis)
+		
+		# X-axis: perpendicular to Z-axis and the vector between hands
+		hand_vector = right_hand - left_hand
+		x_axis = np.cross(z_axis, hand_vector)
+		x_axis = x_axis / np.linalg.norm(x_axis)
+		
+		# Y-axis: complete the right-handed coordinate system
+		y_axis = np.cross(z_axis, x_axis)
+		
+		# Step 2: Create rotation matrix
+		rotation_matrix = np.column_stack((x_axis, y_axis, z_axis))
+		
+		# Step 3: Transform hand positions to local coordinate system
+		right_local = np.dot(rotation_matrix.T, (right_hand - head))
+		left_local = np.dot(rotation_matrix.T, (left_hand - head))
+		
+		# Step 4: Compute additional features
+		hand_distance = np.linalg.norm(right_local - left_local)
+		right_distance = np.linalg.norm(right_local)
+		left_distance = np.linalg.norm(left_local)
+		
+		# Create preprocessed feature vector
+		# right_local 3, left_local 3, [hand_distance, right_distance, left_distance] -> total shape (9,)
+		preprocessed_hmd = np.concatenate([
+			right_local, left_local,
+			[hand_distance, right_distance, left_distance]
+		])
+		
+		return preprocessed_hmd
 	
-	def parse_data_info(self, img_path, depth_path, seg_path, json_path) -> Union[dict, List[dict]]:
+	def parse_data_info(self, img_path, json_path) -> Union[dict, List[dict]]:
 		"""Parse raw annotation to target format.
 
 		This method should return dict or list of dict. Each dict or list
@@ -378,26 +415,35 @@ class CustomEgoposeDataset(BaseDataset):
 		joint_names = {j['name'].replace('mixamorig:', ''): jid for jid, j in enumerate(data['joints'])}
 		p2d_orig = np.array(data['pts2d_fisheye']).T
 		p3d_orig = np.array(data['pts3d_fisheye']).T
-		kpt3d = np.empty([len(config.skel_16), 3], dtype=p3d_orig.dtype)
-		kpt = np.empty([len(config.skel_15), 2], dtype=p2d_orig.dtype)
+		# kpt3d = np.empty([len(config.skel_16), 3], dtype=p3d_orig.dtype)
+		# kpt = np.empty([len(config.skel_15), 2], dtype=p2d_orig.dtype)
 		action = np.array([data['action']])
 
 
-		for jid, j in enumerate(config.skel_15.keys()):
-			kpt[jid] = p2d_orig[joint_names[j]]
-		for jid, j in enumerate(config.skel_16.keys()):	
-			kpt3d[jid] = p3d_orig[joint_names[j]]
-		
-		kpt3d /= self.CM_TO_M
-		kpt3d = np.expand_dims(kpt3d, axis=0)
-		kpt = np.expand_dims(kpt,axis=0)
+		p2d = np.empty([len(config.skel), 2], dtype=p2d_orig.dtype)
+		p3d = np.empty([len(config.skel), 3], dtype=p2d_orig.dtype)
+
+
+		for jid, j in enumerate(config.skel.keys()):
+			p2d[jid] = p2d_orig[joint_names[j]]
+			p3d[jid] = p3d_orig[joint_names[j]]
+
+		p3d /= self.CM_TO_M
+		hmd_info = self._preprocess_hmd_data(p3d)
+		bbox = np.array([0,0,256,256])
+
+		bbox = bbox[np.newaxis,:]
+		p3d = p3d[np.newaxis,:]
+		p2d = p2d[np.newaxis,:]
+		hmd_info = hmd_info[np.newaxis,:]
 		raw_data_info = {
 			'img_path' : img_path,
-			'depth_path' : depth_path,
-			'seg_path' : seg_path,
-			'keypoints' : kpt,
-			'keypoints_3d' : kpt3d,
-			'keypoints_visible' : np.ones((1,15),dtype=np.float32),
+			'keypoints' : p2d,
+			'keypoint3d' : p3d,
+			'bbox' : bbox,
+			'bbox_score': np.ones(1, dtype=np.float32),
+			'hmd_info': hmd_info,
+			'keypoints_visible' : np.ones((1,16),dtype=np.float32),
 			'action' : action
 		}
 
