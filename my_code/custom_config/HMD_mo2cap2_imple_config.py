@@ -145,6 +145,7 @@ model = dict(
 		loss_cosine_similarity = dict(type='cosine_similarity', loss_weight = 0.1),
 		loss_limb_length = dict(type='limb_length', loss_weight = 0.5),
 		loss_heatmap_recon = dict(type='KeypointMSELoss', use_target_weight=True, loss_weight = 500),
+
 		decoder=codec),
 	test_cfg=dict(
 		flip_test=True,
@@ -299,13 +300,13 @@ type='CustomMo2Cap2Metric',
 vis_backends = [
 	dict(type='LocalVisBackend'),
 	# # dict(type='TensorboardVisBackend'),
-	# dict(
-	# 	type='WandbVisBackend',
-	# 	init_kwargs=dict(
-	# 		# entity = "cv04",
-	# 		project="mmpose_mo2cap2_baseline_middle",
-	# 		),
-	# 	),
+	dict(
+		type='WandbVisBackend',
+		init_kwargs=dict(
+			# entity = "cv04",
+			project="mmpose_mo2cap2_baseline_middle",
+			),
+		),
 ]
 visualizer = dict(
 	# type='PoseLocalVisualizer', vis_backends=vis_backends, name='visualizer'

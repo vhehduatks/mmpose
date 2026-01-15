@@ -68,7 +68,6 @@ default_hooks = dict(
 randomness = dict(
 	seed=42,
 	diff_rank_seed=True,
-    deterministic=True
 	)
 resume = False
 
@@ -256,11 +255,11 @@ test_evaluator = dict(
 
 vis_backends = [
     dict(type='LocalVisBackend'),
-    dict(
-		init_kwargs=dict(project='mmpose_xregopose_baseline_recall_test'),
-        # init_kwargs=dict(project='mmpose_mo2cap2_baseline_middle'),
-		# init_kwargs=dict(project='mmpose_mo2cap2_baseline_all'),
-        type='WandbVisBackend'),
+    # dict(
+	# 	init_kwargs=dict(project='mmpose_xregopose_baseline_recall_test'),
+    #     # init_kwargs=dict(project='mmpose_mo2cap2_baseline_middle'),
+	# 	# init_kwargs=dict(project='mmpose_mo2cap2_baseline_all'),
+    #     type='WandbVisBackend'),
 ]
 
 visualizer = dict(
@@ -268,4 +267,4 @@ visualizer = dict(
     type='CustomPose3dLocalVisualizer_xregopose',
     vis_backends=vis_backends
 	)
-work_dir = 'work_dirs/HMD_mo2cap2_test'
+work_dir = 'work_dirs/HMD_recall_test'

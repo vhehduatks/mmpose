@@ -295,7 +295,7 @@ class HeatmapDecoder(nn.Module):
         self.linear2 = nn.Linear(512, 2048)
         self.lrelu2 = nn.LeakyReLU(0.2)
         self.spatial_resolution = math.ceil(heatmap_resolution/8.)
-        self.linear3 = nn.Linear(2048, self.spatial_resolution**2*512)
+        self.linear3 = nn.Linear(2048, (self.spatial_resolution**2)*512)
         self.lrelu3 = nn.LeakyReLU(0.2)
         self.deconv1 = nn.ConvTranspose2d(512, 128, kernel_size=4, stride=2, padding=1)
         self.deconv2 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1)

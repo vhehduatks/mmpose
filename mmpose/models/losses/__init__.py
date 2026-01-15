@@ -15,6 +15,8 @@ from .regression_loss import (BoneLoss, L1Loss, MPJPELoss,
 
 from .mo2cap2_loss import (pose_l2norm, cosine_similarity, limb_length, heatmap_recon)
 
+from .segdepth_loss import (cross_entropy)
+
 __all__ = [
     'KeypointMSELoss', 'KeypointOHKMMSELoss', 'SmoothL1Loss', 'WingLoss',
     'MPJPELoss', 'MSELoss', 'L1Loss', 'BCELoss', 'BoneLoss',
@@ -22,5 +24,5 @@ __all__ = [
     'KLDiscretLoss', 'MultipleLossWrapper', 'JSDiscretLoss', 'CombinedLoss',
     'AssociativeEmbeddingLoss', 'SoftWeightSmoothL1Loss',
     'MPJPEVelocityJointLoss', 'FeaLoss', 'KDLoss', 'OKSLoss', 'IoULoss',
-    'VariFocalLoss', 'MLECCLoss'
+    'VariFocalLoss', 'MLECCLoss', 'cross_entropy'
 ]

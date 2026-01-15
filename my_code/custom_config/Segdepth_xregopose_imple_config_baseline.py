@@ -9,6 +9,7 @@ ann_file_train = r'F:\xr_egopose_dataset_small\TrainSet'
 
 auto_scale_lr = dict(base_batch_size=256)
 backend_args = dict(backend='local')
+coco_pretrained_resnet50_256x192 = 'C:\\Users\\user\\Downloads\\pytorch-20240821T053436Z-001\\pytorch\\pose_coco\\pose_resnet_50_256x192.pth.tar'
 coco_pretrained_resnet101_256x192 = 'C:\\Users\\user\\Downloads\\pytorch-20240821T053436Z-001\\pytorch\\pose_coco\\coco_pose_resnet_101_256x192.pth.tar'
 mpii_pretrained_resnet101_256x256 = 'C:\\Users\\user\\.cache\\torch\\hub\\checkpoints\\pose_resnet_101_256x256.pth.tar'
 mpii_pretrained_resnet101_384x384 = 'C:\\Users\\user\\Downloads\\pose_mpii\\pose_resnet_101_384x384.pth.tar'
@@ -43,7 +44,7 @@ param_scheduler = [
         begin=0,
         end=10,
         # milestones=[35000],  # Every 5000 iterations
-		milestones=[i for i in range(1,10)],  
+		milestones=[i for i in range(10)],  
         gamma=0.5,
         by_epoch=True
     ),
@@ -74,8 +75,8 @@ resume = False
 
 codec = dict(
     heatmap_size=(
-        47,
-        47,
+        64,
+        64,
     ),
     input_size=(
         256,
@@ -88,7 +89,7 @@ codec = dict(
 	# 	   3.,3.,3.,3.,3.,3.,3.,3.],
 	# unbiased = False,
 	# blur_kernel_size= 11,
-    type='Custom_mo2cap2_MSRAHeatmap')
+    type='Custom_mo2cap2_MSRAHeatmap_seg_depth')
 
 custom_hooks = [
     dict(type='SyncBuffersHook'),
@@ -107,17 +108,19 @@ log_processor = dict(
 
 
 model = dict(
-	type='Custom_TopdownPoseEstimator',
+	type='Custom_TopdownPoseEstimator_segdepth',
     backbone=dict(
-        depth=101,
+        depth=50,
+		out_indices=(0,3, ),
         init_cfg=dict(
-            checkpoint=coco_pretrained_resnet101_256x192,
+            checkpoint=coco_pretrained_resnet50_256x192,
             type='Pretrained'),
         type='ResNet'),
 	backbone2=dict(
-        depth=101,
+        depth=50,
+		out_indices=(0,3, ),
         init_cfg=dict(
-            checkpoint=mpii_pretrained_resnet101_256x256,
+            checkpoint=coco_pretrained_resnet50_256x192,
             type='Pretrained'),
         type='ResNet'),
     data_preprocessor=dict(
@@ -136,19 +139,29 @@ model = dict(
     head=dict(
         decoder=codec,
         in_channels=2048,
-        loss=dict(
-			loss_weight=1000, type='KeypointMSELoss', use_target_weight=False),
-        loss_cosine_similarity=dict(loss_weight=1., type='cosine_similarity'), # .1
-        loss_heatmap_recon=dict(
-            loss_weight=500, type='KeypointMSELoss', use_target_weight=False),
-        loss_limb_length=dict(loss_weight=1., type='limb_length'), # .5
-        loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'), # 1.
-		loss_hmd = dict(type='MSELoss'),
-		loss_backbone_latant = dict(type='MSELoss',loss_weight = 1.),
+		loss_heatmap = dict(
+			type='KeypointMSELoss',
+			loss_weight=100),
+		loss_segmap = dict(
+			type='cross_entropy'),
+		loss_depthmap = dict(
+			type='L1Loss',
+			loss_weight=0.01),
+		loss_keypoints3d = dict(
+			type='MSELoss'),
+        # loss=dict(
+		# 	loss_weight=1000, type='KeypointMSELoss', use_target_weight=False),
+        # loss_cosine_similarity=dict(loss_weight=1., type='cosine_similarity'), # .1
+        # loss_heatmap_recon=dict(
+        #     loss_weight=500, type='KeypointMSELoss', use_target_weight=False),
+        # loss_limb_length=dict(loss_weight=1., type='limb_length'), # .5
+        # loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'), # 1.
+		# loss_hmd = dict(type='MSELoss'),
+		# loss_backbone_latant = dict(type='MSELoss',loss_weight = 1.),
 		# loss_backbone_heatmap =dict(
         #     loss_weight=1000, type='KeypointMSELoss', use_target_weight=False),
         out_channels=16,
-        type='CustomxRegoposeBaselinel1_multi_backbone'),
+        type='CustomxRegoposeBaselinel1_multi_backbone_segdepth'),
     test_cfg=dict(
         flip_mode='heatmap',
         flip_test=False,
@@ -166,17 +179,7 @@ train_pipeline = [
         256,
     ), type='TopdownAffine'),
     dict(
-        encoder=dict(
-            heatmap_size=(
-                47,
-                47,
-            ),
-            input_size=(
-                256,
-                256,
-            ),
-            sigma=3,
-            type='Custom_mo2cap2_MSRAHeatmap'),
+        encoder=codec,
         type='GenerateTarget'),
     dict(type='PackPoseInputs'),
 ]
@@ -188,23 +191,13 @@ val_pipeline = [
         256,
     ), type='TopdownAffine'),
     dict(
-        encoder=dict(
-            heatmap_size=(
-                47,
-                47,
-            ),
-            input_size=(
-                256,
-                256,
-            ),
-            sigma=3,
-            type='Custom_mo2cap2_MSRAHeatmap'),
+        encoder=codec,
         type='GenerateTarget'),
     dict(type='PackPoseInputs'),
 ]
 
 data_mode = 'topdown'
-dataset_type = 'CustomEgoposeDataset'
+dataset_type = 'CustomEgoposeDataset_seg_depth'
 dataset_mo2cap2_train = dict(
     data_mode=data_mode,
     data_root=ann_file_train,
@@ -227,20 +220,20 @@ torchvision = 'torchvision://resnet101'
 
 
 train_dataloader = dict(
-    batch_size=58,
+    batch_size=3,
     dataset=dataset_mo2cap2_train,
     drop_last=True,
-    num_workers=6,
+    num_workers=0,
     persistent_workers=False,
     pin_memory=True,
     sampler=dict(round_up=False, shuffle=False, type='DefaultSampler'))
 
 
 val_dataloader = dict(
-    batch_size=58,
+    batch_size=3,
     dataset=dataset_mo2cap2_val,
     drop_last=False,
-    num_workers=6,
+    num_workers=0,
     persistent_workers=False,
     pin_memory=True,
     sampler=dict(round_up=False, shuffle=False, type='DefaultSampler'))
@@ -256,11 +249,11 @@ test_evaluator = dict(
 
 vis_backends = [
     dict(type='LocalVisBackend'),
-    dict(
-		init_kwargs=dict(project='mmpose_xregopose_baseline_recall_test'),
-        # init_kwargs=dict(project='mmpose_mo2cap2_baseline_middle'),
-		# init_kwargs=dict(project='mmpose_mo2cap2_baseline_all'),
-        type='WandbVisBackend'),
+    # dict(
+	# 	init_kwargs=dict(project='mmpose_xregopose_baseline_recall_test'),
+    #     # init_kwargs=dict(project='mmpose_mo2cap2_baseline_middle'),
+	# 	# init_kwargs=dict(project='mmpose_mo2cap2_baseline_all'),
+    #     type='WandbVisBackend'),
 ]
 
 visualizer = dict(

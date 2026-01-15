@@ -92,10 +92,7 @@ class CustomMo2Cap2Metric(BaseMetric):
 
 		## mo2cap2 baseline
 		self.use_action = use_action
-		self.eval_body = mo2cap2_evaluate.EvalBody(mode='mo2cap2')
-		self.eval_upper = mo2cap2_evaluate.EvalUpperBody(mode='mo2cap2')
-		self.eval_lower = mo2cap2_evaluate.EvalLowerBody(mode='mo2cap2')
-		self.eval_per_joint = mo2cap2_evaluate.EvalPerJoint(mode='mo2cap2')
+
 		##
 
 
@@ -186,7 +183,10 @@ class CustomMo2Cap2Metric(BaseMetric):
 	def compute_metrics(self, results: list) -> Dict[str, float]:
 
 		logger: MMLogger = MMLogger.get_current_instance()
-
+		self.eval_body = mo2cap2_evaluate.EvalBody(mode='mo2cap2')
+		self.eval_upper = mo2cap2_evaluate.EvalUpperBody(mode='mo2cap2')
+		self.eval_lower = mo2cap2_evaluate.EvalLowerBody(mode='mo2cap2')
+		self.eval_per_joint = mo2cap2_evaluate.EvalPerJoint(mode='mo2cap2')
 		# split prediction and gt list
 		preds, gts = zip(*results)
 		
