@@ -85,12 +85,14 @@ All custom files follow `custom_*.py` naming and extend base classes:
 | Codecs | `mmpose/codecs/custom_*.py` | `BaseKeypointCodec` |
 | Metrics | `mmpose/evaluation/metrics/custom_*.py` | `BaseMetric` |
 | Losses | `mmpose/models/losses/*.py` | - |
+| Visualizers | `mmpose/visualization/custom_*.py` | `PoseLocalVisualizer` |
 
 ### Key Custom Features
 - **Dual Backbone**: `Custom_TopdownPoseEstimator` accepts `backbone` + `backbone2`
 - **HMD Info**: Custom heads process HMD (head/hand) position data
 - **H5 Caching**: `H5CachedEgoposeDataset` for fast loading (replaces JSON parsing)
 - **Seg+Depth**: `*_seg_depth` variants predict segmentation and depth maps
+- **3D Visualizer**: `CustomPose3dLocalVisualizer_xregopose_v2` for simplified 3D pose visualization
 
 ### Custom Configs
 Located in `my_code/custom_config/`:
