@@ -16,6 +16,65 @@ from mmpose.structures import PoseDataSample
 from . import PoseLocalVisualizer
 
 
+# EgoPose skeleton (16 keypoints)
+EGOPOSE_SKELETON = [
+    [0, 1],   # Spine2 -> Head
+    [0, 2],   # Spine2 -> LeftArm
+    [2, 3],   # LeftArm -> LeftForeArm
+    [3, 4],   # LeftForeArm -> LeftHand
+    [0, 5],   # Spine2 -> RightArm
+    [5, 6],   # RightArm -> RightForeArm
+    [6, 7],   # RightForeArm -> RightHand
+    [0, 8],   # Spine2 -> LeftUpLeg
+    [8, 9],   # LeftUpLeg -> LeftLeg
+    [9, 10],  # LeftLeg -> LeftFoot
+    [10, 11], # LeftFoot -> LeftToeBase
+    [0, 12],  # Spine2 -> RightUpLeg
+    [12, 13], # RightUpLeg -> RightLeg
+    [13, 14], # RightLeg -> RightFoot
+    [14, 15], # RightFoot -> RightToeBase
+]
+
+# EgoPose keypoint colors (BGR format for OpenCV)
+EGOPOSE_KPT_COLORS = np.array([
+    [51, 153, 255],   # Spine2
+    [51, 153, 255],   # Head
+    [51, 153, 255],   # LeftArm
+    [0, 255, 0],      # LeftForeArm
+    [0, 255, 0],      # LeftHand
+    [51, 153, 255],   # RightArm
+    [255, 128, 0],    # RightForeArm
+    [255, 128, 0],    # RightHand
+    [51, 153, 255],   # LeftUpLeg
+    [0, 255, 0],      # LeftLeg
+    [0, 255, 0],      # LeftFoot
+    [0, 255, 0],      # LeftToeBase
+    [51, 153, 255],   # RightUpLeg
+    [255, 128, 0],    # RightLeg
+    [255, 128, 0],    # RightFoot
+    [255, 128, 0],    # RightToeBase
+])
+
+# EgoPose skeleton link colors
+EGOPOSE_LINK_COLORS = np.array([
+    [51, 153, 255],   # Spine2 -> Head
+    [51, 153, 255],   # Spine2 -> LeftArm
+    [0, 255, 0],      # LeftArm -> LeftForeArm
+    [0, 255, 0],      # LeftForeArm -> LeftHand
+    [51, 153, 255],   # Spine2 -> RightArm
+    [255, 128, 0],    # RightArm -> RightForeArm
+    [255, 128, 0],    # RightForeArm -> RightHand
+    [51, 153, 255],   # Spine2 -> LeftUpLeg
+    [0, 255, 0],      # LeftUpLeg -> LeftLeg
+    [0, 255, 0],      # LeftLeg -> LeftFoot
+    [0, 255, 0],      # LeftFoot -> LeftToeBase
+    [51, 153, 255],   # Spine2 -> RightUpLeg
+    [255, 128, 0],    # RightUpLeg -> RightLeg
+    [255, 128, 0],    # RightLeg -> RightFoot
+    [255, 128, 0],    # RightFoot -> RightToeBase
+])
+
+
 @VISUALIZERS.register_module()
 class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
     """Simplified 3D Pose Visualizer for XR EgoPose.
@@ -49,6 +108,34 @@ class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
             alpha=alpha,
             **kwargs
         )
+        # Use EgoPose-specific skeleton and colors as defaults
+        self._egopose_skeleton = EGOPOSE_SKELETON
+        self._egopose_kpt_colors = EGOPOSE_KPT_COLORS
+        self._egopose_link_colors = EGOPOSE_LINK_COLORS
+
+    def _get_skeleton(self) -> list:
+        """Get skeleton connections, using EgoPose default if not available."""
+        if self.skeleton is not None and len(self.skeleton) > 0:
+            return self.skeleton
+        return self._egopose_skeleton
+
+    def _get_kpt_colors(self, length: int) -> np.ndarray:
+        """Get keypoint colors, using EgoPose default if not available."""
+        if self.kpt_color is not None and not isinstance(self.kpt_color, str):
+            color = np.array(self.kpt_color)
+            if color.ndim == 1:
+                return np.tile(color, (length, 1))
+            return color[:length]
+        return self._egopose_kpt_colors[:length]
+
+    def _get_link_colors(self, length: int) -> np.ndarray:
+        """Get link colors, using EgoPose default if not available."""
+        if self.link_color is not None and not isinstance(self.link_color, str):
+            color = np.array(self.link_color)
+            if color.ndim == 1:
+                return np.tile(color, (length, 1))
+            return color[:length]
+        return self._egopose_link_colors[:length]
 
     def _get_color_array(self, color, length: int) -> np.ndarray:
         """Convert color to numpy array of shape (length, 3)."""
@@ -67,6 +154,8 @@ class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
                           title: str = None):
         """Draw 3D skeleton on matplotlib axis.
 
+        Uses EgoPose-specific skeleton and colors for consistent visualization.
+
         Args:
             ax: Matplotlib 3D axis
             keypoints: (N, 3) array of 3D keypoints
@@ -80,34 +169,38 @@ class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
         if len(kpts) == 0:
             return
 
+        # Get EgoPose-specific colors
+        kpt_colors = self._get_kpt_colors(len(keypoints))
+        skeleton = self._get_skeleton()
+        link_colors = self._get_link_colors(len(skeleton))
+
+        # Draw keypoints with EgoPose colors
+        ax.scatter(keypoints[:, 0], keypoints[:, 1], keypoints[:, 2],
+                   c=kpt_colors / 255.0, s=50, marker='o')
+
+        # Draw skeleton with EgoPose colors
+        for sk_id, (i, j) in enumerate(skeleton):
+            if i < len(scores) and j < len(scores):
+                if scores[i] >= kpt_thr and scores[j] >= kpt_thr:
+                    pts = keypoints[[i, j]]
+                    ax.plot(pts[:, 0], pts[:, 1], pts[:, 2],
+                            color=link_colors[sk_id] / 255.0, linewidth=2)
+
         # Set axis properties
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
         if title:
-            ax.set_title(title, y=1.1)
+            ax.set_title(title)
 
-        # Set axis limits centered on keypoints
-        center = kpts.mean(axis=0)
-        limit = 1.0
-        ax.set_xlim3d([center[0] - limit/2, center[0] + limit/2])
-        ax.set_ylim3d([center[1] - limit/2, center[1] + limit/2])
-        ax.set_zlim3d([center[2] + limit/2, max(0, center[2] - limit/2)])
-        ax.set_box_aspect([1, 1, 1])
+        # Set equal aspect ratio (like inference code)
+        center = keypoints.mean(axis=0)
+        max_range = np.abs(keypoints - center).max() * 1.2
+        ax.set_xlim([center[0] - max_range, center[0] + max_range])
+        ax.set_ylim([center[1] - max_range, center[1] + max_range])
+        ax.set_zlim([center[2] - max_range, center[2] + max_range])
 
-        # Draw keypoints
-        colors = self._get_color_array(self.kpt_color, len(keypoints))
-        colors_valid = colors[valid] / 255.0
-        ax.scatter(kpts[:, 0], kpts[:, 1], kpts[:, 2], c=colors_valid, marker='o')
-
-        # Draw skeleton
-        if self.skeleton and self.link_color is not None:
-            link_colors = self._get_color_array(self.link_color, len(self.skeleton))
-            for sk_id, (i, j) in enumerate(self.skeleton):
-                if scores[i] >= kpt_thr and scores[j] >= kpt_thr:
-                    pts = keypoints[[i, j]]
-                    ax.plot(pts[:, 0], pts[:, 1], pts[:, 2],
-                           color=link_colors[sk_id] / 255.0)
+        ax.view_init(elev=15, azim=70)
 
     def _draw_3d_comparison(self,
                             pred_kpts: np.ndarray,
@@ -157,6 +250,8 @@ class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
                            kpt_thr: float = 0.3) -> np.ndarray:
         """Draw 2D keypoints on image.
 
+        Uses EgoPose-specific skeleton and colors for consistent visualization.
+
         Args:
             image: Input image (H, W, 3)
             keypoints: (N, 2) keypoint coordinates
@@ -169,7 +264,23 @@ class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
         self.set_image(image)
         h, w = image.shape[:2]
 
-        colors = self._get_color_array(self.kpt_color, len(keypoints))
+        # Get EgoPose-specific colors and skeleton
+        kpt_colors = self._get_kpt_colors(len(keypoints))
+        skeleton = self._get_skeleton()
+        link_colors = self._get_link_colors(len(skeleton))
+
+        # Draw skeleton lines first (so keypoints are on top)
+        for sk_id, (i, j) in enumerate(skeleton):
+            if i < len(scores) and j < len(scores):
+                if scores[i] >= kpt_thr and scores[j] >= kpt_thr:
+                    pt1, pt2 = keypoints[i], keypoints[j]
+                    if all(0 <= pt1[k] < [w, h][k] and 0 <= pt2[k] < [w, h][k] for k in [0, 1]):
+                        self.draw_lines(
+                            np.array([pt1[0], pt2[0]]),
+                            np.array([pt1[1], pt2[1]]),
+                            tuple(link_colors[sk_id].tolist()),
+                            line_widths=self.line_width
+                        )
 
         # Draw keypoints
         for i, (kpt, score) in enumerate(zip(keypoints, scores)):
@@ -180,25 +291,11 @@ class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
                 self.draw_circles(
                     kpt[:2],
                     radius=np.array([self.radius]),
-                    face_colors=tuple(colors[i].tolist()),
-                    edge_colors=tuple(colors[i].tolist()),
+                    face_colors=tuple(kpt_colors[i].tolist()),
+                    edge_colors=(255, 255, 255),  # white edge
                     alpha=self.alpha,
-                    line_widths=self.radius
+                    line_widths=1
                 )
-
-        # Draw skeleton
-        if self.skeleton and self.link_color is not None:
-            link_colors = self._get_color_array(self.link_color, len(self.skeleton))
-            for sk_id, (i, j) in enumerate(self.skeleton):
-                if scores[i] >= kpt_thr and scores[j] >= kpt_thr:
-                    pt1, pt2 = keypoints[i], keypoints[j]
-                    if all(0 <= pt1[k] < [w, h][k] and 0 <= pt2[k] < [w, h][k] for k in [0, 1]):
-                        self.draw_lines(
-                            np.array([pt1[0], pt2[0]]),
-                            np.array([pt1[1], pt2[1]]),
-                            tuple(link_colors[sk_id].tolist()),
-                            line_widths=self.line_width
-                        )
 
         return self.get_image()
 
