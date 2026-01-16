@@ -412,26 +412,25 @@ class CustomxRegoposeBaselinel1_multi_backbone(BaseHead):
 			feats (Tuple[Tensor]): Multi scale feature maps.
 
 		Returns:
-			Tensor: output heatmap.
+			Tuple[Tensor]: (main_heatmap, sub_heatmap, backbone_feat, backbone_feat2)
 		"""
 		backbone_feat, backbone_feat2 = feats
 		backbone_feat = backbone_feat[-1]
 		backbone_feat2 = backbone_feat2[-1]
+
+		# Main backbone heatmap generation
 		x = self.deconv_layers(backbone_feat)
-		## heatmap 47
-		x = self.add_deconv_layers(x)
-		##
+		x = self.add_deconv_layers(x)  # heatmap 47
 		x = self.conv_layers(x)
 		x = self.final_layer(x)
 
-		# x_ = self.deconv_layers_(backbone_feat2)
-		# ## heatmap 47
-		# x_ = self.add_deconv_layers_(x_)
-		# ##
-		# x_ = self.conv_layers_(x_)
-		# x_ = self.final_layer_(x_)
+		# Sub-backbone heatmap generation (for knowledge distillation)
+		x_ = self.deconv_layers_(backbone_feat2)
+		x_ = self.add_deconv_layers_(x_)  # heatmap 47
+		x_ = self.conv_layers_(x_)
+		x_ = self.final_layer_(x_)
 
-		return x, backbone_feat, backbone_feat2
+		return x, x_, backbone_feat, backbone_feat2
 
 	def decode(self, batch_outputs: Union[Tensor,Tuple[Tensor]], batch_data_samples: OptSampleList) -> InstanceList:
 		"""Decode keypoints from outputs.
@@ -607,15 +606,15 @@ class CustomxRegoposeBaselinel1_multi_backbone(BaseHead):
 			assert isinstance(feats, list) and len(feats) == 2
 			flip_indices = batch_data_samples[0].metainfo['flip_indices']
 			_feats, _feats_flip = feats
-			_batch_heatmaps = self.forward(_feats)
+			_batch_heatmaps, _, _, _ = self.forward(_feats)
 			_batch_heatmaps_flip = flip_heatmaps(
-				self.forward(_feats_flip),
+				self.forward(_feats_flip)[0],
 				flip_mode=test_cfg.get('flip_mode', 'heatmap'),
 				flip_indices=flip_indices,
 				shift_heatmap=test_cfg.get('shift_heatmap', False))
 			batch_heatmaps = (_batch_heatmaps + _batch_heatmaps_flip) * 0.5
 		else:
-			batch_heatmaps,_,_ = self.forward(feats)
+			batch_heatmaps, _, _, _ = self.forward(feats)
 
 
 		preds,_ = self.decode(batch_heatmaps, batch_data_samples)
@@ -634,6 +633,15 @@ class CustomxRegoposeBaselinel1_multi_backbone(BaseHead):
 			 train_cfg: ConfigType = {}) -> dict:
 		"""Calculate losses from a batch of inputs and data samples.
 
+		Loss function based on paper Section IV-A:
+		L_total = λ_recon * L_recon + λ_sub * L_sub + λ_L1 * L_limbL1 + λ_cos * L_cos
+
+		Where:
+		- L_recon: Reconstruction loss (heatmap_recon) - λ_recon = 250
+		- L_sub: Sub-backbone heatmap loss - λ_sub = 1.0
+		- L_limbL1: Limb length L1 loss - λ_L1 = 0.25
+		- L_cos: Cosine similarity loss - λ_cos = 0.1
+
 		Args:
 			feats (Tuple[Tensor]): The multi-stage features
 			batch_data_samples (List[:obj:`PoseDataSample`]): The batch
@@ -644,19 +652,16 @@ class CustomxRegoposeBaselinel1_multi_backbone(BaseHead):
 		Returns:
 			dict: A dictionary of losses.
 		"""
-		pred_fields,backbone_feat, backbone_feat2 = self.forward(feats)
+		# Forward pass returns: main_heatmap, sub_heatmap, backbone_feat, backbone_feat2
+		pred_fields, pred_fields_sub, backbone_feat, backbone_feat2 = self.forward(feats)
+
 		gt_heatmaps = torch.stack(
 			[d.gt_fields.heatmaps for d in batch_data_samples])
 		keypoint_weights = torch.cat([
 			d.gt_instance_labels.keypoint_weights for d in batch_data_samples
 		])
 
-		pred,pred_batch_3d_keypoints = self.decode(pred_fields,batch_data_samples)
-
-		## recon2d 
-		# gt_keypoints = torch.cat([
-		# 	d.gt_instance_labels.keypoints for d in batch_data_samples
-		# ])
+		pred, pred_batch_3d_keypoints = self.decode(pred_fields, batch_data_samples)
 
 		pred_recon_heatmap = torch.cat([
 			p.generated_heatmap for p in pred
@@ -665,11 +670,8 @@ class CustomxRegoposeBaselinel1_multi_backbone(BaseHead):
 		pred_recon_hmd = torch.cat([
 			p.hmd_recon for p in pred
 		])
-		# gt_keypoints = gt_keypoints / self.scale_factor.view(1, 1, 2).to(device=gt_keypoints.device)
-		# loss_recon2d = self.loss_recon2d_module(pred_recon2d_keypoints.to(torch.double),gt_keypoints.to(torch.double))
-		##
 
-		## 3d baseline
+		## 3d pose ground truth
 		gt_keypoint_3d = torch.cat([
 			d.gt_instance_labels.keypoint3d for d in batch_data_samples
 		])
@@ -677,47 +679,34 @@ class CustomxRegoposeBaselinel1_multi_backbone(BaseHead):
 			d.gt_instance_labels.hmd_info for d in batch_data_samples
 		])
 
-		pred_batch_3d_keypoints = pred_batch_3d_keypoints.view(-1,16,3)
+		pred_batch_3d_keypoints = pred_batch_3d_keypoints.view(-1, 16, 3)
 
+		# Compute losses
 		loss_pose_l2norm = self.loss_pose_l2norm_module(pred_batch_3d_keypoints, gt_keypoint_3d)
 		loss_cosine_similarity = self.loss_cosine_similarity_module(pred_batch_3d_keypoints, gt_keypoint_3d)
 		loss_limb_length = self.loss_limb_length_module(pred_batch_3d_keypoints, gt_keypoint_3d)
-		loss_heatmap_recon = self.loss_heatmap_recon_module(pred_recon_heatmap,gt_heatmaps,keypoint_weights)
+		loss_heatmap_recon = self.loss_heatmap_recon_module(pred_recon_heatmap, gt_heatmaps, keypoint_weights)
 		loss_2dkpt = self.loss_module(pred_fields, gt_heatmaps, keypoint_weights)
-		loss_hmd = self.loss_hmd_module(pred_recon_hmd.to(torch.double),HMD_info.to(torch.double))
-		
-		# loss_ = self.loss_module_(pred_fields_, gt_heatmaps, keypoint_weights)
-		loss_backbone_latant = self.loss_backbone_latant_module(backbone_feat, backbone_feat2)
-		# loss_backone_heatmap = self.loss_backbone_heatmap_module(pred_fields,pred_fields_)
-		# loss_kpt3d = self.loss_3d_module(pred_batch_3d_keypoints.to(torch.double),gt_keypoint_3d.to(torch.double),keypoint_weights_3d)
-		##
-		
-		# calculate losses
-		losses = dict()
-		
-		losses.update(loss_pose_l2norm = torch.mean(loss_pose_l2norm))
-		losses.update(loss_cosine_similarity = torch.mean(loss_cosine_similarity))
-		losses.update(loss_limb_length = torch.mean(loss_limb_length))
-		# losses.update(loss_heatmap_recon = torch.mean(loss_heatmap_recon))
-		losses.update(loss_heatmap_recon = loss_heatmap_recon)
-		losses.update(loss_hmd = loss_hmd)
+		loss_hmd = self.loss_hmd_module(pred_recon_hmd.to(torch.double), HMD_info.to(torch.double))
 
-		# losses.update(loss_ = loss_)
-		losses.update(loss_backbone_latant = loss_backbone_latant)
-		# losses.update(loss_backbone_heatmap = loss_backone_heatmap)
-		## 3d baseline
-		# if self.hm_iteration >= 0:
-		# 	losses.update(loss_hmd = loss_hmd)
-		# 	losses.update(loss_kpt3d = loss_kpt3d)
-		##
-		
+		# Knowledge distillation losses
+		loss_backbone_latant = self.loss_backbone_latant_module(backbone_feat, backbone_feat2)
+		# Sub-backbone heatmap loss (L_sub in paper): supervise sub-backbone with GT heatmaps
+		loss_backbone_heatmap = self.loss_backbone_heatmap_module(pred_fields_sub, gt_heatmaps, keypoint_weights)
+
+		# Aggregate losses
+		losses = dict()
+
+		losses.update(loss_pose_l2norm=torch.mean(loss_pose_l2norm))
+		losses.update(loss_cosine_similarity=torch.mean(loss_cosine_similarity))
+		losses.update(loss_limb_length=torch.mean(loss_limb_length))
+		losses.update(loss_heatmap_recon=loss_heatmap_recon)
+		losses.update(loss_hmd=loss_hmd)
+		losses.update(loss_backbone_latant=loss_backbone_latant)
+		losses.update(loss_backbone_heatmap=loss_backbone_heatmap)  # Sub-backbone heatmap loss (λ_sub)
 		losses.update(loss_kpt=loss_2dkpt)
 
-		## recon2d
-		# losses.update(loss_recon2d = loss_recon2d)
-		## TODO : loss, head debug
-
-		# calculate accuracy
+		# Calculate accuracy
 		if train_cfg.get('compute_acc', True):
 			_, avg_acc, _ = pose_pck_accuracy(
 				output=to_numpy(pred_fields),
@@ -726,9 +715,9 @@ class CustomxRegoposeBaselinel1_multi_backbone(BaseHead):
 
 			acc_pose = torch.tensor(avg_acc, device=gt_heatmaps.device)
 			losses.update(acc_pose=acc_pose)
-		
+
 		self.hm_iteration += 1
-		
+
 		return losses
 
 	def _load_state_dict_pre_hook(self, state_dict, prefix, local_meta, *args,

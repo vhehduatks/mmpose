@@ -158,21 +158,34 @@ model = dict(
     head=dict(
         decoder=codec,
         in_channels=2048,
+        # Main 2D heatmap loss
         loss=dict(
             loss_weight=1000,
             type='KeypointMSELoss',
             use_target_weight=False
         ),
-        loss_cosine_similarity=dict(loss_weight=1., type='cosine_similarity'),
+        # λ_cos = 0.1 (Section IV-A)
+        loss_cosine_similarity=dict(loss_weight=0.1, type='cosine_similarity'),
+        # λ_recon = 250 (Section IV-A) - Reconstruction loss
         loss_heatmap_recon=dict(
-            loss_weight=500,
+            loss_weight=250,
             type='KeypointMSELoss',
             use_target_weight=False
         ),
-        loss_limb_length=dict(loss_weight=1., type='limb_length'),
+        # λ_L1 = 0.25 (Section IV-A) - L1 norm loss
+        loss_limb_length=dict(loss_weight=0.25, type='limb_length'),
+        # L2 norm loss
         loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'),
+        # HMD reconstruction loss
         loss_hmd=dict(type='MSELoss'),
+        # Backbone latent feature alignment loss
         loss_backbone_latant=dict(type='MSELoss', loss_weight=1.),
+        # λ_sub = 1.0 (Section IV-A) - Sub-backbone heatmap loss
+        loss_backbone_heatmap=dict(
+            loss_weight=1.0,
+            type='KeypointMSELoss',
+            use_target_weight=False
+        ),
         out_channels=16,
         type='CustomxRegoposeBaselinel1_multi_backbone'
     ),
