@@ -90,7 +90,7 @@ default_hooks = dict(
     ),
     visualization=dict(
         enable=True,
-        interval=3,
+        interval=50,
         kpt_thr=0.3,
         type='PoseVisualizationHook'
     )
@@ -285,12 +285,21 @@ dataset_test = dict(
 # =============================================================================
 # DataLoader Config
 # =============================================================================
+# Windows: Reduce num_workers to avoid paging file memory error
+# Linux: Can use more workers for better performance
+if IS_WINDOWS:
+    _num_workers = 2
+    _persistent_workers = False  # Disable to avoid memory issues on Windows
+else:
+    _num_workers = 6
+    _persistent_workers = True
+
 train_dataloader = dict(
     batch_size=58,
     dataset=dataset_train,
     drop_last=True,
-    num_workers=6,
-    persistent_workers=True,  # Can enable with fast loading
+    num_workers=_num_workers,
+    persistent_workers=_persistent_workers,
     pin_memory=True,
     sampler=dict(round_up=False, shuffle=True, type='DefaultSampler')
 )
@@ -299,8 +308,8 @@ val_dataloader = dict(
     batch_size=58,
     dataset=dataset_val,
     drop_last=False,
-    num_workers=6,
-    persistent_workers=True,
+    num_workers=_num_workers,
+    persistent_workers=_persistent_workers,
     pin_memory=True,
     sampler=dict(round_up=False, shuffle=False, type='DefaultSampler')
 )
@@ -309,8 +318,8 @@ test_dataloader = dict(
     batch_size=58,
     dataset=dataset_test,
     drop_last=False,
-    num_workers=6,
-    persistent_workers=True,
+    num_workers=_num_workers,
+    persistent_workers=_persistent_workers,
     pin_memory=True,
     sampler=dict(round_up=False, shuffle=False, type='DefaultSampler')
 )
