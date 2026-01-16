@@ -5,25 +5,38 @@ This config uses H5CachedEgoposeDataset for fast dataset loading.
 Instead of parsing 65k+ JSON files at init, it loads from a single H5 cache file.
 
 Before training, build the cache:
+    # Windows
     python tools/dataset_converters/build_egopose_h5cache.py \
-        --data-root F:/ego_cam_dataset/Train \
-        --num-workers 4
+        --data-root F:/ego_cam_dataset/Train --num-workers 4
 
+    # Linux
     python tools/dataset_converters/build_egopose_h5cache.py \
-        --data-root F:/ego_cam_dataset/Test \
-        --num-workers 4
+        --data-root /mnt/sdb2/xr_egopose_full/TrainSet --num-workers 4
 
 Expected loading time improvement:
     - Original: ~5-10 minutes
     - With H5 cache: ~3-5 seconds
 """
 
+import platform
+
 # =============================================================================
-# Dataset Paths
+# Platform Detection & Path Configuration
 # =============================================================================
-ann_file_train = r'F:\ego_cam_dataset\Train'
-ann_file_val = r'F:\ego_cam_dataset\Val'
-ann_file_test = r'F:\ego_cam_dataset\Test'
+IS_WINDOWS = platform.system() == 'Windows'
+
+if IS_WINDOWS:
+    # Windows paths
+    ann_file_train = r'F:\ego_cam_dataset\Train'
+    ann_file_val = r'F:\ego_cam_dataset\Val'
+    ann_file_test = r'F:\ego_cam_dataset\Test'
+    pretrained_resnet101 = r'F:\download_2\pose_resnet_101_256x256.pth.tar'
+else:
+    # Linux paths
+    ann_file_train = '/mnt/sdb2/xr_egopose_full/TrainSet'
+    ann_file_val = '/mnt/sdb2/xr_egopose_full/ValSet'
+    ann_file_test = '/mnt/sdb2/xr_egopose_full/TestSet'
+    pretrained_resnet101 = '/mnt/sdb2/temp/pose_mpii/pose_resnet_101_256x256.pth.tar'
 
 # Cache file paths (auto-generated if not specified)
 # These will be created at: {ann_file_xxx}/annotations_cache.h5
@@ -36,7 +49,6 @@ cache_file_test = None
 # =============================================================================
 auto_scale_lr = dict(base_batch_size=256)
 backend_args = dict(backend='local')
-pretrained_resnet101 = r'F:\download_2\pose_resnet_101_256x256.pth.tar'
 
 # =============================================================================
 # Training Config
