@@ -109,3 +109,25 @@ Located in `my_code/custom_config/`:
 | Registry definitions | `mmpose/registry.py` |
 | Default runtime | `configs/_base_/default_runtime.py` |
 | H5 cache builder | `tools/dataset_converters/build_egopose_h5cache.py` |
+
+## External Documentation
+
+### MMEngine (Core Framework)
+- **Documentation**: https://mmengine.readthedocs.io/en/latest/index.html
+- Key topics:
+  - [Registry](https://mmengine.readthedocs.io/en/latest/advanced_tutorials/registry.html) - Component registration system
+  - [Config](https://mmengine.readthedocs.io/en/latest/advanced_tutorials/config.html) - Configuration file system
+  - [Runner](https://mmengine.readthedocs.io/en/latest/tutorials/runner.html) - Training/testing loop
+  - [Hook](https://mmengine.readthedocs.io/en/latest/tutorials/hook.html) - Training hooks
+  - [Data Transform](https://mmengine.readthedocs.io/en/latest/advanced_tutorials/data_transform.html) - Data pipeline transforms
+  - [Visualization](https://mmengine.readthedocs.io/en/latest/advanced_tutorials/visualization.html) - Visualization backends
+
+### MMPose (Pose Estimation)
+- **Documentation**: https://mmpose.readthedocs.io/en/latest/overview.html
+- Key topics:
+  - [User Guides](https://mmpose.readthedocs.io/en/latest/user_guides/index.html) - Training, testing, inference
+  - [Codecs](https://mmpose.readthedocs.io/en/latest/guide_to_framework.html#step3-codec) - Keypoint encoding/decoding
+  - [Model Zoo](https://mmpose.readthedocs.io/en/latest/model_zoo.html) - Pretrained models
+  - [Dataset Preparation](https://mmpose.readthedocs.io/en/latest/dataset_zoo/index.html) - Dataset formats
+  - [Custom Dataset](https://mmpose.readthedocs.io/en/latest/advanced_guides/customize_datasets.html) - Adding new datasets
+  - [Custom Model](https://mmpose.readthedocs.io/en/latest/advanced_guides/customize_models.html) - Adding new models
