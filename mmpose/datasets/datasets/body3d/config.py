@@ -95,8 +95,12 @@ def set_action():
 
 def load_config():
 	"""Load config"""
+	import os
+	# Use relative path from this file's location
+	config_dir = os.path.dirname(os.path.abspath(__file__))
+	config_path = os.path.join(config_dir, 'config.yml')
 
-	with open(r'C:\Users\user\Documents\GitHub\mmpose\mmpose\datasets\datasets\body3d\config.yml') as fin:
+	with open(config_path) as fin:
 		conf = edict(yaml.safe_load(fin))
 
 	j = set_skeleton()

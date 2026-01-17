@@ -31,18 +31,20 @@ if IS_WINDOWS:
     ann_file_val = r'F:\ego_cam_dataset\Val'
     ann_file_test = r'F:\ego_cam_dataset\Test'
     pretrained_resnet101 = r'F:\download_2\pose_resnet_101_256x256.pth.tar'
+    # Windows cache paths (auto-generated if None)
+    cache_file_train = None
+    cache_file_val = None
+    cache_file_test = None
 else:
     # Linux paths
     ann_file_train = '/mnt/sdb2/xr_egopose_full/TrainSet'
     ann_file_val = '/mnt/sdb2/xr_egopose_full/ValSet'
     ann_file_test = '/mnt/sdb2/xr_egopose_full/TestSet'
     pretrained_resnet101 = '/mnt/sdb2/temp/pose_mpii/pose_resnet_101_256x256.pth.tar'
-
-# Cache file paths (auto-generated if not specified)
-# These will be created at: {ann_file_xxx}/annotations_cache.h5
-cache_file_train = None  # Will auto-create at ann_file_train/annotations_cache.h5
-cache_file_val = None
-cache_file_test = None
+    # Linux cache paths (pre-built)
+    cache_file_train = '/home/hyeonghwan/h5cache/train_cache.h5'
+    cache_file_val = '/home/hyeonghwan/h5cache/val_cache.h5'
+    cache_file_test = '/home/hyeonghwan/h5cache/test_cache.h5'
 
 # =============================================================================
 # Pretrained Weights
