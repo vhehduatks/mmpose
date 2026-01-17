@@ -343,7 +343,9 @@ class H5CachedEgoposeDataset(BaseDataset):
         indices = range(0, n_samples, self.sample_interval)
 
         # Build data list
-        bbox = np.array([[0, 0, 256, 256]], dtype=np.float32)
+        # Use full image bbox (1280x800) so TopdownAffine crops/resizes the entire image
+        # instead of just the top-left corner
+        bbox = np.array([[0, 0, 1280, 800]], dtype=np.float32)
 
         for idx in indices:
             data_info = {
@@ -480,7 +482,8 @@ class H5CachedEgoposeDataset_SegDepth(H5CachedEgoposeDataset):
             actions = hf['actions'][:]
 
         indices = range(0, n_samples, self.sample_interval)
-        bbox = np.array([[0, 0, 256, 256]], dtype=np.float32)
+        # Use full image bbox (1280x800) so TopdownAffine crops/resizes the entire image
+        bbox = np.array([[0, 0, 1280, 800]], dtype=np.float32)
 
         for idx in indices:
             data_info = {

@@ -113,6 +113,8 @@ def parse_args():
                         help='Show visualization window')
     parser.add_argument('--random', action='store_true',
                         help='Randomly sample from dataset')
+    parser.add_argument('--debug', action='store_true',
+                        help='Print debug info about sample structure')
     return parser.parse_args()
 
 
@@ -267,14 +269,52 @@ def visualize_hmd_info(ax, hmd_info, title='HMD Info'):
     ax.view_init(elev=20, azim=45)
 
 
-def visualize_sample(sample, output_path=None, show=False):
+def print_sample_structure(sample, prefix='', depth=0):
+    """Print the structure of a sample for debugging."""
+    if depth > 3:  # Limit recursion depth
+        return
+    if isinstance(sample, dict):
+        for k, v in sample.items():
+            print(f"{prefix}{k}: {type(v).__name__}")
+            if isinstance(v, (dict, )):
+                print_sample_structure(v, prefix + '  ', depth + 1)
+            elif isinstance(v, torch.Tensor):
+                print(f"{prefix}  shape={v.shape}, dtype={v.dtype}, min={v.min().item():.3f}, max={v.max().item():.3f}")
+            elif isinstance(v, np.ndarray) and np.issubdtype(v.dtype, np.number):
+                print(f"{prefix}  shape={v.shape}, dtype={v.dtype}, min={v.min():.3f}, max={v.max():.3f}")
+            elif isinstance(v, np.ndarray):
+                print(f"{prefix}  shape={v.shape}, dtype={v.dtype}")
+            elif hasattr(v, '__dict__'):
+                print_sample_structure(v, prefix + '  ', depth + 1)
+    elif hasattr(sample, '__dict__'):
+        for k, v in vars(sample).items():
+            if k.startswith('_'):
+                continue
+            print(f"{prefix}{k}: {type(v).__name__}")
+            if isinstance(v, torch.Tensor):
+                print(f"{prefix}  shape={v.shape}, dtype={v.dtype}, min={v.min().item():.3f}, max={v.max().item():.3f}")
+            elif isinstance(v, np.ndarray) and np.issubdtype(v.dtype, np.number):
+                print(f"{prefix}  shape={v.shape}, dtype={v.dtype}, min={v.min():.3f}, max={v.max():.3f}")
+            elif isinstance(v, np.ndarray):
+                print(f"{prefix}  shape={v.shape}, dtype={v.dtype}")
+            elif hasattr(v, '__dict__') and not k.startswith('_'):
+                print_sample_structure(v, prefix + '  ', depth + 1)
+
+
+def visualize_sample(sample, output_path=None, show=False, debug=False):
     """Visualize a single dataset sample.
 
     Args:
         sample: Dataset sample dictionary
         output_path: Path to save visualization
         show: Whether to show the plot
+        debug: Whether to print debug info
     """
+    if debug:
+        print("\n=== Sample Structure ===")
+        print_sample_structure(sample)
+        print("========================\n")
+
     # Create figure with gridspec for flexible layout
     fig = plt.figure(figsize=(20, 16))
     gs = gridspec.GridSpec(4, 4, figure=fig, hspace=0.3, wspace=0.3)
@@ -283,18 +323,18 @@ def visualize_sample(sample, output_path=None, show=False):
     data_samples = sample.get('data_samples', None)
     inputs = sample.get('inputs', None)
 
-    # Get image
+    # Get image - dataset returns image in [0, 255] range, RGB format, (C, H, W)
     if inputs is not None:
         if isinstance(inputs, torch.Tensor):
             # (C, H, W) -> (H, W, C)
             img = inputs.permute(1, 2, 0).numpy()
-            # Denormalize
-            mean = np.array([123.675, 116.28, 103.53])
-            std = np.array([58.395, 57.12, 57.375])
-            img = img * std + mean
-            img = img.astype(np.uint8)
+            # Image from dataset is NOT normalized (data_preprocessor does that during training)
+            # Just clip and convert to uint8
+            img = np.clip(img, 0, 255).astype(np.uint8)
         else:
-            img = inputs
+            img = np.array(inputs)
+            if img.max() <= 1.0:
+                img = (img * 255).astype(np.uint8)
     else:
         img = np.zeros((256, 256, 3), dtype=np.uint8)
 
@@ -304,6 +344,7 @@ def visualize_sample(sample, output_path=None, show=False):
     gt_keypoints_3d = None
     hmd_info = None
     img_path = None
+    transformed_keypoints = None
 
     if data_samples is not None:
         # Get image path
@@ -318,6 +359,9 @@ def visualize_sample(sample, output_path=None, show=False):
 
         if hasattr(data_samples, 'gt_instances'):
             gt_inst = data_samples.gt_instances
+            # Get transformed keypoints (in the cropped image coordinate)
+            if 'transformed_keypoints' in gt_inst:
+                transformed_keypoints = gt_inst.transformed_keypoints
             if 'keypoints' in gt_inst:
                 gt_keypoints_2d = gt_inst.keypoints
             if 'keypoint3d' in gt_inst:
@@ -329,6 +373,10 @@ def visualize_sample(sample, output_path=None, show=False):
             gt_labels = data_samples.gt_instance_labels
             if 'hmd_info' in gt_labels:
                 hmd_info = gt_labels.hmd_info
+
+    # Use transformed_keypoints for visualization if available (they match the cropped image)
+    if transformed_keypoints is not None:
+        gt_keypoints_2d = transformed_keypoints
 
     # Convert tensors to numpy
     if isinstance(gt_keypoints_2d, torch.Tensor):
@@ -440,7 +488,8 @@ def main():
 
         sample = dataset[idx]
         output_path = os.path.join(args.output, f'{args.split}_sample_{idx:05d}.png')
-        visualize_sample(sample, output_path, args.show)
+        # Only print debug for first sample
+        visualize_sample(sample, output_path, args.show, debug=(args.debug and i == 0))
 
     print(f"\nDone! Visualizations saved to {args.output}")
 
