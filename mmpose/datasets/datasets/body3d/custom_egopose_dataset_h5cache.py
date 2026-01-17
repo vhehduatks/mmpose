@@ -343,9 +343,10 @@ class H5CachedEgoposeDataset(BaseDataset):
         indices = range(0, n_samples, self.sample_interval)
 
         # Build data list
-        # Use full image bbox (1280x800) so TopdownAffine crops/resizes the entire image
-        # instead of just the top-left corner
-        bbox = np.array([[0, 0, 1280, 800]], dtype=np.float32)
+        # Use center crop (1000x800) from original 1280x800 image
+        # This captures the fisheye circular view with margin for extended arms
+        # bbox format: [x1, y1, x2, y2]
+        bbox = np.array([[140, 0, 1140, 800]], dtype=np.float32)
 
         for idx in indices:
             data_info = {
@@ -482,8 +483,8 @@ class H5CachedEgoposeDataset_SegDepth(H5CachedEgoposeDataset):
             actions = hf['actions'][:]
 
         indices = range(0, n_samples, self.sample_interval)
-        # Use full image bbox (1280x800) so TopdownAffine crops/resizes the entire image
-        bbox = np.array([[0, 0, 1280, 800]], dtype=np.float32)
+        # Use center crop (1000x800) from original 1280x800 image
+        bbox = np.array([[140, 0, 1140, 800]], dtype=np.float32)
 
         for idx in indices:
             data_info = {
