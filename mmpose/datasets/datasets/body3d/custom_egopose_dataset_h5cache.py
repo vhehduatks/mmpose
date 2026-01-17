@@ -25,6 +25,9 @@ from mmengine.logging import print_log
 from .config import config
 from ..utils import parse_pose_metainfo
 
+# Get the directory containing this file for relative path resolution
+_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 @DATASETS.register_module(name='H5CachedEgoposeDataset')
 class H5CachedEgoposeDataset(BaseDataset):
@@ -61,7 +64,7 @@ class H5CachedEgoposeDataset(BaseDataset):
 
     ROOT_DIRS = ['rgba', 'json']
     CM_TO_M = 100
-    METAINFO: dict = dict(from_file=r'C:\Users\user\Documents\GitHub\mmpose\mmpose\datasets\datasets\body3d\egopose_info.py')
+    METAINFO: dict = dict(from_file=os.path.join(_CURRENT_DIR, 'egopose_info.py'))
 
     def __init__(self,
                  data_mode: str = 'topdown',

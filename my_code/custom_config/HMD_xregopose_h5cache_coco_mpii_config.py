@@ -1,21 +1,9 @@
 """
 XR EgoPose Training Config with H5 Cached Dataset
+- Dual Backbone with COCO + MPII pretrained weights
 
-This config uses H5CachedEgoposeDataset for fast dataset loading.
-Instead of parsing 65k+ JSON files at init, it loads from a single H5 cache file.
-
-Before training, build the cache:
-    # Windows
-    python tools/dataset_converters/build_egopose_h5cache.py \
-        --data-root F:/ego_cam_dataset/Train --num-workers 4
-
-    # Linux
-    python tools/dataset_converters/build_egopose_h5cache.py \
-        --data-root /mnt/sdb2/xr_egopose_full/TrainSet --num-workers 4
-
-Expected loading time improvement:
-    - Original: ~5-10 minutes
-    - With H5 cache: ~3-5 seconds
+backbone1: COCO pretrained ResNet-101
+backbone2: MPII pretrained ResNet-101
 """
 
 import platform
@@ -30,8 +18,8 @@ if IS_WINDOWS:
     ann_file_train = r'F:\ego_cam_dataset\Train'
     ann_file_val = r'F:\ego_cam_dataset\Val'
     ann_file_test = r'F:\ego_cam_dataset\Test'
-    pretrained_resnet101 = r'F:\download_2\pose_resnet_101_256x256.pth.tar'
-    # Windows cache paths (auto-generated if None)
+    pretrained_coco = r'F:\download_2\coco_pose_resnet_101_256x192.pth.tar'
+    pretrained_mpii = r'F:\download_2\pose_resnet_101_256x256.pth.tar'
     cache_file_train = None
     cache_file_val = None
     cache_file_test = None
@@ -40,8 +28,8 @@ else:
     ann_file_train = '/mnt/sdb2/xr_egopose_full/TrainSet'
     ann_file_val = '/mnt/sdb2/xr_egopose_full/ValSet'
     ann_file_test = '/mnt/sdb2/xr_egopose_full/TestSet'
-    pretrained_resnet101 = '/mnt/sdb2/temp/pose_mpii/pose_resnet_101_256x256.pth.tar'
-    # Linux cache paths (pre-built)
+    pretrained_coco = '/mnt/sdb2/temp/pose_coco/coco_pose_resnet_101_256x192.pth.tar'
+    pretrained_mpii = '/mnt/sdb2/temp/pose_mpii/pose_resnet_101_256x256.pth.tar'
     cache_file_train = '/home/hyeonghwan/h5cache/train_cache.h5'
     cache_file_val = '/home/hyeonghwan/h5cache/val_cache.h5'
     cache_file_test = '/home/hyeonghwan/h5cache/test_cache.h5'
@@ -149,22 +137,24 @@ log_processor = dict(
 )
 
 # =============================================================================
-# Model Architecture
+# Model Architecture - Dual Backbone with COCO + MPII
 # =============================================================================
 model = dict(
     type='Custom_TopdownPoseEstimator',
+    # Backbone 1: COCO pretrained
     backbone=dict(
         depth=101,
         init_cfg=dict(
-            checkpoint=pretrained_resnet101,
+            checkpoint=pretrained_coco,
             type='Pretrained'
         ),
         type='ResNet'
     ),
+    # Backbone 2: MPII pretrained
     backbone2=dict(
         depth=101,
         init_cfg=dict(
-            checkpoint=pretrained_resnet101,
+            checkpoint=pretrained_mpii,
             type='Pretrained'
         ),
         type='ResNet'
@@ -184,23 +174,16 @@ model = dict(
             type='KeypointMSELoss',
             use_target_weight=False
         ),
-        # λ_cos = 0.1 (Section IV-A)
         loss_cosine_similarity=dict(loss_weight=0.1, type='cosine_similarity'),
-        # λ_recon = 250 (Section IV-A) - Reconstruction loss
         loss_heatmap_recon=dict(
             loss_weight=250,
             type='KeypointMSELoss',
             use_target_weight=False
         ),
-        # λ_L1 = 0.25 (Section IV-A) - L1 norm loss
         loss_limb_length=dict(loss_weight=0.25, type='limb_length'),
-        # L2 norm loss
         loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'),
-        # HMD reconstruction loss
         loss_hmd=dict(type='MSELoss'),
-        # Backbone latent feature alignment loss
         loss_backbone_latant=dict(type='MSELoss', loss_weight=1.),
-        # λ_sub = 1.0 (Section IV-A) - Sub-backbone heatmap loss
         loss_backbone_heatmap=dict(
             loss_weight=1.0,
             type='KeypointMSELoss',
@@ -253,17 +236,17 @@ val_pipeline = [
 ]
 
 # =============================================================================
-# Dataset Config - Using H5CachedEgoposeDataset for FAST loading
+# Dataset Config
 # =============================================================================
 data_mode = 'topdown'
-dataset_type = 'H5CachedEgoposeDataset'  # <-- Key change: use cached dataset
+dataset_type = 'H5CachedEgoposeDataset'
 
 dataset_train = dict(
     type=dataset_type,
     data_mode=data_mode,
     data_root=ann_file_train,
-    cache_file=cache_file_train,  # Auto-generated if None
-    rebuild_cache=False,          # Set True to force rebuild
+    cache_file=cache_file_train,
+    rebuild_cache=False,
     filter_cfg=dict(filter_empty_gt=False, min_size=32),
     pipeline=train_pipeline,
 )
@@ -293,11 +276,9 @@ dataset_test = dict(
 # =============================================================================
 # DataLoader Config
 # =============================================================================
-# Windows: Reduce num_workers to avoid paging file memory error
-# Linux: Can use more workers for better performance
 if IS_WINDOWS:
     _num_workers = 2
-    _persistent_workers = False  # Disable to avoid memory issues on Windows
+    _persistent_workers = False
 else:
     _num_workers = 6
     _persistent_workers = True
@@ -353,7 +334,7 @@ test_evaluator = dict(
 vis_backends = [
     dict(type='LocalVisBackend'),
     dict(
-        init_kwargs=dict(project='mmpose_xregopose_h5cache'),
+        init_kwargs=dict(project='mmpose_xregopose_coco_mpii'),
         type='WandbVisBackend'
     ),
 ]
@@ -364,4 +345,4 @@ visualizer = dict(
     vis_backends=vis_backends
 )
 
-work_dir = 'work_dirs/HMD_xregopose_h5cache'
+work_dir = 'work_dirs/HMD_xregopose_coco_mpii'
