@@ -57,7 +57,7 @@ backend_args = dict(backend='local')
 # =============================================================================
 train_cfg = dict(
     type='EpochBasedTrainLoop',
-    max_epochs=10,
+    max_epochs=5,
     val_interval=1,
 )
 val_cfg = dict()

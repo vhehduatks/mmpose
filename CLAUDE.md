@@ -131,3 +131,34 @@ Located in `my_code/custom_config/`:
   - [Dataset Preparation](https://mmpose.readthedocs.io/en/latest/dataset_zoo/index.html) - Dataset formats
   - [Custom Dataset](https://mmpose.readthedocs.io/en/latest/advanced_guides/customize_datasets.html) - Adding new datasets
   - [Custom Model](https://mmpose.readthedocs.io/en/latest/advanced_guides/customize_models.html) - Adding new models
+
+### MMDeploy (Model Deployment)
+- **Documentation**: https://mmdeploy.readthedocs.io/en/latest/
+- **MMPose Deployment**: https://mmdeploy.readthedocs.io/en/latest/04-supported-codebases/mmpose.html
+- Key topics:
+  - [Installation](https://mmdeploy.readthedocs.io/en/latest/get_started.html) - Setup guide
+  - [Model Conversion](https://mmdeploy.readthedocs.io/en/latest/02-how-to-run/convert_model.html) - PyTorch → Backend conversion
+  - [Supported Backends](https://mmdeploy.readthedocs.io/en/latest/05-supported-backends/index.html) - ONNX Runtime, TensorRT, OpenVINO, etc.
+  - [SDK Integration](https://mmdeploy.readthedocs.io/en/latest/03-benchmark/how_to_evaluate_a_model.html) - C++/Python inference SDK
+- Supported backends: ONNX Runtime, TensorRT, OpenVINO, NCNN, TVM, CoreML
+- Deployment config naming: `pose-detection_{backend}-{precision}_{static|dynamic}_{shape}.py`
+
+## Model Deployment (Custom)
+
+### Convert Custom EgoPose Model
+```bash
+# Using custom conversion script
+python my_code/deploy/convert_egopose_model.py \
+    --config my_code/custom_config/HMD_xregopose_h5cache_config.py \
+    --checkpoint work_dirs/HMD_xregopose_h5cache/best_*.pth \
+    --output-dir deploy_models/egopose_onnx \
+    --backend onnxruntime
+```
+
+### Run Inference with Deployed Model
+```bash
+python my_code/deploy/inference_deployed.py \
+    --model-dir deploy_models/egopose_onnx \
+    --image path/to/image.jpg \
+    --output-dir output_deploy
+```
