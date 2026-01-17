@@ -8,6 +8,7 @@ import cv2
 import mmcv
 import numpy as np
 from matplotlib import pyplot as plt
+from matplotlib import gridspec
 from mmengine.dist import master_only
 from mmengine.structures import InstanceData
 
@@ -35,7 +36,7 @@ EGOPOSE_SKELETON = [
     [14, 15], # RightFoot -> RightToeBase
 ]
 
-# EgoPose keypoint colors (BGR format for OpenCV)
+# EgoPose keypoint colors (RGB format)
 EGOPOSE_KPT_COLORS = np.array([
     [51, 153, 255],   # Spine2
     [51, 153, 255],   # Head
@@ -79,6 +80,11 @@ EGOPOSE_LINK_COLORS = np.array([
 class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
     """Simplified 3D Pose Visualizer for XR EgoPose.
 
+    Visualizes:
+    - Row 1: Predicted 2D pose, Ground Truth 2D pose
+    - Row 2: Predicted 3D pose, Ground Truth 3D pose
+    - Row 3: Predicted heatmaps (sum)
+
     Args:
         name (str): Name of visualizer instance
         image (np.ndarray, optional): Origin image to draw
@@ -110,90 +116,83 @@ class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
         )
         # Use EgoPose-specific skeleton and colors as defaults
         self._egopose_skeleton = EGOPOSE_SKELETON
-        self._egopose_kpt_colors = EGOPOSE_KPT_COLORS
-        self._egopose_link_colors = EGOPOSE_LINK_COLORS
+        self._egopose_kpt_colors = EGOPOSE_KPT_COLORS / 255.0  # Normalized for matplotlib
+        self._egopose_link_colors = EGOPOSE_LINK_COLORS / 255.0
 
-    def _get_skeleton(self) -> list:
-        """Get skeleton connections, using EgoPose default if not available."""
-        if self.skeleton is not None and len(self.skeleton) > 0:
-            return self.skeleton
-        return self._egopose_skeleton
+    def _draw_2d_skeleton_plt(self, ax, image: np.ndarray, keypoints: np.ndarray,
+                               title: str = '2D Pose'):
+        """Draw 2D skeleton on matplotlib axis.
 
-    def _get_kpt_colors(self, length: int) -> np.ndarray:
-        """Get keypoint colors, using EgoPose default if not available."""
-        if self.kpt_color is not None and not isinstance(self.kpt_color, str):
-            color = np.array(self.kpt_color)
-            if color.ndim == 1:
-                return np.tile(color, (length, 1))
-            return color[:length]
-        return self._egopose_kpt_colors[:length]
+        Args:
+            ax: Matplotlib axis
+            image: RGB image (H, W, 3)
+            keypoints: (N, 2) or (1, N, 2) array of 2D keypoints
+            title: Plot title
+        """
+        ax.imshow(image)
 
-    def _get_link_colors(self, length: int) -> np.ndarray:
-        """Get link colors, using EgoPose default if not available."""
-        if self.link_color is not None and not isinstance(self.link_color, str):
-            color = np.array(self.link_color)
-            if color.ndim == 1:
-                return np.tile(color, (length, 1))
-            return color[:length]
-        return self._egopose_link_colors[:length]
+        if keypoints is None:
+            ax.set_title(title)
+            ax.axis('off')
+            return
 
-    def _get_color_array(self, color, length: int) -> np.ndarray:
-        """Convert color to numpy array of shape (length, 3)."""
-        if color is None or isinstance(color, str):
-            return np.array([[255, 0, 0]] * length)  # default red
-        color = np.array(color)
-        if color.ndim == 1:
-            return np.tile(color, (length, 1))
-        return color[:length]
+        if keypoints.ndim == 3:
+            keypoints = keypoints[0]
 
-    def _draw_3d_skeleton(self,
-                          ax,
-                          keypoints: np.ndarray,
-                          scores: np.ndarray,
-                          kpt_thr: float = 0.3,
-                          title: str = None):
+        h, w = image.shape[:2]
+
+        # Draw skeleton lines first
+        for idx, (i, j) in enumerate(self._egopose_skeleton):
+            if i < len(keypoints) and j < len(keypoints):
+                pt1, pt2 = keypoints[i], keypoints[j]
+                if (0 <= pt1[0] < w and 0 <= pt1[1] < h and
+                    0 <= pt2[0] < w and 0 <= pt2[1] < h):
+                    ax.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]],
+                            color=self._egopose_link_colors[idx], linewidth=2)
+
+        # Draw keypoints
+        for i, kpt in enumerate(keypoints):
+            if i < len(self._egopose_kpt_colors):
+                if 0 <= kpt[0] < w and 0 <= kpt[1] < h:
+                    ax.scatter(kpt[0], kpt[1], c=[self._egopose_kpt_colors[i]],
+                              s=50, marker='o', edgecolors='white', linewidths=1, zorder=5)
+
+        ax.set_title(title)
+        ax.axis('off')
+
+    def _draw_3d_skeleton_plt(self, ax, keypoints: np.ndarray, title: str = '3D Pose'):
         """Draw 3D skeleton on matplotlib axis.
-
-        Uses EgoPose-specific skeleton and colors for consistent visualization.
 
         Args:
             ax: Matplotlib 3D axis
-            keypoints: (N, 3) array of 3D keypoints
-            scores: (N,) array of keypoint scores
-            kpt_thr: Score threshold for visibility
+            keypoints: (N, 3) or (1, N, 3) array of 3D keypoints
             title: Plot title
         """
-        valid = (scores >= kpt_thr) & (~np.isnan(keypoints).any(axis=-1))
-        kpts = keypoints[valid]
-
-        if len(kpts) == 0:
+        if keypoints is None:
+            ax.set_title(title)
             return
 
-        # Get EgoPose-specific colors
-        kpt_colors = self._get_kpt_colors(len(keypoints))
-        skeleton = self._get_skeleton()
-        link_colors = self._get_link_colors(len(skeleton))
+        if keypoints.ndim == 3:
+            keypoints = keypoints[0]
 
-        # Draw keypoints with EgoPose colors
+        # Draw keypoints
         ax.scatter(keypoints[:, 0], keypoints[:, 1], keypoints[:, 2],
-                   c=kpt_colors / 255.0, s=50, marker='o')
+                   c=self._egopose_kpt_colors, s=50, marker='o')
 
-        # Draw skeleton with EgoPose colors
-        for sk_id, (i, j) in enumerate(skeleton):
-            if i < len(scores) and j < len(scores):
-                if scores[i] >= kpt_thr and scores[j] >= kpt_thr:
-                    pts = keypoints[[i, j]]
-                    ax.plot(pts[:, 0], pts[:, 1], pts[:, 2],
-                            color=link_colors[sk_id] / 255.0, linewidth=2)
+        # Draw skeleton
+        for idx, (i, j) in enumerate(self._egopose_skeleton):
+            if i < len(keypoints) and j < len(keypoints):
+                pts = keypoints[[i, j]]
+                ax.plot(pts[:, 0], pts[:, 1], pts[:, 2],
+                        color=self._egopose_link_colors[idx], linewidth=2)
 
         # Set axis properties
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.set_zlabel('Z')
-        if title:
-            ax.set_title(title)
+        ax.set_title(title)
 
-        # Set equal aspect ratio (like inference code)
+        # Set equal aspect ratio
         center = keypoints.mean(axis=0)
         max_range = np.abs(keypoints - center).max() * 1.2
         ax.set_xlim([center[0] - max_range, center[0] + max_range])
@@ -202,36 +201,81 @@ class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
 
         ax.view_init(elev=15, azim=70)
 
-    def _draw_3d_comparison(self,
-                            pred_kpts: np.ndarray,
-                            gt_kpts: Optional[np.ndarray] = None,
-                            kpt_thr: float = 0.3) -> np.ndarray:
-        """Draw 3D prediction and optionally ground truth side by side.
+    def _draw_heatmaps_plt(self, ax, heatmaps: np.ndarray, title: str = 'Predicted Heatmaps'):
+        """Draw sum of heatmaps on matplotlib axis.
 
         Args:
-            pred_kpts: (1, N, 3) predicted keypoints
-            gt_kpts: (1, N, 3) ground truth keypoints, optional
-            kpt_thr: Score threshold
+            ax: Matplotlib axis
+            heatmaps: (C, H, W) array of heatmaps
+            title: Plot title
+        """
+        if heatmaps is None:
+            ax.set_title(title)
+            ax.axis('off')
+            return
+
+        if hasattr(heatmaps, 'cpu'):
+            heatmaps = heatmaps.cpu().numpy()
+
+        # Sum all channels
+        heatmap_sum = heatmaps.sum(axis=0)
+
+        ax.imshow(heatmap_sum, cmap='jet')
+        ax.set_title(title)
+        ax.axis('off')
+
+    def _create_visualization(self,
+                               image: np.ndarray,
+                               pred_kpts_2d: Optional[np.ndarray] = None,
+                               gt_kpts_2d: Optional[np.ndarray] = None,
+                               pred_kpts_3d: Optional[np.ndarray] = None,
+                               gt_kpts_3d: Optional[np.ndarray] = None,
+                               pred_heatmaps: Optional[np.ndarray] = None) -> np.ndarray:
+        """Create full visualization with 2D, 3D poses and heatmaps.
+
+        Layout:
+        - Row 1: Predicted 2D | GT 2D
+        - Row 2: Predicted 3D | GT 3D
+        - Row 3: Heatmaps (spanning both columns)
+
+        Args:
+            image: Input image (H, W, 3) in RGB
+            pred_kpts_2d: Predicted 2D keypoints
+            gt_kpts_2d: Ground truth 2D keypoints
+            pred_kpts_3d: Predicted 3D keypoints
+            gt_kpts_3d: Ground truth 3D keypoints
+            pred_heatmaps: Predicted heatmaps (C, H, W)
 
         Returns:
-            np.ndarray: Rendered image as RGB array
+            np.ndarray: Rendered visualization as RGB image
         """
-        num_plots = 2 if gt_kpts is not None else 1
-
         plt.ioff()
-        fig = plt.figure(figsize=(5 * num_plots, 5))
 
-        # Draw prediction
-        ax_pred = fig.add_subplot(1, num_plots, 1, projection='3d')
-        ax_pred.view_init(elev=15, azim=70)
-        scores = np.ones(pred_kpts.shape[1])
-        self._draw_3d_skeleton(ax_pred, pred_kpts[0], scores, kpt_thr, 'Prediction')
+        # Determine layout based on available data
+        has_heatmaps = pred_heatmaps is not None
+        num_rows = 3 if has_heatmaps else 2
 
-        # Draw ground truth if available
-        if gt_kpts is not None:
-            ax_gt = fig.add_subplot(1, num_plots, 2, projection='3d')
-            ax_gt.view_init(elev=15, azim=70)
-            self._draw_3d_skeleton(ax_gt, gt_kpts[0], scores, kpt_thr, 'Ground Truth')
+        fig = plt.figure(figsize=(10, 5 * num_rows))
+        gs = gridspec.GridSpec(num_rows, 2, figure=fig, hspace=0.3, wspace=0.2)
+
+        # Row 1: 2D poses
+        ax1 = fig.add_subplot(gs[0, 0])
+        self._draw_2d_skeleton_plt(ax1, image, pred_kpts_2d, 'Predicted 2D Pose')
+
+        ax2 = fig.add_subplot(gs[0, 1])
+        self._draw_2d_skeleton_plt(ax2, image, gt_kpts_2d, 'Ground Truth 2D Pose')
+
+        # Row 2: 3D poses
+        ax3 = fig.add_subplot(gs[1, 0], projection='3d')
+        self._draw_3d_skeleton_plt(ax3, pred_kpts_3d, 'Predicted 3D Pose')
+
+        ax4 = fig.add_subplot(gs[1, 1], projection='3d')
+        self._draw_3d_skeleton_plt(ax4, gt_kpts_3d, 'Ground Truth 3D Pose')
+
+        # Row 3: Heatmaps
+        if has_heatmaps:
+            ax5 = fig.add_subplot(gs[2, :])
+            self._draw_heatmaps_plt(ax5, pred_heatmaps, 'Predicted Heatmaps (Sum)')
 
         # Convert to image
         fig.tight_layout()
@@ -242,92 +286,6 @@ class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
         plt.close(fig)
 
         return img
-
-    def _draw_2d_keypoints(self,
-                           image: np.ndarray,
-                           keypoints: np.ndarray,
-                           scores: np.ndarray,
-                           kpt_thr: float = 0.3) -> np.ndarray:
-        """Draw 2D keypoints on image.
-
-        Uses EgoPose-specific skeleton and colors for consistent visualization.
-
-        Args:
-            image: Input image (H, W, 3)
-            keypoints: (N, 2) keypoint coordinates
-            scores: (N,) keypoint scores
-            kpt_thr: Score threshold
-
-        Returns:
-            np.ndarray: Image with keypoints drawn
-        """
-        self.set_image(image)
-        h, w = image.shape[:2]
-
-        # Get EgoPose-specific colors and skeleton
-        kpt_colors = self._get_kpt_colors(len(keypoints))
-        skeleton = self._get_skeleton()
-        link_colors = self._get_link_colors(len(skeleton))
-
-        # Draw skeleton lines first (so keypoints are on top)
-        for sk_id, (i, j) in enumerate(skeleton):
-            if i < len(scores) and j < len(scores):
-                if scores[i] >= kpt_thr and scores[j] >= kpt_thr:
-                    pt1, pt2 = keypoints[i], keypoints[j]
-                    if all(0 <= pt1[k] < [w, h][k] and 0 <= pt2[k] < [w, h][k] for k in [0, 1]):
-                        self.draw_lines(
-                            np.array([pt1[0], pt2[0]]),
-                            np.array([pt1[1], pt2[1]]),
-                            tuple(link_colors[sk_id].tolist()),
-                            line_widths=self.line_width
-                        )
-
-        # Draw keypoints
-        for i, (kpt, score) in enumerate(zip(keypoints, scores)):
-            if score < kpt_thr:
-                continue
-            x, y = int(kpt[0]), int(kpt[1])
-            if 0 <= x < w and 0 <= y < h:
-                self.draw_circles(
-                    kpt[:2],
-                    radius=np.array([self.radius]),
-                    face_colors=tuple(kpt_colors[i].tolist()),
-                    edge_colors=(255, 255, 255),  # white edge
-                    alpha=self.alpha,
-                    line_widths=1
-                )
-
-        return self.get_image()
-
-    def _merge_images(self, img_2d: np.ndarray, img_3d: np.ndarray) -> np.ndarray:
-        """Merge 2D and 3D visualization images horizontally.
-
-        Args:
-            img_2d: 2D keypoint image
-            img_3d: 3D skeleton image
-
-        Returns:
-            np.ndarray: Merged image
-        """
-        # Match heights
-        h1, h2 = img_2d.shape[0], img_3d.shape[0]
-        if h1 != h2:
-            target_h = max(h1, h2)
-            if h1 < target_h:
-                pad = (target_h - h1) // 2
-                img_2d = cv2.copyMakeBorder(img_2d, pad, target_h - h1 - pad,
-                                            0, 0, cv2.BORDER_CONSTANT, value=(255, 255, 255))
-            if h2 < target_h:
-                pad = (target_h - h2) // 2
-                img_3d = cv2.copyMakeBorder(img_3d, pad, target_h - h2 - pad,
-                                            0, 0, cv2.BORDER_CONSTANT, value=(255, 255, 255))
-
-        # Add margin to 2D image
-        margin = 50
-        img_2d = cv2.copyMakeBorder(img_2d, 0, 0, margin, margin,
-                                     cv2.BORDER_CONSTANT, value=(255, 255, 255))
-
-        return np.concatenate([img_2d, img_3d], axis=1)
 
     @master_only
     def add_datasample(self,
@@ -345,6 +303,11 @@ class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
                        **kwargs) -> np.ndarray:
         """Draw datasample and save to backends.
 
+        Creates visualization with:
+        - Predicted 2D pose | Ground Truth 2D pose
+        - Predicted 3D pose | Ground Truth 3D pose
+        - Predicted heatmaps
+
         Args:
             name: Image identifier
             image: Input image (H, W, 3) in RGB
@@ -361,45 +324,68 @@ class CustomPose3dLocalVisualizer_xregopose_v2(PoseLocalVisualizer):
         Returns:
             np.ndarray: Drawn image
         """
-        img_2d = None
+        pred_kpts_2d = None
+        gt_kpts_2d = None
         pred_kpts_3d = None
         gt_kpts_3d = None
+        pred_heatmaps = None
 
-        # Extract prediction 3D keypoints
+        # Extract prediction data
         if draw_pred and 'pred_instances' in data_sample:
             pred = data_sample.pred_instances
+
+            # 2D keypoints
+            if 'keypoints' in pred:
+                kpts = pred.get('transformed_keypoints', pred.keypoints)
+                if hasattr(kpts, 'cpu'):
+                    kpts = kpts.cpu().numpy()
+                pred_kpts_2d = kpts
+
+            # 3D keypoints
             if 'keypoint_3d' in pred:
-                pred_kpts_3d = pred.keypoint_3d.cpu().numpy()
+                kpts_3d = pred.keypoint_3d
+                if hasattr(kpts_3d, 'cpu'):
+                    kpts_3d = kpts_3d.cpu().numpy()
+                pred_kpts_3d = kpts_3d
 
-            # Draw 2D keypoints
-            if draw_2d and 'keypoints' in pred:
-                kpts_2d = pred.get('transformed_keypoints', pred.keypoints)[0]
-                scores_2d = pred.get('keypoint_scores', np.ones(len(kpts_2d)))[0]
-                img_2d = self._draw_2d_keypoints(image.copy(), kpts_2d, scores_2d, kpt_thr)
+        # Extract predicted heatmaps from pred_fields
+        if draw_pred and 'pred_fields' in data_sample:
+            pred_fields = data_sample.pred_fields
+            if 'heatmaps' in pred_fields:
+                pred_heatmaps = pred_fields.heatmaps
+                if hasattr(pred_heatmaps, 'cpu'):
+                    pred_heatmaps = pred_heatmaps.cpu().numpy()
 
-        # Extract ground truth 3D keypoints
+        # Extract ground truth data
         if draw_gt and 'gt_instances' in data_sample:
             gt = data_sample.gt_instances
+
+            # 2D keypoints (transformed)
+            if 'transformed_keypoints' in gt:
+                gt_kpts_2d = gt.transformed_keypoints
+            elif 'keypoints' in gt:
+                gt_kpts_2d = gt.keypoints
+
+            if hasattr(gt_kpts_2d, 'cpu'):
+                gt_kpts_2d = gt_kpts_2d.cpu().numpy()
+
+            # 3D keypoints
             for key in ['keypoint3d', 'lifting_target', 'keypoints_gt']:
                 if key in gt:
                     gt_kpts_3d = gt[key]
+                    if hasattr(gt_kpts_3d, 'cpu'):
+                        gt_kpts_3d = gt_kpts_3d.cpu().numpy()
                     break
 
-        # Draw 3D visualization
-        if pred_kpts_3d is not None:
-            img_3d = self._draw_3d_comparison(
-                pred_kpts_3d,
-                gt_kpts_3d if draw_gt else None,
-                kpt_thr
-            )
-        else:
-            img_3d = np.full((256, 256, 3), 255, dtype=np.uint8)
-
-        # Merge images
-        if img_2d is not None:
-            drawn_img = self._merge_images(img_2d, img_3d)
-        else:
-            drawn_img = img_3d
+        # Create visualization
+        drawn_img = self._create_visualization(
+            image=image,
+            pred_kpts_2d=pred_kpts_2d,
+            gt_kpts_2d=gt_kpts_2d,
+            pred_kpts_3d=pred_kpts_3d,
+            gt_kpts_3d=gt_kpts_3d,
+            pred_heatmaps=pred_heatmaps
+        )
 
         self.set_image(drawn_img)
 
