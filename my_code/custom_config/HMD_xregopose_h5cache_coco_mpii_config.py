@@ -32,7 +32,8 @@ else:
     pretrained_mpii = '/mnt/sdb2/temp/pose_mpii/pose_resnet_101_256x256.pth.tar'
     cache_file_train = '/home/hyeonghwan/h5cache/train_cache.h5'
     cache_file_val = '/home/hyeonghwan/h5cache/val_cache.h5'
-    cache_file_test = '/home/hyeonghwan/h5cache/test_cache.h5'
+    # Test cache with preprocessed images for fast loading
+    cache_file_test = '/home/hyeonghwan/h5cache/test_cache_with_images.h5'
 
 # =============================================================================
 # Pretrained Weights
@@ -235,6 +236,23 @@ val_pipeline = [
     dict(type='PackPoseInputs'),
 ]
 
+# Test pipeline with H5 cache for fast image loading
+test_pipeline = [
+    dict(type='LoadImageFromH5Cache'),  # Loads from H5 cache instead of disk
+    dict(padding=1.0, type='GetBBoxCenterScale'),
+    dict(input_size=(256, 256), type='TopdownAffine'),
+    dict(
+        encoder=dict(
+            heatmap_size=(47, 47),
+            input_size=(256, 256),
+            sigma=3,
+            type='Custom_mo2cap2_MSRAHeatmap'
+        ),
+        type='GenerateTarget'
+    ),
+    dict(type='PackPoseInputs'),
+]
+
 # =============================================================================
 # Dataset Config
 # =============================================================================
@@ -268,8 +286,9 @@ dataset_test = dict(
     data_root=ann_file_test,
     cache_file=cache_file_test,
     rebuild_cache=False,
+    use_cached_images=True,  # Use preprocessed images from cache for fast loading
     filter_cfg=dict(filter_empty_gt=False, min_size=32),
-    pipeline=val_pipeline,
+    pipeline=test_pipeline,  # Uses LoadImageFromH5Cache for fast loading
     test_mode=True,
 )
 

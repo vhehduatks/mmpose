@@ -139,6 +139,78 @@ class LoadImageFromH5(object):
 
 
 @TRANSFORMS.register_module()
+class LoadImageFromH5Cache(object):
+    """Load an image from H5 cache file (for EgoPose dataset with cached images).
+
+    This transform loads preprocessed images directly from H5 cache files,
+    which is faster than loading individual image files from disk.
+
+    Required Keys:
+        - h5_cache_path: Path to H5 cache file
+        - h5_img_idx: Index of the image within the cache
+
+    Modified Keys:
+        - img: (H, W, 3) uint8 array in HWC BGR format
+        - img_shape
+        - ori_shape
+
+    Args:
+        to_float32 (bool): Whether to convert to float32. Default: False.
+    """
+
+    def __init__(self, to_float32: bool = False):
+        self.to_float32 = to_float32
+        self._h5_cache = {}  # Cache open file handles
+
+    def _get_h5_handle(self, h5_path: str) -> h5py.File:
+        """Get cached H5 file handle."""
+        if h5_path not in self._h5_cache:
+            self._h5_cache[h5_path] = h5py.File(h5_path, 'r')
+        return self._h5_cache[h5_path]
+
+    def transform(self, results: dict) -> Optional[dict]:
+        """Load image from H5 cache file.
+
+        Args:
+            results (dict): Result dict from dataset
+
+        Returns:
+            dict: Updated result dict with loaded image
+        """
+        h5_path = results.get('h5_cache_path')
+        img_idx = results.get('h5_img_idx')
+
+        if h5_path is None or img_idx is None:
+            raise KeyError('h5_cache_path and h5_img_idx are required '
+                          'for LoadImageFromH5Cache')
+
+        # Open H5 file (cached)
+        hf = self._get_h5_handle(h5_path)
+
+        # Load image: (H, W, 3) uint8 RGB
+        img = hf['images'][img_idx]
+
+        # Convert RGB to BGR (OpenCV format)
+        img = img[:, :, ::-1].copy()
+
+        if self.to_float32:
+            img = img.astype(np.float32)
+
+        results['img'] = img
+        results['img_shape'] = img.shape[:2]
+        results['ori_shape'] = img.shape[:2]
+
+        return results
+
+    def __call__(self, results: dict) -> Optional[dict]:
+        """Make the transform callable."""
+        return self.transform(results)
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}(to_float32={self.to_float32})'
+
+
+@TRANSFORMS.register_module()
 class LoadImage(LoadImageFromFile):
     """Load an image from file or from the np.ndarray in ``results['img']``.
 

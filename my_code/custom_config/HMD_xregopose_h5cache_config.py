@@ -44,7 +44,8 @@ else:
     # Linux cache paths (pre-built)
     cache_file_train = '/home/hyeonghwan/h5cache/train_cache.h5'
     cache_file_val = '/home/hyeonghwan/h5cache/val_cache.h5'
-    cache_file_test = '/home/hyeonghwan/h5cache/test_cache.h5'
+    # Test cache in RAM disk for fast loading (num_workers=0 is fastest!)
+    cache_file_test = '/dev/shm/test_cache_ramdisk.h5'
 
 # =============================================================================
 # Pretrained Weights
@@ -136,7 +137,7 @@ default_scope = 'mmpose'
 env_cfg = dict(
     cudnn_benchmark=False,
     dist_cfg=dict(backend='nccl'),
-    mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0)
+    mp_cfg=dict(mp_start_method='fork', opencv_num_threads=4)  # Enable OpenCV threading
 )
 
 load_from = None
@@ -252,6 +253,14 @@ val_pipeline = [
     dict(type='PackPoseInputs'),
 ]
 
+# Test pipeline - simplified for fast inference (no heatmap generation needed)
+test_pipeline_fast = [
+    dict(type='LoadImage'),
+    dict(padding=1.0, type='GetBBoxCenterScale'),
+    dict(input_size=(256, 256), type='TopdownAffine'),
+    dict(type='PackPoseInputs'),
+]
+
 # =============================================================================
 # Dataset Config - Using H5CachedEgoposeDataset for FAST loading
 # =============================================================================
@@ -285,8 +294,9 @@ dataset_test = dict(
     data_root=ann_file_test,
     cache_file=cache_file_test,
     rebuild_cache=False,
+    use_cached_images=False,  # Images are separate files (preprocessed)
     filter_cfg=dict(filter_empty_gt=False, min_size=32),
-    pipeline=val_pipeline,
+    pipeline=val_pipeline,  # Need GenerateTarget for hmd_info
     test_mode=True,
 )
 
@@ -323,11 +333,10 @@ val_dataloader = dict(
 )
 
 test_dataloader = dict(
-    batch_size=58,
+    batch_size=128,  # Larger batch size to reduce overhead
     dataset=dataset_test,
     drop_last=False,
-    num_workers=_num_workers,
-    persistent_workers=_persistent_workers,
+    num_workers=0,  # Single process is faster for this dataset!
     pin_memory=True,
     sampler=dict(round_up=False, shuffle=False, type='DefaultSampler')
 )

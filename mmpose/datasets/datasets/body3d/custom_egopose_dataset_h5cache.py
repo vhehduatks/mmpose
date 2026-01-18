@@ -36,12 +36,18 @@ class H5CachedEgoposeDataset(BaseDataset):
     This dataset pre-processes all JSON annotations into a single HDF5 cache file,
     dramatically reducing initialization time from minutes to seconds.
 
-    Cache file structure:
+    Cache file structure (v1.0):
         - img_paths: (N,) string array of image paths
         - keypoints: (N, 1, 16, 2) float32 array of 2D keypoints
         - keypoint3d: (N, 1, 16, 3) float32 array of 3D keypoints
         - hmd_info: (N, 1, 9) float32 array of HMD preprocessed data
         - actions: (N,) string array of action labels
+
+    Cache file structure (v2.0 with images):
+        - All of the above, plus:
+        - images: (N, 256, 256, 3) uint8 array of preprocessed RGB images
+        - has_images: True (attribute)
+        - img_size: 256 (attribute)
 
     Args:
         data_mode (str): Dataset mode. Default: 'topdown'.
@@ -51,6 +57,9 @@ class H5CachedEgoposeDataset(BaseDataset):
             auto-generated at data_root/annotations_cache.h5
         rebuild_cache (bool): Whether to rebuild cache even if it exists.
             Default: False.
+        use_cached_images (bool): Whether to use cached images if available.
+            Set to True to use pre-processed images from H5 cache for faster
+            loading. Default: False.
         data_prefix (dict): Prefix for data path. Default: dict(img='').
         filter_cfg (dict, optional): Config for filtering data.
         indices (int or Sequence[int], optional): Indices to select.
@@ -72,6 +81,7 @@ class H5CachedEgoposeDataset(BaseDataset):
                  data_root: Optional[str] = None,
                  cache_file: Optional[str] = None,
                  rebuild_cache: bool = False,
+                 use_cached_images: bool = False,
                  data_prefix: dict = dict(img=''),
                  filter_cfg: Optional[dict] = None,
                  indices: Optional[Union[int, Sequence[int]]] = None,
@@ -86,6 +96,7 @@ class H5CachedEgoposeDataset(BaseDataset):
         self.data_root = data_root
         self.data_mode = data_mode
         self.sample_interval = sample_interval
+        self.use_cached_images = use_cached_images
 
         # Determine cache file path
         if cache_file is None:
@@ -94,6 +105,10 @@ class H5CachedEgoposeDataset(BaseDataset):
             self.cache_file = cache_file
 
         self.rebuild_cache = rebuild_cache
+
+        # Check if cache has images (will be set during cache loading)
+        self._has_cached_images = False
+        self._cached_img_size = 256
 
         # Load or build cache
         self._ensure_cache_exists()
@@ -321,11 +336,53 @@ class H5CachedEgoposeDataset(BaseDataset):
 
         return indexed_paths
 
+    def _transform_keypoints_for_cached_image(self, keypoints: np.ndarray,
+                                               orig_w: int = 1280,
+                                               orig_h: int = 800,
+                                               img_size: int = 256) -> np.ndarray:
+        """Transform 2D keypoints from original image coords to cached image coords.
+
+        The cached images are created by:
+        1. Center crop to square (min(h,w) x min(h,w))
+        2. Resize to img_size x img_size
+
+        For 1280x800 original -> 800x800 crop -> 256x256 resize:
+        - crop_left = (1280 - 800) / 2 = 240
+        - crop_top = 0
+        - scale = 256 / 800 = 0.32
+
+        Args:
+            keypoints: (1, 16, 2) keypoints in original image coordinates
+            orig_w: Original image width (default: 1280)
+            orig_h: Original image height (default: 800)
+            img_size: Cached image size (default: 256)
+
+        Returns:
+            Transformed keypoints in cached image coordinates
+        """
+        keypoints = keypoints.copy()
+        min_dim = min(orig_h, orig_w)
+        crop_left = (orig_w - min_dim) / 2
+        crop_top = (orig_h - min_dim) / 2
+        scale = img_size / min_dim
+
+        # Transform: first subtract crop offset, then scale
+        keypoints[..., 0] = (keypoints[..., 0] - crop_left) * scale
+        keypoints[..., 1] = (keypoints[..., 1] - crop_top) * scale
+
+        return keypoints
+
     def load_data_list(self) -> List[dict]:
         """Load annotations from HDF5 cache file.
 
         This is the key performance improvement - instead of parsing
         65k+ JSON files, we load pre-computed arrays from a single H5 file.
+
+        When use_cached_images=True and cache has images:
+        - Stores H5 cache path and image index for lazy loading via transform
+        - Transforms 2D keypoints to match cached image coordinates
+        - Uses bbox covering the full cached image
+        - Images are loaded on-demand by LoadImageFromH5Cache transform
 
         Returns:
             List of annotation dicts
@@ -335,38 +392,79 @@ class H5CachedEgoposeDataset(BaseDataset):
         with h5py.File(self.cache_file, 'r') as hf:
             n_samples = hf.attrs['n_samples']
 
-            # Load all data at once (much faster than per-sample I/O)
+            # Check if cache has images
+            has_images = hf.attrs.get('has_images', False)
+            img_size = hf.attrs.get('img_size', 256)
+
+            # Load all annotation data at once (much faster than per-sample I/O)
             img_paths = hf['img_paths'][:]
             keypoints = hf['keypoints'][:]
             keypoint3d = hf['keypoint3d'][:]
             hmd_info = hf['hmd_info'][:]
             actions = hf['actions'][:]
 
+            # Check if we can use cached images (lazy loading)
+            if self.use_cached_images and has_images and 'images' in hf:
+                self._has_cached_images = True
+                self._cached_img_size = img_size
+                print_log(f'H5 cache has {n_samples} images ({img_size}x{img_size}), '
+                         f'will load lazily via LoadImageFromH5Cache transform',
+                         logger='current', level=logging.INFO)
+
+            # Check if cache is preprocessed (keypoints already transformed)
+            is_preprocessed = hf.attrs.get('preprocessed', False)
+            if is_preprocessed:
+                self._is_preprocessed = True
+                self._cached_img_size = hf.attrs.get('img_size', 256)
+                print_log(f'Using preprocessed cache (images: {self._cached_img_size}x{self._cached_img_size}, '
+                         f'keypoints already transformed)',
+                         logger='current', level=logging.INFO)
+
         # Apply sample interval
-        indices = range(0, n_samples, self.sample_interval)
+        indices = list(range(0, n_samples, self.sample_interval))
 
-        # Build data list
-        # Use center crop (1000x800) from original 1280x800 image
-        # This captures the fisheye circular view with margin for extended arms
-        # bbox format: [x1, y1, x2, y2]
-        bbox = np.array([[140, 0, 1140, 800]], dtype=np.float32)
+        # Determine bbox based on cache type
+        if self._has_cached_images or getattr(self, '_is_preprocessed', False):
+            # For preprocessed/cached images: bbox covers full image
+            img_size = self._cached_img_size
+            bbox = np.array([[0, 0, img_size, img_size]], dtype=np.float32)
+        else:
+            # For original images: use center crop (1000x800) from 1280x800
+            bbox = np.array([[140, 0, 1140, 800]], dtype=np.float32)
 
-        for idx in indices:
+        for i, idx in enumerate(indices):
+            img_path = img_paths[idx] if isinstance(img_paths[idx], str) \
+                       else img_paths[idx].decode('utf8')
+            action = actions[idx] if isinstance(actions[idx], str) \
+                     else actions[idx].decode('utf8')
+
             data_info = {
-                'img_path': img_paths[idx] if isinstance(img_paths[idx], str)
-                           else img_paths[idx].decode('utf8'),
-                'keypoints': keypoints[idx],
-                'keypoint3d': keypoint3d[idx],
+                'img_path': img_path,
+                'keypoints': keypoints[idx].copy(),
+                'keypoint3d': keypoint3d[idx].copy(),
                 'bbox': bbox.copy(),
                 'bbox_score': np.ones(1, dtype=np.float32),
-                'hmd_info': hmd_info[idx],
+                'hmd_info': hmd_info[idx].copy(),
                 'keypoints_visible': np.ones((1, 16), dtype=np.float32),
-                'action': np.array([actions[idx] if isinstance(actions[idx], str)
-                                   else actions[idx].decode('utf8')])
+                'action': np.array([action])
             }
+
+            # Add lazy loading info for cached images (H5 with embedded images)
+            if self._has_cached_images:
+                # Store H5 cache path and index for LoadImageFromH5Cache transform
+                data_info['h5_cache_path'] = self.cache_file
+                data_info['h5_img_idx'] = idx
+
+                # Transform keypoints to cached image coordinates
+                data_info['keypoints'] = self._transform_keypoints_for_cached_image(
+                    keypoints[idx])
+
+            # For preprocessed cache: keypoints are already transformed, no action needed
+
             data_list.append(data_info)
 
-        print_log(f'Loaded {len(data_list)} samples from cache',
+        mode_str = 'with lazy image loading from cache' if self._has_cached_images else 'from cache'
+        print_log(f'Loaded {len(data_list)} samples {mode_str}',
                  logger='current', level=logging.INFO)
 
         return data_list
