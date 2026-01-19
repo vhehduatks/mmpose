@@ -1,13 +1,16 @@
 """
-XR EgoPose Training Config with Data Augmentation
+XR EgoPose Training Config with Model Improvements
 
-Improvement #1: Added comprehensive data augmentation pipeline
-- RandomBBoxTransform: shift, scale, rotate
-- RandomFlip: horizontal flip (with flip_indices for keypoint symmetry)
-- PhotometricDistortion: brightness, contrast, saturation, hue
-- Albumentation: additional pixel-level transforms
+Improvement #1: PhotometricDistortion for data augmentation
+- brightness, contrast, saturation, hue variations
+- Note: Spatial augmentations (flip, rotate) disabled for 3D pose compatibility
 
-Expected improvement: 10-15% MPJPE reduction
+Improvement #2: Increased Pose Decoder depth
+- num_stage: 1 -> 2 (double residual blocks)
+- Each Linear block: FC -> BN -> ReLU -> Dropout -> FC -> BN -> ReLU -> Dropout + skip
+- Expected: Better 3D pose regression capacity
+
+Expected improvement: 10-20% MPJPE reduction
 """
 
 import platform
@@ -191,7 +194,11 @@ model = dict(
             use_target_weight=False
         ),
         out_channels=16,
-        type='CustomxRegoposeBaselinel1_multi_backbone'
+        type='CustomxRegoposeBaselinel1_multi_backbone',
+        # Improvement #2: Increase pose decoder depth (1 -> 2 residual blocks)
+        pose_decoder_num_stage=2,
+        pose_decoder_linear_size=512,
+        pose_decoder_dropout=0.3,
     ),
     test_cfg=dict(
         flip_mode='heatmap',
