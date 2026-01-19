@@ -123,6 +123,30 @@ class H5CachedEgoposeDataset(BaseDataset):
             metainfo = parse_pose_metainfo(metainfo)
         return metainfo
 
+    def get_data_info(self, idx: int) -> dict:
+        """Get data info by index.
+
+        Adds metainfo fields (flip_indices, etc.) to data_info for transforms.
+
+        Args:
+            idx: Index of data sample.
+
+        Returns:
+            dict: Data info dict with metainfo fields added.
+        """
+        data_info = super().get_data_info(idx)
+
+        # Add metainfo items required by transforms (e.g., RandomFlip)
+        metainfo_keys = [
+            'flip_indices', 'skeleton_links', 'upper_body_ids', 'lower_body_ids'
+        ]
+
+        for key in metainfo_keys:
+            if key in self._metainfo and key not in data_info:
+                data_info[key] = deepcopy(self._metainfo[key])
+
+        return data_info
+
     def _ensure_cache_exists(self):
         """Ensure cache file exists, build if necessary."""
         if os.path.exists(self.cache_file) and not self.rebuild_cache:
