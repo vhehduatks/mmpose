@@ -24,15 +24,15 @@ if IS_WINDOWS:
     cache_file_val = None
     cache_file_test = None
 else:
-    # Linux paths
-    ann_file_train = '/mnt/sdb2/xr_egopose_full/TrainSet'
-    ann_file_val = '/mnt/sdb2/xr_egopose_full/ValSet'
-    ann_file_test = '/mnt/sdb2/xr_egopose_full/TestSet'
-    pretrained_coco = '/mnt/sdb2/temp/pose_coco/coco_pose_resnet_101_256x192.pth.tar'
-    pretrained_mpii = '/mnt/sdb2/temp/pose_mpii/pose_resnet_101_256x256.pth.tar'
+    # Linux paths (all on NVMe SSD - no external drive dependency)
+    ann_file_train = '/mnt/dataset_vol/h5cache'  # Not used when cache exists
+    ann_file_val = '/mnt/dataset_vol/h5cache'    # Not used when cache exists
+    ann_file_test = '/mnt/dataset_vol/h5cache'   # Not used when cache exists
+    pretrained_coco = '/mnt/dataset_vol/pretrained/coco_pose_resnet_101_256x192.pth.tar'
+    pretrained_mpii = '/mnt/dataset_vol/pretrained/pose_resnet_101_256x256.pth.tar'
     # Linux cache paths (NVMe SSD - fast I/O!)
     cache_file_train = '/mnt/dataset_vol/h5cache/train_cache_with_images.h5'
-    cache_file_val = '/mnt/dataset_vol/h5cache/val_cache_with_images.h5'
+    cache_file_val = '/mnt/dataset_vol/h5cache/test_cache_with_images.h5'  # Use test cache for val
     cache_file_test = '/mnt/dataset_vol/h5cache/test_cache_with_images.h5'
 
 # =============================================================================
@@ -202,12 +202,15 @@ model = dict(
 )
 
 # =============================================================================
-# Data Pipeline
+# Data Pipeline (All use H5 cache with embedded images - no disk I/O needed)
 # =============================================================================
+# Note: Images are already 256x256 in cache. TopdownAffine is still needed
+#       to set input_center/input_scale metadata required by predict().
+#       With padding=1.0 and pre-cropped images, it acts as identity transform.
 train_pipeline = [
-    dict(type='LoadImage'),
+    dict(type='LoadImageFromH5Cache'),  # Load 256x256 image from H5 cache
     dict(padding=1.0, type='GetBBoxCenterScale'),
-    dict(input_size=(256, 256), type='TopdownAffine'),
+    dict(input_size=(256, 256), type='TopdownAffine'),  # Sets input_center/scale
     dict(
         encoder=dict(
             heatmap_size=(47, 47),
@@ -221,9 +224,9 @@ train_pipeline = [
 ]
 
 val_pipeline = [
-    dict(type='LoadImage'),
+    dict(type='LoadImageFromH5Cache'),  # Load 256x256 image from H5 cache
     dict(padding=1.0, type='GetBBoxCenterScale'),
-    dict(input_size=(256, 256), type='TopdownAffine'),
+    dict(input_size=(256, 256), type='TopdownAffine'),  # Sets input_center/scale
     dict(
         encoder=dict(
             heatmap_size=(47, 47),
@@ -236,12 +239,10 @@ val_pipeline = [
     dict(type='PackPoseInputs'),
 ]
 
-# Test pipeline with H5 cache for fast image loading
-# Test pipeline for H5 cache with embedded images (FAST - no disk I/O!)
-# Note: Images are already 256x256 and keypoints are pre-transformed,
-#       so we skip TopdownAffine to avoid double transformation
 test_pipeline = [
     dict(type='LoadImageFromH5Cache'),  # Load 256x256 image from H5 cache
+    dict(padding=1.0, type='GetBBoxCenterScale'),
+    dict(input_size=(256, 256), type='TopdownAffine'),  # Sets input_center/scale
     dict(
         encoder=dict(
             heatmap_size=(47, 47),
@@ -266,6 +267,7 @@ dataset_train = dict(
     data_root=ann_file_train,
     cache_file=cache_file_train,
     rebuild_cache=False,
+    use_cached_images=True,  # Use embedded images from H5 cache
     filter_cfg=dict(filter_empty_gt=False, min_size=32),
     pipeline=train_pipeline,
 )
@@ -276,6 +278,7 @@ dataset_val = dict(
     data_root=ann_file_val,
     cache_file=cache_file_val,
     rebuild_cache=False,
+    use_cached_images=True,  # Use embedded images from H5 cache
     filter_cfg=dict(filter_empty_gt=False, min_size=32),
     pipeline=val_pipeline,
     test_mode=True,

@@ -490,3 +490,296 @@ model = dict(
 - `loss_pose_l2norm` (w=1.0): 3D pose L2 loss
 - `loss_backbone_latant` (w=1.0): Dual backbone feature MSE
 - `loss_backbone_heatmap` (w=1.0): Sub backbone heatmap loss
+
+---
+
+## HMD 정보 연결 위치 분석
+
+### 현재 구조
+
+```
+Backbone → Heatmap [16,47,47] → Encoder → Z[64]
+                                            ↓
+                                      Z + HMD[64]  ← 현재 위치
+                                            ↓
+                                      Pose Decoder → 3D Pose
+```
+
+### 옵션 1: 현재 위치 (Pose Decoder 전)
+
+| 장점 | 단점 |
+|------|------|
+| 3D 예측 직전에 3D 정보 주입 | Heatmap bottleneck 이후라 정보 이미 손실 |
+| 구현 간단 | HMD가 heatmap 품질 개선에 기여 못함 |
+
+### 옵션 2: Heatmap 생성 전 (추천)
+
+```
+Backbone feat + HMD → Deconv → Heatmap
+                                 ↓
+                          (가려진 관절도 heatmap에 반영)
+```
+
+```python
+class HMDConditionedHeatmapHead(nn.Module):
+    def __init__(self):
+        self.hmd_embed = nn.Linear(9, 256)
+
+    def forward(self, backbone_feat, hmd_info):
+        hmd_feat = self.hmd_embed(hmd_info)  # [B, 256]
+        hmd_spatial = hmd_feat[:, :, None, None].expand(-1, -1, H, W)
+
+        # Backbone feature와 결합
+        fused = torch.cat([backbone_feat, hmd_spatial], dim=1)
+        heatmap = self.deconv(fused)
+        return heatmap
+```
+
+| 장점 | 단점 |
+|------|------|
+| HMD가 heatmap 품질 개선 가능 | 구조 변경 필요 |
+| 가려진 관절 위치 힌트 제공 | HMD 의존도 높아질 수 있음 |
+
+### 옵션 3: 2D→3D Lifting (가장 깔끔)
+
+```
+Heatmap → soft-argmax → 2D coords[16,2] + conf[16]
+                                ↓
+                    [2D: 32] + [conf: 16] + [HMD: 9] = 57
+                                ↓
+                          Lifting Network → 3D Pose
+```
+
+| 장점 | 단점 |
+|------|------|
+| Martinez baseline 방식 (검증됨) | Heatmap spatial 정보 일부 손실 |
+| 해석 가능한 구조 | |
+| HMD가 depth ambiguity 해결에 직접 기여 | |
+
+### HMD 연결 위치 추천
+
+| 순위 | 방식 | 이유 |
+|------|------|------|
+| 1 | 2D→3D Lifting | 가장 깔끔, HMD가 depth 추정에 직접 기여 |
+| 2 | Heatmap 생성 전 | 가려진 관절 heatmap 품질 개선 |
+| 3 | 현재 유지 + Z 크기↑ | 최소 변경으로 개선 |
+
+---
+
+## Cross Attention 기반 HMD Fusion
+
+### 방안 1: HMD가 Visual Feature에 Attend
+
+```
+Visual Feature (from Backbone/Heatmap)
+        ↓
+   ┌─────────────────────────────────┐
+   │      Cross Attention            │
+   │  Q: HMD                         │
+   │  K, V: Visual Feature           │
+   │                                 │
+   │  "HMD 관점에서 중요한 visual    │
+   │   정보만 선택적으로 추출"        │
+   └─────────────────────────────────┘
+        ↓
+   HMD-aware Feature → 3D Pose
+```
+
+```python
+class HMDCrossAttention(nn.Module):
+    def __init__(self, visual_dim=256, hmd_dim=9, hidden_dim=64, num_heads=4):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.scale = hidden_dim ** -0.5
+
+        # HMD를 query로
+        self.hmd_to_query = nn.Linear(hmd_dim, hidden_dim * num_heads)
+        # Visual feature를 key, value로
+        self.visual_to_key = nn.Linear(visual_dim, hidden_dim * num_heads)
+        self.visual_to_value = nn.Linear(visual_dim, hidden_dim * num_heads)
+
+        self.out_proj = nn.Linear(hidden_dim * num_heads, hidden_dim)
+
+    def forward(self, visual_feat, hmd_info):
+        """
+        visual_feat: [B, N, C] (N = H*W spatial tokens)
+        hmd_info: [B, 9]
+        """
+        B = visual_feat.size(0)
+
+        Q = self.hmd_to_query(hmd_info).unsqueeze(1)  # [B, 1, heads*dim]
+        K = self.visual_to_key(visual_feat)           # [B, N, heads*dim]
+        V = self.visual_to_value(visual_feat)
+
+        # Multi-head reshape
+        Q = Q.view(B, 1, self.num_heads, self.hidden_dim).transpose(1, 2)
+        K = K.view(B, -1, self.num_heads, self.hidden_dim).transpose(1, 2)
+        V = V.view(B, -1, self.num_heads, self.hidden_dim).transpose(1, 2)
+
+        # Attention
+        attn = (Q @ K.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+
+        out = (attn @ V).transpose(1, 2).reshape(B, 1, -1)
+        return self.out_proj(out.squeeze(1))  # [B, hidden_dim]
+```
+
+### 방안 2: Joint-wise Cross Attention (추천)
+
+각 관절이 독립적으로 HMD 정보에 attend:
+
+```
+Heatmap [16, 47, 47]
+        ↓
+   각 관절별 feature 추출 (16개 token)
+        ↓
+   ┌─────────────────────────────────┐
+   │      Cross Attention            │
+   │  Q: Joint tokens [16, D]        │
+   │  K, V: HMD tokens [3, D]        │
+   │       (head, right_hand, left)  │
+   │                                 │
+   │  "각 관절이 관련 HMD 정보에     │
+   │   선택적으로 attend"            │
+   └─────────────────────────────────┘
+        ↓
+   HMD-aware Joint Features → 3D Pose
+```
+
+```python
+class JointHMDCrossAttention(nn.Module):
+    def __init__(self, joint_dim=64, num_joints=16, num_heads=4):
+        super().__init__()
+
+        # HMD를 3개 token으로 (head, right_hand, left_hand)
+        self.hmd_embed = nn.Sequential(
+            nn.Linear(9, 64),
+            nn.ReLU(),
+            nn.Linear(64, 3 * joint_dim)  # 3 tokens
+        )
+
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=joint_dim,
+            num_heads=num_heads,
+            batch_first=True
+        )
+
+        self.norm = nn.LayerNorm(joint_dim)
+
+    def forward(self, joint_features, hmd_info):
+        """
+        joint_features: [B, 16, D] (각 관절의 feature)
+        hmd_info: [B, 9]
+        """
+        B = joint_features.size(0)
+
+        # HMD → 3개 token [B, 3, D]
+        hmd_tokens = self.hmd_embed(hmd_info).view(B, 3, -1)
+
+        # Cross attention: joints attend to HMD
+        attn_out, _ = self.cross_attn(
+            query=joint_features,   # [B, 16, D]
+            key=hmd_tokens,         # [B, 3, D]
+            value=hmd_tokens        # [B, 3, D]
+        )
+
+        # Residual connection
+        out = self.norm(joint_features + attn_out)
+        return out  # [B, 16, D]
+```
+
+**장점:**
+- 손 관절 → 손 HMD에 attend
+- 몸통 관절 → head HMD에 attend
+- 자연스러운 semantic 매핑
+
+### 방안 3: Bi-directional Cross Attention
+
+양방향 정보 교환:
+
+```
+Visual Feature ←→ HMD Feature
+     ↓                ↓
+  V attends        HMD attends
+  to HMD           to Visual
+     ↓                ↓
+     └──── Fusion ────┘
+              ↓
+          3D Pose
+```
+
+```python
+class BidirectionalCrossAttention(nn.Module):
+    def __init__(self, visual_dim=256, hmd_dim=64, num_heads=4):
+        super().__init__()
+
+        self.visual_to_hmd = nn.MultiheadAttention(
+            visual_dim, num_heads, batch_first=True)
+        self.hmd_to_visual = nn.MultiheadAttention(
+            hmd_dim, num_heads, batch_first=True)
+
+        self.hmd_expand = nn.Linear(9, hmd_dim)
+        self.visual_proj = nn.Linear(visual_dim, hmd_dim)
+        self.fusion = nn.Linear(visual_dim + hmd_dim, 256)
+
+    def forward(self, visual_tokens, hmd_info):
+        hmd_feat = self.hmd_expand(hmd_info).unsqueeze(1)  # [B, 1, hmd_dim]
+
+        # Visual attends to HMD
+        v2h, _ = self.visual_to_hmd(
+            query=visual_tokens, key=hmd_feat, value=hmd_feat)
+
+        # HMD attends to Visual
+        visual_proj = self.visual_proj(visual_tokens)
+        h2v, _ = self.hmd_to_visual(
+            query=hmd_feat, key=visual_proj, value=visual_proj)
+
+        # Fusion
+        v_enhanced = visual_tokens + v2h
+        h_enhanced = h2v.mean(dim=1)
+        v_global = v_enhanced.mean(dim=1)
+
+        return self.fusion(torch.cat([v_global, h_enhanced], dim=-1))
+```
+
+### 전체 파이프라인 제안 (Multi-stage Cross Attention)
+
+```
+Backbone Feature [B, 2048, 8, 8]
+        ↓
+   Flatten → [B, 64, 2048]  (spatial tokens)
+        ↓
+   ┌─────────────────────────────────┐
+   │   Cross Attention Block 1       │
+   │   Visual ← HMD                  │
+   │   (HMD로 중요 영역 강조)         │
+   └─────────────────────────────────┘
+        ↓
+   Deconv → Heatmap [B, 16, 47, 47]
+        ↓
+   Soft-argmax → Joint tokens [B, 16, D]
+        ↓
+   ┌─────────────────────────────────┐
+   │   Cross Attention Block 2       │
+   │   Joints ← HMD                  │
+   │   (각 관절이 HMD 정보 참조)      │
+   └─────────────────────────────────┘
+        ↓
+   Pose Decoder → 3D Pose [B, 16, 3]
+```
+
+### Cross Attention 방식 비교
+
+| 방식 | 복잡도 | 효과 | 추천 |
+|------|--------|------|------|
+| 단순 concat (현재) | 낮음 | 보통 | - |
+| HMD→Visual attention | 중간 | 좋음 | ✓ |
+| **Joint-wise attention** | 중간 | **매우 좋음** | **✓✓** |
+| Bi-directional | 높음 | 좋음 | ✓ |
+| Multi-stage | 높음 | 매우 좋음 | ✓ |
+
+**Joint-wise Cross Attention 추천 이유:**
+- 각 관절이 관련 HMD 정보만 선택적 사용
+- 손 관절 → 손 HMD, 몸통 → head HMD로 자연스러운 매핑
+- Transformer 구조와 호환 (확장 용이)

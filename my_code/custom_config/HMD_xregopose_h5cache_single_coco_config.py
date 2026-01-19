@@ -20,12 +20,13 @@ if IS_WINDOWS:
     cache_file_val = None
     cache_file_test = None
 else:
-    ann_file_train = '/mnt/sdb2/xr_egopose_full/TrainSet'
-    ann_file_val = '/mnt/sdb2/xr_egopose_full/ValSet'
-    ann_file_test = '/mnt/sdb2/xr_egopose_full/TestSet'
-    pretrained_coco = '/mnt/sdb2/temp/pose_coco/coco_pose_resnet_101_256x192.pth.tar'
+    # Linux paths (all on NVMe SSD - no external drive dependency)
+    ann_file_train = '/mnt/dataset_vol/h5cache'  # Not used when cache exists
+    ann_file_val = '/mnt/dataset_vol/h5cache'    # Not used when cache exists
+    ann_file_test = '/mnt/dataset_vol/h5cache'   # Not used when cache exists
+    pretrained_coco = '/mnt/dataset_vol/pretrained/coco_pose_resnet_101_256x192.pth.tar'
     cache_file_train = '/mnt/dataset_vol/h5cache/train_cache_with_images.h5'
-    cache_file_val = '/mnt/dataset_vol/h5cache/val_cache_with_images.h5'
+    cache_file_val = '/mnt/dataset_vol/h5cache/test_cache_with_images.h5'  # Use test cache for val
     cache_file_test = '/mnt/dataset_vol/h5cache/test_cache_with_images.h5'
 
 # =============================================================================
