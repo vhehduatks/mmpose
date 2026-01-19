@@ -41,11 +41,11 @@ else:
     ann_file_val = '/mnt/sdb2/xr_egopose_full/ValSet'
     ann_file_test = '/mnt/sdb2/xr_egopose_full/TestSet'
     pretrained_resnet101 = '/mnt/sdb2/temp/pose_mpii/pose_resnet_101_256x256.pth.tar'
-    # Linux cache paths (pre-built)
-    cache_file_train = '/home/hyeonghwan/h5cache/train_cache.h5'
-    cache_file_val = '/home/hyeonghwan/h5cache/val_cache.h5'
-    # Test cache in RAM disk for fast loading (num_workers=0 is fastest!)
-    cache_file_test = '/dev/shm/test_cache_ramdisk.h5'
+    # Linux cache paths (NVMe SSD - fast I/O!)
+    # All caches include embedded 256x256 images for maximum speed
+    cache_file_train = '/mnt/dataset_vol/h5cache/train_cache_with_images.h5'
+    cache_file_val = '/mnt/dataset_vol/h5cache/val_cache_with_images.h5'
+    cache_file_test = '/mnt/dataset_vol/h5cache/test_cache_with_images.h5'
 
 # =============================================================================
 # Pretrained Weights
@@ -261,6 +261,24 @@ test_pipeline_fast = [
     dict(type='PackPoseInputs'),
 ]
 
+# Test pipeline for H5 cache with embedded images (FAST - no disk I/O!)
+# Used when use_cached_images=True and cache has embedded images
+# Note: Images are already 256x256 and keypoints are pre-transformed,
+#       so we skip TopdownAffine to avoid double transformation
+test_pipeline_cached = [
+    dict(type='LoadImageFromH5Cache'),  # Load 256x256 image from H5 cache
+    dict(
+        encoder=dict(
+            heatmap_size=(47, 47),
+            input_size=(256, 256),
+            sigma=3,
+            type='Custom_mo2cap2_MSRAHeatmap'
+        ),
+        type='GenerateTarget'
+    ),
+    dict(type='PackPoseInputs'),
+]
+
 # =============================================================================
 # Dataset Config - Using H5CachedEgoposeDataset for FAST loading
 # =============================================================================
@@ -294,9 +312,9 @@ dataset_test = dict(
     data_root=ann_file_test,
     cache_file=cache_file_test,
     rebuild_cache=False,
-    use_cached_images=False,  # Images are separate files (preprocessed)
+    use_cached_images=True,  # Load images from H5 cache (no NTFS I/O!)
     filter_cfg=dict(filter_empty_gt=False, min_size=32),
-    pipeline=val_pipeline,  # Need GenerateTarget for hmd_info
+    pipeline=test_pipeline_cached,  # Uses LoadImageFromH5Cache
     test_mode=True,
 )
 

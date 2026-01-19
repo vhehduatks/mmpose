@@ -221,20 +221,21 @@ def build_cache_with_images(data_root: str, output_path: str,
     print(f'Image size: {img_size}x{img_size}')
 
     # Create H5 file with chunked datasets for memory efficiency
+    # No compression for faster I/O on NVMe SSD
     with h5py.File(output_path, 'w') as hf:
         # Pre-create datasets
         dt = h5py.special_dtype(vlen=str)
         hf.create_dataset('img_paths', (n_samples,), dtype=dt)
         hf.create_dataset('actions', (n_samples,), dtype=dt)
         hf.create_dataset('keypoints', (n_samples, 1, 16, 2), dtype=np.float32,
-                         chunks=(min(100, n_samples), 1, 16, 2), compression='gzip')
+                         chunks=(min(100, n_samples), 1, 16, 2))
         hf.create_dataset('keypoint3d', (n_samples, 1, 16, 3), dtype=np.float32,
-                         chunks=(min(100, n_samples), 1, 16, 3), compression='gzip')
+                         chunks=(min(100, n_samples), 1, 16, 3))
         hf.create_dataset('hmd_info', (n_samples, 1, 9), dtype=np.float32,
-                         chunks=(min(100, n_samples), 1, 9), compression='gzip')
-        # Images dataset - large but compressed
+                         chunks=(min(100, n_samples), 1, 9))
+        # Images dataset - no compression for maximum read speed
         hf.create_dataset('images', (n_samples, img_size, img_size, 3), dtype=np.uint8,
-                         chunks=(10, img_size, img_size, 3), compression='gzip', compression_opts=4)
+                         chunks=(10, img_size, img_size, 3))
 
         # Process in chunks
         chunks = []

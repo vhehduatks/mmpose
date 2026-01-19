@@ -1,9 +1,7 @@
 """
-XR EgoPose Training Config with H5 Cached Dataset
-- Dual Backbone with COCO + MPII pretrained weights
+XR EgoPose Training Config - Single Backbone with COCO Pretrained
 
-backbone1: COCO pretrained ResNet-101
-backbone2: MPII pretrained ResNet-101
+Single backbone experiment with COCO pretrained ResNet-101
 """
 
 import platform
@@ -14,36 +12,28 @@ import platform
 IS_WINDOWS = platform.system() == 'Windows'
 
 if IS_WINDOWS:
-    # Windows paths
     ann_file_train = r'F:\ego_cam_dataset\Train'
     ann_file_val = r'F:\ego_cam_dataset\Val'
     ann_file_test = r'F:\ego_cam_dataset\Test'
     pretrained_coco = r'F:\download_2\coco_pose_resnet_101_256x192.pth.tar'
-    pretrained_mpii = r'F:\download_2\pose_resnet_101_256x256.pth.tar'
     cache_file_train = None
     cache_file_val = None
     cache_file_test = None
 else:
-    # Linux paths
     ann_file_train = '/mnt/sdb2/xr_egopose_full/TrainSet'
     ann_file_val = '/mnt/sdb2/xr_egopose_full/ValSet'
     ann_file_test = '/mnt/sdb2/xr_egopose_full/TestSet'
     pretrained_coco = '/mnt/sdb2/temp/pose_coco/coco_pose_resnet_101_256x192.pth.tar'
-    pretrained_mpii = '/mnt/sdb2/temp/pose_mpii/pose_resnet_101_256x256.pth.tar'
-    # Linux cache paths (NVMe SSD - fast I/O!)
     cache_file_train = '/mnt/dataset_vol/h5cache/train_cache_with_images.h5'
     cache_file_val = '/mnt/dataset_vol/h5cache/val_cache_with_images.h5'
     cache_file_test = '/mnt/dataset_vol/h5cache/test_cache_with_images.h5'
 
 # =============================================================================
-# Pretrained Weights
+# Training Config
 # =============================================================================
 auto_scale_lr = dict(base_batch_size=256)
 backend_args = dict(backend='local')
 
-# =============================================================================
-# Training Config
-# =============================================================================
 train_cfg = dict(
     type='EpochBasedTrainLoop',
     max_epochs=10,
@@ -52,7 +42,7 @@ train_cfg = dict(
 val_cfg = dict()
 test_cfg = dict()
 
-# Enable find_unused_parameters for dual backbone model in distributed training
+# Enable find_unused_parameters for distributed training
 model_wrapper_cfg = dict(
     type='MMDistributedDataParallel',
     find_unused_parameters=True
@@ -60,9 +50,7 @@ model_wrapper_cfg = dict(
 
 optim_wrapper = dict(
     optimizer=dict(lr=0.0005, type='AdamW'),
-    paramwise_cfg=dict(
-        custom_keys={}
-    )
+    paramwise_cfg=dict(custom_keys={})
 )
 
 param_scheduler = [
@@ -101,7 +89,7 @@ randomness = dict(
 resume = False
 
 # =============================================================================
-# Codec (Heatmap Encoding)
+# Codec
 # =============================================================================
 codec = dict(
     heatmap_size=(47, 47),
@@ -125,7 +113,7 @@ default_scope = 'mmpose'
 env_cfg = dict(
     cudnn_benchmark=False,
     dist_cfg=dict(backend='nccl'),
-    mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0)
+    mp_cfg=dict(mp_start_method='fork', opencv_num_threads=4)
 )
 
 load_from = None
@@ -138,24 +126,14 @@ log_processor = dict(
 )
 
 # =============================================================================
-# Model Architecture - Dual Backbone with COCO + MPII
+# Model Architecture - Single Backbone with COCO Pretrained
 # =============================================================================
 model = dict(
-    type='Custom_TopdownPoseEstimator',
-    # Backbone 1: COCO pretrained
+    type='TopdownPoseEstimator',  # Standard single backbone estimator
     backbone=dict(
         depth=101,
         init_cfg=dict(
             checkpoint=pretrained_coco,
-            type='Pretrained'
-        ),
-        type='ResNet'
-    ),
-    # Backbone 2: MPII pretrained
-    backbone2=dict(
-        depth=101,
-        init_cfg=dict(
-            checkpoint=pretrained_mpii,
             type='Pretrained'
         ),
         type='ResNet'
@@ -169,7 +147,6 @@ model = dict(
     head=dict(
         decoder=codec,
         in_channels=2048,
-        # Main 2D heatmap loss
         loss=dict(
             loss_weight=1000,
             type='KeypointMSELoss',
@@ -184,14 +161,8 @@ model = dict(
         loss_limb_length=dict(loss_weight=0.25, type='limb_length'),
         loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'),
         loss_hmd=dict(type='MSELoss'),
-        loss_backbone_latant=dict(type='MSELoss', loss_weight=1.),
-        loss_backbone_heatmap=dict(
-            loss_weight=1.0,
-            type='KeypointMSELoss',
-            use_target_weight=False
-        ),
         out_channels=16,
-        type='CustomxRegoposeBaselinel1_multi_backbone'
+        type='CustomxRegoposeBaselinel1'  # Single backbone head
     ),
     test_cfg=dict(
         flip_mode='heatmap',
@@ -236,12 +207,8 @@ val_pipeline = [
     dict(type='PackPoseInputs'),
 ]
 
-# Test pipeline with H5 cache for fast image loading
-# Test pipeline for H5 cache with embedded images (FAST - no disk I/O!)
-# Note: Images are already 256x256 and keypoints are pre-transformed,
-#       so we skip TopdownAffine to avoid double transformation
-test_pipeline = [
-    dict(type='LoadImageFromH5Cache'),  # Load 256x256 image from H5 cache
+test_pipeline_cached = [
+    dict(type='LoadImageFromH5Cache'),
     dict(
         encoder=dict(
             heatmap_size=(47, 47),
@@ -287,9 +254,9 @@ dataset_test = dict(
     data_root=ann_file_test,
     cache_file=cache_file_test,
     rebuild_cache=False,
-    use_cached_images=True,  # Use preprocessed images from cache for fast loading
+    use_cached_images=True,
     filter_cfg=dict(filter_empty_gt=False, min_size=32),
-    pipeline=test_pipeline,  # Uses LoadImageFromH5Cache for fast loading
+    pipeline=test_pipeline_cached,
     test_mode=True,
 )
 
@@ -324,10 +291,10 @@ val_dataloader = dict(
 )
 
 test_dataloader = dict(
-    batch_size=128,  # Larger batch size for faster test
+    batch_size=128,
     dataset=dataset_test,
     drop_last=False,
-    num_workers=0,  # Single process is faster for cached dataset
+    num_workers=0,
     pin_memory=True,
     sampler=dict(round_up=False, shuffle=False, type='DefaultSampler')
 )
@@ -353,7 +320,7 @@ test_evaluator = dict(
 vis_backends = [
     dict(type='LocalVisBackend'),
     dict(
-        init_kwargs=dict(project='mmpose_xregopose_coco_mpii'),
+        init_kwargs=dict(project='mmpose_xregopose_single_coco'),
         type='WandbVisBackend'
     ),
 ]
@@ -364,4 +331,4 @@ visualizer = dict(
     vis_backends=vis_backends
 )
 
-work_dir = 'work_dirs/HMD_xregopose_coco_mpii'
+work_dir = 'work_dirs/HMD_xregopose_single_coco'

@@ -36,10 +36,22 @@ pytest tests/
 
 ### Custom Dataset Cache (Performance Optimization)
 ```bash
-# Build H5 cache for fast dataset loading (65k samples: 7min → 1sec)
+# Build annotation-only H5 cache (fast metadata loading)
 python tools/dataset_converters/build_egopose_h5cache.py \
-    --data-root F:/ego_cam_dataset/Train --num-workers 4
+    --data-root /path/to/dataset --num-workers 4
+
+# Build H5 cache WITH embedded images (eliminates disk I/O bottleneck)
+# Images are preprocessed to 256x256, stored uncompressed for NVMe SSD
+python tools/dataset_converters/build_egopose_h5cache_with_images.py \
+    --data-root /path/to/dataset \
+    --output /mnt/nvme/h5cache/train_cache_with_images.h5 \
+    --num-workers 8
 ```
+
+**Cache location (Linux)**: `/mnt/dataset_vol/h5cache/` (NVMe SSD recommended)
+- `train_cache_with_images.h5` (39GB, 210k samples)
+- `val_cache_with_images.h5` (2.8GB, 15k samples)
+- `test_cache_with_images.h5` (15GB, 115k samples)
 
 ## Architecture Overview
 
@@ -89,16 +101,35 @@ All custom files follow `custom_*.py` naming and extend base classes:
 
 ### Key Custom Features
 - **Dual Backbone**: `Custom_TopdownPoseEstimator` accepts `backbone` + `backbone2`
-- **HMD Info**: Custom heads process HMD (head/hand) position data
+- **HMD Info**: Custom heads process HMD (head/hand) 9-dim position data
+- **Confidence-Weighted Fusion**: `ConfidenceWeightedHMDHead` - heatmap confidence로 HMD/visual 가중치 동적 조절
 - **H5 Caching**: `H5CachedEgoposeDataset` for fast loading (replaces JSON parsing)
+  - Annotation-only cache: 빠른 메타데이터 로딩
+  - **Image-embedded cache**: 256x256 이미지 포함 (NTFS 병목 해결)
 - **Seg+Depth**: `*_seg_depth` variants predict segmentation and depth maps
 - **3D Visualizer**: `CustomPose3dLocalVisualizer_xregopose_v2` for simplified 3D pose visualization
 
+### HMD Info Structure (9-dim)
+```python
+hmd_info = [
+    right_hand_local,   # (3,) 오른손 로컬 좌표 (머리 기준)
+    left_hand_local,    # (3,) 왼손 로컬 좌표
+    hand_distance,      # (1,) 양손 간 거리
+    right_distance,     # (1,) 머리-오른손 거리
+    left_distance       # (1,) 머리-왼손 거리
+]
+```
+
 ### Custom Configs
-Located in `my_code/custom_config/`:
-- `HMD_xregopose_h5cache_config.py` - Fast-loading H5 cached dataset
-- `HMD_xregopose_imple_config_2backbone.py` - Dual backbone training
-- `Segdepth_xregopose_imple_config_baseline.py` - With seg/depth prediction
+Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for details):
+
+| Config | Head Type | 특징 |
+|--------|-----------|------|
+| `HMD_xregopose_h5cache_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | Baseline (Dual backbone, H5 캐시) |
+| `HMD_xregopose_h5cache_single_coco_config.py` | `CustomxRegoposeBaselinel1` | Single backbone + COCO pretrained |
+| `HMD_xregopose_h5cache_coco_mpii_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | COCO+MPII dual backbone |
+| `HMD_xregopose_h5cache_augmented_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | + Data Augmentation + Deeper Decoder |
+| `HMD_xregopose_confidence_weighted_config.py` | `ConfidenceWeightedHMDHead` | Confidence-weighted HMD Fusion |
 
 ## Key Files Reference
 
@@ -108,7 +139,10 @@ Located in `my_code/custom_config/`:
 | Testing entry | `tools/test.py` |
 | Registry definitions | `mmpose/registry.py` |
 | Default runtime | `configs/_base_/default_runtime.py` |
-| H5 cache builder | `tools/dataset_converters/build_egopose_h5cache.py` |
+| H5 cache builder (annotation) | `tools/dataset_converters/build_egopose_h5cache.py` |
+| H5 cache builder (with images) | `tools/dataset_converters/build_egopose_h5cache_with_images.py` |
+| Config README | `my_code/custom_config/README.md` |
+| Confidence-weighted head | `mmpose/models/heads/heatmap_heads/custom_egopose_confidence_weighted_head.py` |
 
 ## External Documentation
 
