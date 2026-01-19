@@ -207,7 +207,11 @@ class CustomxRegoposeBaselinel1_multi_backbone(BaseHead):
 				loss_backbone_heatmap: ConfigType = dict(
 					type='KeypointMSELoss'),
 				decoder: OptConfigType = None,
-				init_cfg: OptConfigType = None):
+				init_cfg: OptConfigType = None,
+				# Pose decoder configuration
+				pose_decoder_num_stage: int = 1,
+				pose_decoder_linear_size: int = 512,
+				pose_decoder_dropout: float = 0.3):
 
 		if init_cfg is None:
 			init_cfg = self.default_init_cfg
@@ -236,11 +240,11 @@ class CustomxRegoposeBaselinel1_multi_backbone(BaseHead):
 		self.encoder = Encoder(num_classes=out_channels, output_size = 64, hmd_info_size = 9)
 		self.heatmap_decoder = HeatmapDecoder(num_classes=out_channels,heatmap_resolution=47, input_size = 64)
 		self.pose_decoder = LinearModel(
-			input_size = 64, 
-			num_classes = 16,	
-			linear_size=512,
-			num_stage=1,
-			p_dropout=0.3
+			input_size = 64,
+			num_classes = 16,
+			linear_size=pose_decoder_linear_size,
+			num_stage=pose_decoder_num_stage,
+			p_dropout=pose_decoder_dropout
 			)
 		
 		self.hmd_linear = nn.Sequential(

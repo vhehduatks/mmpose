@@ -62,7 +62,13 @@ dataset_info = dict(
     sigmas=[
         0.079, 0.079, 0.072, 0.072, 0.062, 0.062, 0.107, 0.107, 0.087, 0.087,
         0.089, 0.089, 0.079, 0.079
-    ])
+    ],
+    # flip_indices for horizontal flip augmentation
+    # Maps left <-> right keypoints:
+    # 0:Spine2, 1:Head (stay), 2:LeftArm<->5:RightArm, 3:LeftForeArm<->6:RightForeArm,
+    # 4:LeftHand<->7:RightHand, 8:LeftUpLeg<->12:RightUpLeg, 9:LeftLeg<->13:RightLeg,
+    # 10:LeftFoot<->14:RightFoot, 11:LeftToeBase<->15:RightToeBase
+    flip_indices=[0, 1, 5, 6, 7, 2, 3, 4, 12, 13, 14, 15, 8, 9, 10, 11])
 
 
 # # Generate keypoint information
