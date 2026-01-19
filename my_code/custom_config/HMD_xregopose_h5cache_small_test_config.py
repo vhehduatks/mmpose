@@ -33,7 +33,7 @@ train_cfg = dict(
     val_interval=1,
 )
 val_cfg = dict()
-test_cfg = dict()
+test_cfg = None  # No test loop for quick training test
 
 optim_wrapper = dict(
     optimizer=dict(lr=0.0005, type='AdamW'),
@@ -45,7 +45,7 @@ param_scheduler = [
 
 default_hooks = dict(
     checkpoint=dict(interval=1, max_keep_ckpts=2, type='CheckpointHook'),
-    visualization=dict(enable=False, type='PoseVisualizationHook')
+    visualization=dict(enable=True, interval=10, kpt_thr=0.3, type='H5CacheVisualizationHook')
 )
 
 randomness = dict(seed=42, deterministic=False)
@@ -102,12 +102,19 @@ model = dict(
 )
 
 # Pipeline
+# Extended meta_keys for H5 cache visualization support
+_meta_keys = ('id', 'img_id', 'img_path', 'category_id', 'crowd_index',
+              'ori_shape', 'img_shape', 'input_size', 'input_center',
+              'input_scale', 'flip', 'flip_direction', 'flip_indices',
+              'raw_ann_info', 'dataset_name', 'action',
+              'h5_cache_path', 'h5_img_idx')
+
 train_pipeline = [
     dict(type='LoadImageFromH5Cache'),
     dict(padding=1.0, type='GetBBoxCenterScale'),
     dict(input_size=(256, 256), type='TopdownAffine'),
     dict(encoder=codec, type='GenerateTarget'),
-    dict(type='PackPoseInputs'),
+    dict(type='PackPoseInputs', meta_keys=_meta_keys),
 ]
 
 val_pipeline = [
@@ -115,7 +122,7 @@ val_pipeline = [
     dict(padding=1.0, type='GetBBoxCenterScale'),
     dict(input_size=(256, 256), type='TopdownAffine'),
     dict(encoder=codec, type='GenerateTarget'),
-    dict(type='PackPoseInputs'),
+    dict(type='PackPoseInputs', meta_keys=_meta_keys),
 ]
 
 # Dataset

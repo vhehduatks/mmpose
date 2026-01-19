@@ -89,7 +89,7 @@ default_hooks = dict(
         enable=True,
         interval=50,
         kpt_thr=0.3,
-        type='PoseVisualizationHook'
+        type='H5CacheVisualizationHook'  # Use H5 cache-aware hook
     )
 )
 
@@ -207,6 +207,13 @@ model = dict(
 # Note: Images are already 256x256 in cache. TopdownAffine is still needed
 #       to set input_center/input_scale metadata required by predict().
 #       With padding=1.0 and pre-cropped images, it acts as identity transform.
+# Extended meta_keys to include H5 cache info for visualization hook
+_meta_keys = ('id', 'img_id', 'img_path', 'category_id', 'crowd_index',
+              'ori_shape', 'img_shape', 'input_size', 'input_center',
+              'input_scale', 'flip', 'flip_direction', 'flip_indices',
+              'raw_ann_info', 'dataset_name', 'action',
+              'h5_cache_path', 'h5_img_idx')  # H5 cache keys for visualization
+
 train_pipeline = [
     dict(type='LoadImageFromH5Cache'),  # Load 256x256 image from H5 cache
     dict(padding=1.0, type='GetBBoxCenterScale'),
@@ -220,7 +227,7 @@ train_pipeline = [
         ),
         type='GenerateTarget'
     ),
-    dict(type='PackPoseInputs'),
+    dict(type='PackPoseInputs', meta_keys=_meta_keys),
 ]
 
 val_pipeline = [
@@ -236,7 +243,7 @@ val_pipeline = [
         ),
         type='GenerateTarget'
     ),
-    dict(type='PackPoseInputs'),
+    dict(type='PackPoseInputs', meta_keys=_meta_keys),
 ]
 
 test_pipeline = [
@@ -252,7 +259,7 @@ test_pipeline = [
         ),
         type='GenerateTarget'
     ),
-    dict(type='PackPoseInputs'),
+    dict(type='PackPoseInputs', meta_keys=_meta_keys),
 ]
 
 # =============================================================================
