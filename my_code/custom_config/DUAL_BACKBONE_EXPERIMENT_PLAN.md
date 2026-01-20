@@ -246,7 +246,7 @@ loss_kd = MSE(feat_main, feat_sub.detach())
 - 40M → ~1.5M (96% 감소)
 - 메모리: 22GB → 16GB
 
-#### 5-B: 2D→3D Lifting
+#### 5-B: 2D→3D Lifting (구현 완료 ✅)
 
 **변경**:
 ```
@@ -255,9 +255,28 @@ loss_kd = MSE(feat_main, feat_sub.detach())
 ```
 
 **장점**:
-- HeatmapDecoder 완전 제거
+- HeatmapDecoder 완전 제거 (40M → 4M)
 - Martinez baseline (검증된 방식)
 - 해석 가능한 중간 표현
+- Heatmap MSE + Coord MSE 동시 학습
+
+**구현 파일**:
+- Head: `custom_egopose_lifting_head.py`
+- Config: `HMD_xregopose_single_lifting_config.py`
+
+**비교 대상 (중요!)**:
+
+| 항목 | Single COCO (기존 베스트) | Single Lifting (신규) |
+|------|--------------------------|----------------------|
+| Config | `HMD_xregopose_single_coco_full_config.py` | `HMD_xregopose_single_lifting_config.py` |
+| Head | `CustomxRegoposeBaselinel1` | `CustomEgoposeLiftingHead` |
+| Backbone | ResNet-101 COCO | ResNet-101 COCO (동일) |
+| 2D→3D | Encoder→Z[64]→Decoder | soft_argmax→Lifting |
+| Head Params | ~61M | ~13M |
+| MPJPE | **42.07mm** | ? (실험 필요) |
+
+> **주의**: Lifting은 Dual이 아닌 **Single backbone**과 비교해야 함!
+> Dual (44.91mm)과 비교하면 구조 차이가 너무 커서 의미 없음.
 
 ---
 
@@ -322,14 +341,15 @@ Backbone feat → GAP → FC → Context [256]
 
 ### 실험 조합 요약
 
-| Phase | 개선 방향 | 구현 상태 |
-|-------|----------|----------|
-| 1 | Progressive Warmup | ✅ 완료 |
-| 2 | Ensemble Teacher | ❌ 미구현 |
-| 3 | KL Divergence | ❌ 미구현 |
-| 4 | One-way KD | ❌ 미구현 |
-| 5 | 구조 최적화 | ❌ 미구현 |
-| **6** | **Backbone Feature Fusion** | **❌ 미구현 (추천)** |
+| Phase | 개선 방향 | 구현 상태 | 비교 대상 |
+|-------|----------|----------|----------|
+| 1 | Progressive Warmup | ✅ 완료 | vs Dual COCO+MPII (44.91mm) |
+| 2 | Ensemble Teacher | ❌ 미구현 | vs Dual |
+| 3 | KL Divergence | ❌ 미구현 | vs Dual |
+| 4 | One-way KD | ❌ 미구현 | vs Dual |
+| **5-A** | HeatmapDecoder 최적화 | ❌ 미구현 | - |
+| **5-B** | **2D→3D Lifting** | **✅ 완료** | **vs Single COCO (42.07mm)** |
+| **6** | **Backbone Feature Fusion** | **❌ 미구현** | vs Single/Dual |
 
 **추천 실험 순서**:
 1. Phase 1 (Warmup) - 이미 구현, 실험 진행
@@ -428,13 +448,15 @@ HMD_xregopose_h5cache_coco_mpii_{variant}_config.py
 
 ## 현재 진행 상황
 
-- [x] Phase 1: Progressive Warmup 구현
-  - [x] Head v2 생성
+- [x] Phase 1: Progressive Warmup 구현 (Dual backbone용)
+  - [x] Head v2 생성: `custom_egopose_baselinel1_head_multi_backbone_v2.py`
   - [x] MutualLearningWarmupHook 생성
-  - [x] Config 생성
-- [ ] Phase 1 실험 실행
-- [ ] Baseline 실험 실행
+  - [x] Config 생성: `HMD_xregopose_h5cache_coco_mpii_warmup_config.py`
+- [x] **Phase 5-B: 2D→3D Lifting 구현 (Single backbone용)**
+  - [x] **Head 생성: `custom_egopose_lifting_head.py`**
+  - [x] **Config 생성: `HMD_xregopose_single_lifting_config.py`**
+- [ ] Phase 1 실험 실행 (비교: Dual 44.91mm)
+- [ ] **Phase 5-B 실험 실행 (비교: Single COCO 42.07mm)**
 - [ ] Phase 2 구현 및 실험
 - [ ] Phase 3 구현 및 실험
-- [ ] 최적 조합 결정
-- [ ] Phase 5 구조적 개선
+- [ ] Phase 6 Backbone Feature Fusion
