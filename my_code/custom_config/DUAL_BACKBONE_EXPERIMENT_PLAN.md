@@ -1,0 +1,342 @@
+# Dual Backbone 개선 실험 계획
+
+## 목표
+
+**Single COCO (42.07mm)보다 나은 성능을 Dual Backbone mutual learning으로 달성하기.**
+
+현재 문제: Dual COCO+MPII (44.91mm)가 Single COCO (42.07mm)보다 2.84mm 나쁨
+
+---
+
+## 베이스라인 결과 (Updated: 2026-01-20)
+
+### Wandb 실험 결과
+
+**mmpose_xregopose_single_coco:**
+| Run | State | Full Body | Upper Body | Lower Body |
+|-----|-------|-----------|------------|------------|
+| fresh-haze-6 | running | **42.07mm** | 29.15mm | 55.00mm |
+
+**mmpose_xregopose_coco_mpii:**
+| Run | State | Full Body | Upper Body | Lower Body |
+|-----|-------|-----------|------------|------------|
+| full셋 test로 val | finished | 44.91mm | 30.56mm | 59.26mm |
+
+### 핵심 비교
+
+| Model | Full Body MPJPE | 차이 | 비고 |
+|-------|-----------------|------|------|
+| **Single COCO** | **42.07mm** | - | 🏆 현재 최고 |
+| Dual COCO+MPII | 44.91mm | +2.84mm | Dual이 약간 나쁨 |
+
+---
+
+## 현재 모델 구조
+
+### Single COCO (42.07mm)
+
+**Config**: `HMD_xregopose_single_coco_full_config.py`
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  TopdownPoseEstimator                                       │
+├─────────────────────────────────────────────────────────────┤
+│  Backbone: ResNet-101 (COCO pretrained)                     │
+│       ↓                                                     │
+│  Head: CustomxRegoposeBaselinel1                            │
+│       ├── Deconv → Heatmap [16, 47, 47]                     │
+│       ├── Encoder → Z [64]                                  │
+│       ├── + HMD info [9→64]                                 │
+│       ├── Pose Decoder → 3D Pose [16, 3]                    │
+│       └── Heatmap Decoder → Recon Heatmap                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Loss 구성**:
+| Loss | Weight | 설명 |
+|------|--------|------|
+| loss_kpt | 1000 | Main heatmap MSE |
+| loss_heatmap_recon | 250 | Heatmap reconstruction |
+| loss_pose_l2norm | 1.0 | 3D pose L2 |
+| loss_cosine_similarity | 0.1 | Cosine sim |
+| loss_limb_length | 0.25 | Limb length |
+| loss_hmd | 1.0 | HMD reconstruction |
+
+---
+
+### Dual COCO+MPII (44.91mm)
+
+**Config**: `HMD_xregopose_h5cache_coco_mpii_config.py`
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Custom_TopdownPoseEstimator                                │
+├─────────────────────────────────────────────────────────────┤
+│  Backbone1: ResNet-101 (COCO pretrained)                    │
+│  Backbone2: ResNet-101 (MPII pretrained)                    │
+│       ↓                    ↓                                │
+│  feat1 [2048,8,8]     feat2 [2048,8,8]                      │
+│       ↓                    ↓                                │
+│  Deconv1 → Heatmap1   Deconv2 → Heatmap2                    │
+│       ↓                    ↓                                │
+│       └────── MSE Loss ────┘  ← loss_backbone_latant        │
+│       ↓                    ↓                                │
+│  Main path            Sub path (GT supervision)             │
+│       ↓                                                     │
+│  Encoder → Z → Pose Decoder → 3D Pose                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Loss 구성** (Single + 추가):
+| Loss | Weight | 설명 |
+|------|--------|------|
+| loss_backbone_latant | 1.0 | **MSE(feat1, feat2)** - backbone feature 일치 |
+| loss_backbone_heatmap | 1.0 | Sub backbone heatmap GT supervision |
+| (+ Single의 모든 loss) | | |
+
+---
+
+## 문제 분석
+
+**현상**: Dual (44.91mm) > Single (42.07mm) - Dual이 2.84mm 더 나쁨
+
+**현재 Dual의 문제점**:
+1. `loss_backbone_latant = MSE(feat1, feat2)`: 두 backbone feature를 **무조건 동일하게** 강제
+2. COCO와 MPII의 서로 다른 feature 분포가 충돌
+3. 각 pretrained의 고유한 강점이 상쇄됨
+4. epoch 1부터 mutual learning 강제 → pretrained knowledge 손상
+
+---
+
+## 실험 단계
+
+### Phase 1: Progressive Warmup (현재 구현 완료)
+
+**목적**: Pretrained knowledge 보존하면서 mutual learning 도입
+
+**Config**: `HMD_xregopose_h5cache_coco_mpii_warmup_config.py`
+
+| 파라미터 | 값 | 설명 |
+|---------|-----|------|
+| mutual_warmup_epochs | 5 | mutual learning 없음 |
+| mutual_rampup_epochs | 10 | 0→1 선형 증가 |
+| max_epochs | 20 | 5+10+5 |
+
+**예상 효과**:
+- 초기 학습에서 COCO/MPII 각각의 강점 보존
+- 갑작스러운 gradient 충돌 방지
+
+**성공 기준**: Dual COCO+MPII (원본) 대비 MPJPE 개선
+
+---
+
+### Phase 2: Ensemble Teacher
+
+**목적**: 두 backbone의 출력을 앙상블하여 pseudo-teacher 생성
+
+**구현 위치**: `custom_egopose_baselinel1_head_multi_backbone_v3.py`
+
+**변경 사항**:
+```python
+# 현재 (v2)
+loss_backbone_latant = MSE(feat1, feat2) * warmup_weight
+
+# 개선 (v3)
+conf1 = heatmap1.max().mean()
+conf2 = heatmap2.max().mean()
+w1 = conf1 / (conf1 + conf2)
+w2 = conf2 / (conf1 + conf2)
+
+feat_ensemble = w1 * feat1.detach() + w2 * feat2.detach()
+loss_ensemble = MSE(feat1, feat_ensemble) + MSE(feat2, feat_ensemble)
+loss_backbone_latant = loss_ensemble * warmup_weight
+```
+
+**예상 효과**:
+- Confidence 높은 backbone에 더 큰 가중치
+- 두 pretrained의 강점 결합
+
+**실험 조합**:
+| 실험 | Warmup | Ensemble | 비고 |
+|------|--------|----------|------|
+| 2-A | ✓ | ✓ | Phase 1 + Ensemble |
+| 2-B | ✗ | ✓ | Ensemble만 |
+
+---
+
+### Phase 3: Heatmap KL Divergence
+
+**목적**: Deep Mutual Learning 논문 방식 적용
+
+**구현 위치**: `custom_egopose_baselinel1_head_multi_backbone_v4.py`
+
+**변경 사항**:
+```python
+def heatmap_kl_divergence_loss(heatmap1, heatmap2, temperature=4.0):
+    h1_flat = heatmap1.view(B, K, -1) / temperature
+    h2_flat = heatmap2.view(B, K, -1) / temperature
+
+    p1 = F.softmax(h1_flat, dim=-1)
+    p2 = F.softmax(h2_flat, dim=-1)
+
+    kl_1_2 = F.kl_div(p1.log(), p2, reduction='batchmean')
+    kl_2_1 = F.kl_div(p2.log(), p1, reduction='batchmean')
+
+    return (kl_1_2 + kl_2_1) / 2 * (temperature ** 2)
+```
+
+**하이퍼파라미터**:
+| 파라미터 | 후보값 | 설명 |
+|---------|--------|------|
+| temperature | 2, 4, 8 | Soft target 정도 |
+| loss_weight | 0.1, 0.5, 1.0 | KL loss 가중치 |
+
+**실험 조합**:
+| 실험 | Warmup | Ensemble | KL Div | 비고 |
+|------|--------|----------|--------|------|
+| 3-A | ✓ | ✗ | ✓ | Warmup + KL |
+| 3-B | ✓ | ✓ | ✓ | 전체 조합 |
+
+---
+
+### Phase 4: One-way KD (옵션)
+
+**목적**: Inference에서 main backbone만 사용할 경우
+
+**변경 사항**:
+```python
+# Sub → Main 방향으로만 KD
+loss_kd = MSE(feat_main, feat_sub.detach())
+# Sub는 GT에서만 학습 (gradient 차단)
+```
+
+**사용 시나리오**:
+- 추론 시 sub backbone 제거하여 속도 2배
+- Main backbone 성능 최대화
+
+---
+
+### Phase 5: 구조적 개선 (장기)
+
+#### 5-A: HeatmapDecoder 최적화
+
+**문제**: `linear3`가 37.77M 파라미터 (Head 61.4M 중 65%)
+
+**해결**: Conv 기반 decoder로 교체
+- 40M → ~1.5M (96% 감소)
+- 메모리: 22GB → 16GB
+
+#### 5-B: 2D→3D Lifting
+
+**변경**:
+```
+현재: Heatmap → Encoder → Z[64] → Decoder → 3D
+개선: Heatmap → soft_argmax → 2D[16,2] + conf[16] → Lifting → 3D
+```
+
+**장점**:
+- HeatmapDecoder 완전 제거
+- Martinez baseline (검증된 방식)
+- 해석 가능한 중간 표현
+
+---
+
+## 실험 순서 및 일정
+
+| 순서 | 실험 | 예상 소요 | 의존성 |
+|------|------|----------|--------|
+| 1 | Phase 1: Progressive Warmup | 1일 | 없음 (구현 완료) |
+| 2 | Baseline: Dual COCO+MPII (원본) | 0.5일 | Phase 1과 병렬 |
+| 3 | Phase 2-A: Warmup + Ensemble | 1일 | Phase 1 완료 후 |
+| 4 | Phase 3-A: Warmup + KL Div | 1일 | Phase 1 완료 후 |
+| 5 | Phase 3-B: 전체 조합 | 1일 | Phase 2, 3 결과 확인 후 |
+| 6 | Phase 5-A: Decoder 최적화 | 2일 | 최적 조합 확정 후 |
+
+---
+
+## 평가 메트릭
+
+### 주요 메트릭
+- **Full Body MPJPE** (mm): 주 평가 지표
+- **Upper Body MPJPE** (mm)
+- **Lower Body MPJPE** (mm)
+
+### 보조 메트릭
+- `mutual_weight`: Progressive warmup 진행 상태
+- `loss_backbone_latant`: Mutual learning loss 값
+- `acc_pose`: 2D heatmap 정확도
+
+### 모니터링 (Wandb)
+- Loss curves: 각 loss 컴포넌트별 추이
+- Learning rate schedule
+- GPU 메모리 사용량
+
+---
+
+## Config 파일 명명 규칙
+
+```
+HMD_xregopose_h5cache_coco_mpii_{variant}_config.py
+```
+
+| Variant | 설명 |
+|---------|------|
+| (없음) | 원본 dual backbone |
+| warmup | Phase 1: Progressive warmup |
+| ensemble | Phase 2: Ensemble teacher |
+| kldiv | Phase 3: KL divergence |
+| full | 전체 조합 |
+| lifting | Phase 5-B: 2D→3D lifting |
+
+---
+
+## 결과 기록 템플릿
+
+### 실험: Phase X - [실험명]
+
+**Config**: `HMD_xregopose_h5cache_coco_mpii_xxx_config.py`
+
+**하이퍼파라미터**:
+| 파라미터 | 값 |
+|---------|-----|
+| mutual_warmup_epochs | |
+| mutual_rampup_epochs | |
+| temperature | |
+| ... | |
+
+**결과**:
+| Metric | Value |
+|--------|-------|
+| Full Body MPJPE | mm |
+| Upper Body MPJPE | mm |
+| Lower Body MPJPE | mm |
+| Best Epoch | |
+
+**관찰**:
+-
+
+**결론**:
+-
+
+---
+
+## 참고 논문
+
+1. **Deep Mutual Learning** (Zhang et al., 2017) - arXiv:1706.00384
+2. **Knowledge Distillation** (Hinton et al., 2015) - arXiv:1503.02531
+3. **A Simple Baseline for 3D Pose** (Martinez et al., 2017) - ICCV 2017
+
+---
+
+## 현재 진행 상황
+
+- [x] Phase 1: Progressive Warmup 구현
+  - [x] Head v2 생성
+  - [x] MutualLearningWarmupHook 생성
+  - [x] Config 생성
+- [ ] Phase 1 실험 실행
+- [ ] Baseline 실험 실행
+- [ ] Phase 2 구현 및 실험
+- [ ] Phase 3 구현 및 실험
+- [ ] 최적 조합 결정
+- [ ] Phase 5 구조적 개선

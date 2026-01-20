@@ -128,8 +128,30 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | `HMD_xregopose_h5cache_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | Baseline (Dual backbone, H5 캐시) |
 | `HMD_xregopose_h5cache_single_coco_config.py` | `CustomxRegoposeBaselinel1` | Single backbone + COCO pretrained |
 | `HMD_xregopose_h5cache_coco_mpii_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | COCO+MPII dual backbone |
+| `HMD_xregopose_h5cache_coco_mpii_warmup_config.py` | `CustomxRegoposeBaselinel1_multi_backbone_v2` | **Progressive Warmup** for mutual learning |
 | `HMD_xregopose_h5cache_augmented_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | + Data Augmentation + Deeper Decoder |
 | `HMD_xregopose_confidence_weighted_config.py` | `ConfidenceWeightedHMDHead` | Confidence-weighted HMD Fusion |
+| `HMD_xregopose_single_coco_full_config.py` | `CustomxRegoposeBaselinel1` | Single COCO, full dataset training |
+
+### Dual Backbone Mutual Learning (실험 진행중)
+
+**현재 결과** (2026-01-20):
+| Model | Full Body MPJPE | Wandb Project |
+|-------|-----------------|---------------|
+| Single COCO | **42.07mm** | `mmpose_xregopose_single_coco` |
+| Dual COCO+MPII | 44.91mm | `mmpose_xregopose_coco_mpii` |
+
+**문제**: Dual backbone mutual learning이 Single보다 2.84mm 나쁨
+
+**개선 전략** (see `my_code/custom_config/DUAL_BACKBONE_IMPROVEMENT_IDEAS.md`):
+1. **Progressive Warmup** (v2, 구현완료): 초기 epoch에서 mutual learning 제외
+2. **Ensemble Teacher** (v3, 미구현): Confidence 기반 앙상블
+3. **Heatmap KL Divergence** (v4, 미구현): Soft target으로 knowledge transfer
+
+**관련 문서**:
+- `my_code/custom_config/DUAL_BACKBONE_IMPROVEMENT_IDEAS.md` - 개선 아이디어
+- `my_code/custom_config/DUAL_BACKBONE_EXPERIMENT_PLAN.md` - 실험 계획 및 모델 구조
+- `my_code/custom_config/TRAINING_PLAN.md` - 훈련 실행 계획
 
 ## Key Files Reference
 
@@ -143,6 +165,8 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | H5 cache builder (with images) | `tools/dataset_converters/build_egopose_h5cache_with_images.py` |
 | Config README | `my_code/custom_config/README.md` |
 | Confidence-weighted head | `mmpose/models/heads/heatmap_heads/custom_egopose_confidence_weighted_head.py` |
+| **Dual backbone head (v2 warmup)** | `mmpose/models/heads/heatmap_heads/custom_egopose_baselinel1_head_multi_backbone_v2.py` |
+| **Mutual learning warmup hook** | `mmpose/engine/hooks/mutual_learning_hook.py` |
 
 ## External Documentation
 

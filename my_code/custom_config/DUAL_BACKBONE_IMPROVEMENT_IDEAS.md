@@ -252,15 +252,29 @@ class AttentionFusion(nn.Module):
 
 ---
 
-## 현재 실험 결과
+## 현재 실험 결과 (Updated: 2026-01-20)
 
-| Model | Full Body MPJPE | 비고 |
-|-------|-----------------|------|
-| Dual (MPII+MPII) | 96.47mm | 같은 pretrained |
-| Single (COCO) | **77.27mm** | 단일 backbone |
-| Dual (COCO+MPII) | 진행중 | 다른 pretrained |
+### Wandb 프로젝트별 결과
 
-> Single COCO가 현재 최고 성능. Dual backbone의 개선이 필요함.
+**mmpose_xregopose_single_coco:**
+| Run | State | Full Body | Upper Body | Lower Body |
+|-----|-------|-----------|------------|------------|
+| fresh-haze-6 | running | **42.07mm** | 29.15mm | 55.00mm |
+
+**mmpose_xregopose_coco_mpii:**
+| Run | State | Full Body | Upper Body | Lower Body |
+|-----|-------|-----------|------------|------------|
+| full셋 test로 val | finished | 44.91mm | 30.56mm | 59.26mm |
+
+### 핵심 비교
+
+| Model | Full Body MPJPE | 차이 | 비고 |
+|-------|-----------------|------|------|
+| **Single (COCO)** | **42.07mm** | - | 🏆 현재 최고 |
+| Dual (COCO+MPII) | 44.91mm | +2.84mm | mutual learning 적용 |
+
+> **문제: Mutual learning이 오히려 성능을 2.84mm 악화시킴**
+> 목표: Dual backbone mutual learning으로 Single (42mm) 이하 달성
 
 ---
 
@@ -783,3 +797,140 @@ Backbone Feature [B, 2048, 8, 8]
 - 각 관절이 관련 HMD 정보만 선택적 사용
 - 손 관절 → 손 HMD, 몸통 → head HMD로 자연스러운 매핑
 - Transformer 구조와 호환 (확장 용이)
+
+---
+
+## Head 구조 최적화: HeatmapDecoder 파라미터 문제
+
+### 현재 문제
+
+Head 전체 파라미터: **61.4M** (backbone 42.5M보다 큼!)
+
+| Component | Params | 비고 |
+|-----------|--------|------|
+| **heatmap_decoder** | **40.04M** | ← 문제! |
+| deconv_layers | 9.44M | backbone1용 |
+| deconv_layers_ | 9.44M | backbone2용 |
+| encoder | 0.71M | |
+| pose_decoder | 0.59M | |
+
+### 원인 분석
+
+`heatmap_decoder` 내부 구조:
+```python
+HeatmapDecoder(
+  (linear1): Linear(64 → 512)       # 0.03M
+  (linear2): Linear(512 → 2048)     # 1.05M
+  (linear3): Linear(2048 → 18432)   # 37.77M  ← 범인!
+  (deconv1): ConvTranspose2d(...)   # 1.05M
+  (deconv2): ConvTranspose2d(...)   # 0.13M
+  (deconv3): ConvTranspose2d(...)   # ...
+)
+```
+
+**`linear3`의 문제:**
+- 입력: 2048 (latent vector)
+- 출력: 18432 = 512 × 6 × 6 (reshape to spatial)
+- 파라미터: 2048 × 18432 = **37.77M**
+
+FC layer로 spatial feature를 생성하는 것이 비효율적.
+
+### 해결 방안 1: 1×1 Conv + Upsample (추천)
+
+```python
+class EfficientHeatmapDecoder(nn.Module):
+    """FC 대신 Conv로 spatial 생성 - 파라미터 95% 감소"""
+    def __init__(self, latent_dim=64, out_channels=16):
+        super().__init__()
+
+        # Latent → small spatial (1×1 → 6×6)
+        self.fc = nn.Linear(latent_dim, 256)  # 64 → 256 (0.02M)
+
+        # Reshape to 256×1×1, then upsample
+        self.upsample = nn.Sequential(
+            nn.ConvTranspose2d(256, 128, 4, 2, 1),  # 1→2  (0.13M)
+            nn.ReLU(),
+            nn.ConvTranspose2d(128, 64, 4, 2, 1),   # 2→4  (0.13M)
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 64, 4, 2, 1),    # 4→8  (0.07M)
+            nn.ReLU(),
+        )
+
+        # 8×8 → 47×47
+        self.to_heatmap = nn.Sequential(
+            nn.ConvTranspose2d(64, 32, 4, 2, 1),   # 8→16
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 32, 4, 2, 1),   # 16→32
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, out_channels, 4, 2, 0),  # 32→47
+        )
+
+    def forward(self, z):
+        x = self.fc(z)                    # [B, 256]
+        x = x.view(-1, 256, 1, 1)         # [B, 256, 1, 1]
+        x = self.upsample(x)              # [B, 64, 8, 8]
+        heatmap = self.to_heatmap(x)      # [B, 16, 47, 47]
+        return heatmap
+```
+
+**파라미터 비교:**
+- 현재: 40.04M
+- 개선: ~1.5M (**96% 감소**)
+
+### 해결 방안 2: AdaIN 기반 생성
+
+```python
+class AdaINHeatmapDecoder(nn.Module):
+    """Latent를 style로 사용, learned constant에서 시작"""
+    def __init__(self, latent_dim=64, out_channels=16):
+        super().__init__()
+
+        # Learned constant (spatial starting point)
+        self.const = nn.Parameter(torch.randn(1, 256, 6, 6))
+
+        # Latent → AdaIN parameters
+        self.style_fc = nn.Linear(latent_dim, 256 * 2)  # scale + shift
+
+        # Upsampling with AdaIN
+        self.conv_blocks = nn.ModuleList([
+            nn.Conv2d(256, 128, 3, padding=1),  # 6×6
+            nn.Conv2d(128, 64, 3, padding=1),   # 12×12
+            nn.Conv2d(64, out_channels, 3, padding=1),  # 24×24 → 47
+        ])
+
+    def adain(self, feat, style):
+        scale, shift = style.chunk(2, dim=1)
+        return feat * scale[:,:,None,None] + shift[:,:,None,None]
+
+    def forward(self, z):
+        style = self.style_fc(z)
+        x = self.const.expand(z.size(0), -1, -1, -1)
+        x = self.adain(x, style)
+        # ... upsample
+        return heatmap
+```
+
+### 해결 방안 3: Heatmap Decoder 제거
+
+2D→3D Lifting 방식에서는 heatmap_decoder 자체가 불필요:
+
+```python
+# 현재: Heatmap → Encoder → Z → HeatmapDecoder → ReconHeatmap
+# 제안: Heatmap → soft_argmax → 2D coords → Lifting → 3D
+```
+
+이 경우 heatmap_decoder 40M 전체 제거 가능.
+
+### 메모리 영향
+
+| 구성 | Head Params | 전체 Params | batch=58 메모리 |
+|------|-------------|-------------|-----------------|
+| 현재 | 61.4M | 146.4M | ~22GB (OOM 위험) |
+| Conv 기반 | ~22M | ~107M | ~16GB (안전) |
+| Decoder 제거 | ~12M | ~97M | ~14GB (매우 안전) |
+
+### 권장 순서
+
+1. **단기 (즉시)**: batch_size=48로 줄여서 훈련 진행
+2. **중기**: Conv 기반 decoder로 교체 (파라미터 96% 감소)
+3. **장기**: 2D→3D Lifting으로 전환 (decoder 완전 제거)

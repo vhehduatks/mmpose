@@ -1,9 +1,16 @@
 """
 XR EgoPose Training Config with H5 Cached Dataset
 - Dual Backbone with COCO + MPII pretrained weights
+- Progressive Warmup for Mutual Learning (v2)
 
 backbone1: COCO pretrained ResNet-101
 backbone2: MPII pretrained ResNet-101
+
+Changes from HMD_xregopose_h5cache_coco_mpii_config.py:
+- Head: CustomxRegoposeBaselinel1_multi_backbone_v2 (with progressive warmup)
+- Hook: MutualLearningWarmupHook (updates current_epoch in head)
+- mutual_warmup_epochs=5: No mutual learning for first 5 epochs
+- mutual_rampup_epochs=10: Linear increase from 0 to 1 over epochs 5-15
 """
 
 import platform
@@ -46,7 +53,7 @@ backend_args = dict(backend='local')
 # =============================================================================
 train_cfg = dict(
     type='EpochBasedTrainLoop',
-    max_epochs=10,
+    max_epochs=20,  # Increased for warmup schedule (5 warmup + 10 rampup + 5 full)
     val_interval=1,
 )
 val_cfg = dict()
@@ -69,8 +76,8 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=10,
-        milestones=[i for i in range(1, 10)],
+        end=20,
+        milestones=[i for i in range(1, 20)],
         gamma=0.5,
         by_epoch=True
     ),
@@ -111,10 +118,11 @@ codec = dict(
 )
 
 # =============================================================================
-# Custom Hooks
+# Custom Hooks - Added MutualLearningWarmupHook
 # =============================================================================
 custom_hooks = [
     dict(type='SyncBuffersHook'),
+    dict(type='MutualLearningWarmupHook'),  # Updates head.current_epoch each epoch
 ]
 
 # =============================================================================
@@ -138,7 +146,7 @@ log_processor = dict(
 )
 
 # =============================================================================
-# Model Architecture - Dual Backbone with COCO + MPII
+# Model Architecture - Dual Backbone with COCO + MPII + Progressive Warmup
 # =============================================================================
 model = dict(
     type='Custom_TopdownPoseEstimator',
@@ -167,8 +175,13 @@ model = dict(
         type='PoseDataPreprocessor'
     ),
     head=dict(
+        type='CustomxRegoposeBaselinel1_multi_backbone_v2',  # v2 with progressive warmup
         decoder=codec,
         in_channels=2048,
+        out_channels=16,
+        # Progressive warmup settings
+        mutual_warmup_epochs=5,   # No mutual learning for first 5 epochs
+        mutual_rampup_epochs=10,  # Linear increase from 0 to 1 over epochs 5-15
         # Main 2D heatmap loss
         loss=dict(
             loss_weight=1000,
@@ -184,14 +197,12 @@ model = dict(
         loss_limb_length=dict(loss_weight=0.25, type='limb_length'),
         loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'),
         loss_hmd=dict(type='MSELoss'),
-        loss_backbone_latant=dict(type='MSELoss', loss_weight=1.),
+        loss_backbone_latant=dict(type='MSELoss', loss_weight=1.),  # Scaled by progressive warmup
         loss_backbone_heatmap=dict(
             loss_weight=1.0,
             type='KeypointMSELoss',
             use_target_weight=False
         ),
-        out_channels=16,
-        type='CustomxRegoposeBaselinel1_multi_backbone'
     ),
     test_cfg=dict(
         flip_mode='heatmap',
@@ -204,10 +215,6 @@ model = dict(
 # =============================================================================
 # Data Pipeline (All use H5 cache with embedded images - no disk I/O needed)
 # =============================================================================
-# Note: Images are already 256x256 in cache. TopdownAffine is still needed
-#       to set input_center/input_scale metadata required by predict().
-#       With padding=1.0 and pre-cropped images, it acts as identity transform.
-# Extended meta_keys to include H5 cache info for visualization hook
 _meta_keys = ('id', 'img_id', 'img_path', 'category_id', 'crowd_index',
               'ori_shape', 'img_shape', 'input_size', 'input_center',
               'input_scale', 'flip', 'flip_direction', 'flip_indices',
@@ -363,7 +370,7 @@ test_evaluator = dict(
 vis_backends = [
     dict(type='LocalVisBackend'),
     dict(
-        init_kwargs=dict(project='mmpose_xregopose_coco_mpii'),
+        init_kwargs=dict(project='mmpose_xregopose_coco_mpii_warmup'),
         type='WandbVisBackend'
     ),
 ]
@@ -374,4 +381,4 @@ visualizer = dict(
     vis_backends=vis_backends
 )
 
-work_dir = 'work_dirs/HMD_xregopose_coco_mpii'
+work_dir = 'work_dirs/HMD_xregopose_coco_mpii_warmup'

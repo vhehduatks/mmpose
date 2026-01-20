@@ -85,6 +85,12 @@ codec = dict(
 # =============================================================================
 custom_hooks = [dict(type='SyncBuffersHook')]
 
+# Enable find_unused_parameters for distributed training
+model_wrapper_cfg = dict(
+    type='MMDistributedDataParallel',
+    find_unused_parameters=True
+)
+
 # =============================================================================
 # Environment Config
 # =============================================================================
@@ -252,6 +258,10 @@ val_evaluator = dict(
 # =============================================================================
 vis_backends = [
     dict(type='LocalVisBackend'),
+    dict(
+        init_kwargs=dict(project='mmpose_xregopose_single_coco'),
+        type='WandbVisBackend'
+    ),
 ]
 
 visualizer = dict(
