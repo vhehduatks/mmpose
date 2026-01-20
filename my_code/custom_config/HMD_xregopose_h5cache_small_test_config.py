@@ -1,7 +1,7 @@
 """
 Small Dataset Config for Quick Training Tests
-- Train: 1000 samples
-- Val: 500 samples
+- Train: 500 samples
+- Val: 100 samples
 - For debugging and architecture testing
 """
 
@@ -10,11 +10,12 @@ import platform
 IS_WINDOWS = platform.system() == 'Windows'
 
 if IS_WINDOWS:
-    ann_file_train = r'F:\ego_cam_dataset\Train'
-    ann_file_val = r'F:\ego_cam_dataset\Val'
-    pretrained_coco = r'F:\download_2\coco_pose_resnet_101_256x192.pth.tar'
-    cache_file_train = None
-    cache_file_val = None
+    ann_file_train = r'F:\egodataset_cache\h5cache'
+    ann_file_val = r'F:\egodataset_cache\h5cache'
+    pretrained_coco = r'F:\egodataset_cache\pose_coco\coco_pose_resnet_101_256x192.pth.tar'
+    # Small datasets for quick testing
+    cache_file_train = r'F:\egodataset_cache\h5cache\train_small_500.h5'
+    cache_file_val = r'F:\egodataset_cache\h5cache\val_small_100.h5'
 else:
     ann_file_train = '/mnt/dataset_vol/h5cache'
     ann_file_val = '/mnt/dataset_vol/h5cache'
@@ -153,22 +154,29 @@ dataset_val = dict(
 )
 
 # DataLoader - Small batch for quick testing
+if IS_WINDOWS:
+    _num_workers = 0  # Windows multiprocessing issues
+    _persistent_workers = False
+else:
+    _num_workers = 4
+    _persistent_workers = True
+
 train_dataloader = dict(
-    batch_size=32,
+    batch_size=16,
     dataset=dataset_train,
     drop_last=True,
-    num_workers=4,
-    persistent_workers=True,
+    num_workers=_num_workers,
+    persistent_workers=_persistent_workers,
     pin_memory=True,
     sampler=dict(shuffle=True, type='DefaultSampler')
 )
 
 val_dataloader = dict(
-    batch_size=32,
+    batch_size=16,
     dataset=dataset_val,
     drop_last=False,
-    num_workers=4,
-    persistent_workers=True,
+    num_workers=_num_workers,
+    persistent_workers=_persistent_workers,
     pin_memory=True,
     sampler=dict(shuffle=False, type='DefaultSampler')
 )
