@@ -100,11 +100,31 @@
 
 **현상**: Dual (44.91mm) > Single (42.07mm) - Dual이 2.84mm 더 나쁨
 
-**현재 Dual의 문제점**:
+### 문제 1: Mutual Learning 방식
+
 1. `loss_backbone_latant = MSE(feat1, feat2)`: 두 backbone feature를 **무조건 동일하게** 강제
 2. COCO와 MPII의 서로 다른 feature 분포가 충돌
 3. 각 pretrained의 고유한 강점이 상쇄됨
 4. epoch 1부터 mutual learning 강제 → pretrained knowledge 손상
+
+### 문제 2: Heatmap의 3D 정보 인코딩 한계 (구조적)
+
+```
+Backbone feat [2048, 8, 8]  ← depth/texture/context 정보 풍부
+       ↓ (Deconv)
+Heatmap [16, 47, 47]        ← 2D 위치만 남음 (depth 손실!)
+       ↓ (Encoder)
+Z [64]                      ← 극단적 압축
+       ↓
+3D Pose                     ← depth ambiguity 발생
+```
+
+**근거**:
+- Heatmap은 본질적으로 **2D 위치의 확률 분포** (x, y만 표현)
+- 3D depth 정보가 implicit하게만 존재 → lifting 시 ambiguity
+- Backbone feature의 depth cues가 heatmap 단계에서 손실됨
+
+**해결 방향**: Backbone feature를 별도 경로로 보존하여 depth 정보 활용
 
 ---
 
@@ -238,6 +258,84 @@ loss_kd = MSE(feat_main, feat_sub.detach())
 - HeatmapDecoder 완전 제거
 - Martinez baseline (검증된 방식)
 - 해석 가능한 중간 표현
+
+---
+
+### Phase 6: Backbone Feature Fusion (핵심 구조 개선)
+
+**문제 인식**: Heatmap은 2D 위치 정보에 최적화되어 있어 3D depth 정보 인코딩이 어려움
+
+**학술적 근거**:
+- [Depth Ambiguity Survey](https://www.mdpi.com/2076-3417/12/20/10591): "하나의 2D pose → 여러 3D pose 매핑 가능"
+- [EgoTAP](https://arxiv.org/html/2402.18330): "CNN encoder가 heatmap 정보 제대로 보존 못함"
+- [Lifting by Image](https://arxiv.org/abs/2312.15636): "image의 semantic/texture 정보가 lifting에 기여"
+
+#### 6-A: Backbone + Heatmap Latent Concat (추천 - 먼저 시도)
+
+**구조**:
+```
+Backbone feat [2048, 8, 8]
+       │
+       ├──→ GAP → FC → Z_backbone [256]  ← depth/context cues
+       │                      │
+       ↓ (Deconv)             │
+Heatmap [16, 47, 47]          │
+       ↓ (Encoder)            │
+Z_heatmap [64] ← 2D 위치      │
+       │                      │
+       └──── Concat ──────────┘
+              ↓
+         [64 + 256 + 64(HMD)] = [384]
+              ↓
+         Pose Decoder → 3D Pose
+```
+
+**역할 분리**:
+| Component | 역할 |
+|-----------|------|
+| Z_heatmap | 정확한 2D 관절 위치 (x, y) |
+| Z_backbone | 깊이/텍스처/컨텍스트 (depth cues) |
+| Z_hmd | 머리/손 3D 위치 (absolute reference) |
+
+**구현 위치**: `custom_egopose_baselinel1_head_multi_backbone_v5.py` (또는 v3에 통합)
+
+**Config**: `HMD_xregopose_h5cache_coco_mpii_backbone_fusion_config.py`
+
+#### 6-B: 2D Coords + Backbone Feature
+
+**구조**:
+```
+Heatmap → soft-argmax → 2D coords [16, 2] + conf [16]
+                              │
+Backbone feat → GAP → FC → Context [256]
+                              │
+              Concat ─────────┘
+                 ↓
+           [32 + 16 + 256 + 9(HMD)] = [313]
+                 ↓
+           Lifting Network → 3D Pose
+```
+
+**장점**: 2D 좌표가 명시적, backbone이 depth 해결에 직접 기여
+
+---
+
+### 실험 조합 요약
+
+| Phase | 개선 방향 | 구현 상태 |
+|-------|----------|----------|
+| 1 | Progressive Warmup | ✅ 완료 |
+| 2 | Ensemble Teacher | ❌ 미구현 |
+| 3 | KL Divergence | ❌ 미구현 |
+| 4 | One-way KD | ❌ 미구현 |
+| 5 | 구조 최적화 | ❌ 미구현 |
+| **6** | **Backbone Feature Fusion** | **❌ 미구현 (추천)** |
+
+**추천 실험 순서**:
+1. Phase 1 (Warmup) - 이미 구현, 실험 진행
+2. **Phase 6-A (Backbone Fusion)** - 핵심 구조 개선, 병렬 진행 가능
+3. Phase 1 + 6-A 조합
+4. 결과에 따라 Phase 2, 3 선택적 적용
 
 ---
 

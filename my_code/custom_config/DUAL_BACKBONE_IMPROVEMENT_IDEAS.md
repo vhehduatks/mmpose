@@ -278,6 +278,183 @@ class AttentionFusion(nn.Module):
 
 ---
 
+## 구조적 문제: Heatmap의 3D 정보 인코딩 한계
+
+### 핵심 문제
+
+현재 구조에서 **Heatmap이 3D 정보를 인코딩해야 하는 부담**을 가짐:
+
+```
+Backbone feat [2048, 8, 8]  ← 풍부한 3D 정보 (texture, context, depth cues)
+       ↓ (Deconv)
+Heatmap [16, 47, 47]        ← 2D 위치 정보만 남음 (depth 손실!)
+       ↓ (CNN Encoder)
+Z [64]                      ← 극단적 압축 (추가 손실)
+       ↓
+3D Pose                     ← depth 정보 부족으로 ambiguity
+```
+
+### 학술적 근거
+
+1. **Depth Ambiguity 문제** ([A Survey on Depth Ambiguity](https://www.mdpi.com/2076-3417/12/20/10591))
+   - "하나의 2D pose가 여러 3D pose로 매핑될 수 있음"
+   - 2D heatmap은 본질적으로 **x, y 위치의 확률 분포**만 표현
+
+2. **CNN Encoder의 정보 손실** ([EgoTAP, CVPR 2024](https://arxiv.org/html/2402.18330))
+   - "CNN 기반 인코더가 heatmap 정보를 제대로 보존하지 못함"
+   - 원거리 픽셀 간 통신 불가능 → spatial 관계 손실
+
+3. **Lifting by Image** ([arXiv 2312.15636](https://arxiv.org/abs/2312.15636))
+   - "2D pose만으로 lifting할 때 depth ambiguity 존재"
+   - "이미지의 풍부한 semantic/texture 정보가 더 정확한 lifting에 기여"
+
+4. **Multi-Feature Fusion** ([ScienceDirect](https://www.sciencedirect.com/science/article/abs/pii/S1047320324001159))
+   - "2D prior + multi-scale features + backbone semantic features 융합이 효과적"
+
+### 결론
+
+**Heatmap은 2D 위치 인코딩에 최적화**되어 있으며, 3D depth 정보를 담기 어려움.
+→ **Backbone feature를 별도로 활용**하여 depth cues 보존 필요.
+
+---
+
+## 제안: Backbone Feature Fusion
+
+### 방안 A: Backbone Feature + Heatmap Latent Concatenation (추천)
+
+```
+Backbone feat [2048, 8, 8]
+       │
+       ├──→ GAP → [2048] → FC → [256]  ← Backbone latent (depth cues 보존)
+       │                        │
+       ↓ (Deconv)               │
+Heatmap [16, 47, 47]            │
+       ↓ (Encoder)              │
+Z_hm [64]  ← 2D 위치 정보       │
+       │                        │
+       └──── Concat ────────────┘
+              ↓
+         [64 + 256] = [320]
+              ↓
+         Pose Decoder → 3D Pose
+```
+
+**구현:**
+```python
+class BackboneFusionHead(nn.Module):
+    def __init__(self, backbone_channels=2048, heatmap_latent=64, backbone_latent=256):
+        super().__init__()
+        # Backbone feature → latent
+        self.backbone_pool = nn.AdaptiveAvgPool2d(1)
+        self.backbone_fc = nn.Sequential(
+            nn.Linear(backbone_channels, 512),
+            nn.ReLU(),
+            nn.Linear(512, backbone_latent)
+        )
+
+        # Heatmap encoder (기존)
+        self.heatmap_encoder = Encoder(num_classes=16, output_size=heatmap_latent)
+
+        # Pose decoder (입력 크기 증가)
+        self.pose_decoder = LinearModel(
+            input_size=heatmap_latent + backbone_latent + 64,  # Z_hm + Z_backbone + HMD
+            num_classes=16
+        )
+
+    def forward(self, backbone_feat, heatmap, hmd_info):
+        # Backbone latent (depth cues)
+        z_backbone = self.backbone_pool(backbone_feat).flatten(1)  # [B, 2048]
+        z_backbone = self.backbone_fc(z_backbone)                   # [B, 256]
+
+        # Heatmap latent (2D position)
+        z_heatmap = self.heatmap_encoder(heatmap)                   # [B, 64]
+
+        # HMD info
+        z_hmd = self.hmd_linear(hmd_info)                           # [B, 64]
+
+        # Fusion
+        z_fused = torch.cat([z_heatmap, z_backbone, z_hmd], dim=1)  # [B, 384]
+
+        # 3D Pose
+        pose_3d = self.pose_decoder(z_fused)
+        return pose_3d
+```
+
+**역할 분리:**
+| Component | 역할 | 정보 |
+|-----------|------|------|
+| Z_heatmap | 정확한 2D 관절 위치 | x, y coordinates |
+| Z_backbone | 깊이/텍스처/컨텍스트 | depth cues, scene context |
+| Z_hmd | 머리/손 3D 위치 | absolute 3D reference |
+
+**장점:**
+- Heatmap: 2D 위치 정보에 집중
+- Backbone: depth/context 정보 보존
+- 각각 최적화 가능 (역할 분리)
+
+---
+
+### 방안 B: 2D Coords + Backbone Feature ([Lifting by Image](https://arxiv.org/abs/2312.15636) 방식)
+
+```
+Heatmap → soft-argmax → 2D coords [16, 2] + conf [16]
+                              │
+Backbone feat → GAP → FC → Context [256]
+                              │
+              Concat ─────────┘
+                 ↓
+           [32 + 16 + 256 + 9] = [313]
+                 ↓
+           Lifting Network → 3D Pose
+```
+
+**장점:**
+- 2D 좌표가 명시적 (해석 가능)
+- Backbone feature가 depth ambiguity 해결에 직접 기여
+- Martinez baseline과 호환
+
+---
+
+### 방안 C: Multi-scale Backbone Feature Fusion
+
+```
+Backbone feat [2048, 8, 8]
+       │
+       ├── Stage 4: [2048, 8, 8] → GAP → [256]
+       │
+Backbone feat [1024, 16, 16]  (from earlier stage)
+       │
+       ├── Stage 3: [1024, 16, 16] → GAP → [128]
+       │
+       └──── Concat → [384] ← Multi-scale context
+                 │
+                 + Heatmap latent [64] + HMD [64]
+                 │
+           Pose Decoder → 3D Pose
+```
+
+**장점:**
+- 다양한 해상도의 정보 활용
+- 세밀한 정보 + 전역 정보 조합
+
+---
+
+### 방안 비교
+
+| 방안 | 구현 난이도 | 정보 분리 | Depth 정보 | 추천 |
+|------|------------|----------|-----------|------|
+| 현재 (Heatmap only) | - | ✗ | ✗ | - |
+| **A: Backbone + Heatmap Concat** | **낮음** | **✓✓** | **✓✓** | **✓✓ (먼저)** |
+| B: 2D Coords + Backbone | 중간 | ✓✓✓ | ✓✓ | ✓✓ |
+| C: Multi-scale Fusion | 높음 | ✓✓ | ✓✓✓ | ✓ |
+
+**추천 순서:**
+1. **방안 A 먼저 시도** - 최소 변경으로 효과 검증
+2. 효과 있으면 방안 B로 확장 (2D 좌표 명시화)
+3. 필요시 방안 C (multi-scale)
+
+---
+
 ## 구조적 문제: Heatmap → Latent 압축
 
 ### 현재 파이프라인
