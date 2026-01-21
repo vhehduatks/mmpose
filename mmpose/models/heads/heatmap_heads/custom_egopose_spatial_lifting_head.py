@@ -44,7 +44,7 @@ vs Phase 5-C (GAP):
 - 5-D: Per-joint sampling preserves spatial info → expected improvement
 """
 
-from typing import Optional, Sequence, Tuple, Union
+from typing import List, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -679,7 +679,3 @@ class CustomEgoposeSpatialLiftingHead(BaseHead):
             preds.append(pred)
 
         return preds
-
-
-# Required import for type hints
-from typing import List
