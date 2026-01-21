@@ -129,7 +129,9 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | `HMD_xregopose_h5cache_coco_mpii_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | Dual COCO+MPII | 43.26mm |
 | `HMD_xregopose_h5cache_coco_mpii_warmup_10ep_config.py` | `CustomxRegoposeBaselinel1_multi_backbone_v2` | Dual + Progressive Warmup | 45.93mm |
 | `HMD_xregopose_single_lifting_config.py` | `CustomEgoposeLiftingHead` | Soft-argmax 2D→3D Lifting | 45.92mm |
-| `HMD_xregopose_lifting_backbone_fusion_config.py` | `CustomEgoposeLiftingBackboneFusionHead` | **Lifting + Backbone Fusion** | 실험 대기 |
+| `HMD_xregopose_lifting_backbone_fusion_config.py` | `CustomEgoposeLiftingBackboneFusionHead` | Lifting + Backbone Fusion | 105.18mm ❌ |
+| `HMD_xregopose_spatial_lifting_full_config.py` | `CustomEgoposeSpatialLiftingHead` | Grid Sampling Spatial Depth | 실험 대기 |
+| `HMD_xregopose_efficient_decoder_small_config.py` | `CustomxRegoposeBaselinel1` | **EfficientHeatmapDecoder 검증** | Smoke test 진행 |
 
 ### 실험 결과 요약 (2026-01-21)
 
@@ -139,10 +141,11 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | Dual COCO+MPII | 43.26mm | +1.89mm ❌ |
 | Dual Warmup v2 | 45.93mm | +4.56mm ❌ |
 | Single Lifting | 45.92mm | +4.55mm ❌ |
+| Lifting + Backbone Fusion | 105.18mm | +63.81mm ❌ (GAP 공간 정보 손실) |
 
 **목표**: 41mm 이하 달성
 
-**다음 실험**: Lifting + Backbone Fusion (역할 분리: 2D coords → gradient 차단, backbone → depth cues)
+**진행 중**: EfficientHeatmapDecoder (40M → 1.35M, 96.6% 감소) 검증 중
 
 ### 문서 구조
 
@@ -150,8 +153,10 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 |------|------|
 | `EXPERIMENT_RESULTS.md` | **실험 결과 및 분석** (epoch별 상세, 종합 분석) |
 | `DUAL_BACKBONE_EXPERIMENT_PLAN.md` | 실험 계획 및 Phase별 구현 상태 |
-| `DUAL_BACKBONE_IMPROVEMENT_IDEAS.md` | 개선 아이디어 (Attention Lifting 등) |
-| `README.md` | Config 설명 |
+| `DUAL_BACKBONE_IMPROVEMENT_IDEAS.md` | 개선 아이디어 (Attention Lifting, Backbone Fusion 등) |
+| `SPATIAL_DEPTH_EXTRACTION_IDEAS.md` | 공간 정보 보존 Depth 추출 방법 (Grid Sampling 등) |
+| `PROBLEM.md` | 코드 수정 필요 사항 (Metric squeeze 버그 등) |
+| `README.md` | Config 설명 및 Smoke Test 규칙 |
 
 ## Key Files Reference
 
@@ -166,6 +171,8 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | **실험 결과** | `my_code/custom_config/EXPERIMENT_RESULTS.md` |
 | **실험 계획** | `my_code/custom_config/DUAL_BACKBONE_EXPERIMENT_PLAN.md` |
 | **개선 아이디어** | `my_code/custom_config/DUAL_BACKBONE_IMPROVEMENT_IDEAS.md` |
+| **Spatial Depth 방법** | `my_code/custom_config/SPATIAL_DEPTH_EXTRACTION_IDEAS.md` |
+| **코드 수정 사항** | `my_code/custom_config/PROBLEM.md` |
 | Config README | `my_code/custom_config/README.md` |
 
 ### Head 파일
@@ -176,7 +183,30 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | `CustomxRegoposeBaselinel1_multi_backbone` | `custom_egopose_baselinel1_head_multi_backbone.py` | Dual backbone |
 | `CustomxRegoposeBaselinel1_multi_backbone_v2` | `custom_egopose_baselinel1_head_multi_backbone_v2.py` | Dual + Warmup |
 | `CustomEgoposeLiftingHead` | `custom_egopose_lifting_head.py` | Soft-argmax 2D→3D Lifting |
-| `CustomEgoposeLiftingBackboneFusionHead` | `custom_egopose_lifting_backbone_fusion_head.py` | **Lifting + Backbone Fusion (신규)** |
+| `CustomEgoposeLiftingBackboneFusionHead` | `custom_egopose_lifting_backbone_fusion_head.py` | Lifting + Backbone Fusion |
+| `CustomEgoposeSpatialLiftingHead` | `custom_egopose_spatial_lifting_head.py` | Grid Sampling 기반 Spatial Depth |
+
+### Smoke Test 규칙
+
+**목적**: 새 구현체의 훈련 파이프라인이 정상 동작하는지 빠르게 확인
+
+**Config 설정**:
+- `max_epochs = 1~2` (짧은 훈련)
+- `checkpoint = None` (가중치 저장 안함)
+- Config 파일명에 `_small` suffix 사용
+
+**Dataset 경로**:
+- Small: `train_small_1k.h5` / `val_small_500.h5`
+- Full: `train_cache_with_images.h5` / `test_cache_with_images.h5`
+
+### 주요 구조적 문제 및 해결 방향
+
+| 문제 | 원인 | 해결 방향 |
+|------|------|----------|
+| HeatmapDecoder 40M params | `linear3: 2048→18432` | EfficientHeatmapDecoder (Conv 기반, 1.35M) |
+| GAP 공간 정보 손실 | Global Average Pooling | Grid Sampling으로 관절별 feature 추출 |
+| Depth Ambiguity | Heatmap은 2D 확률 분포 | Backbone feature로 depth cues 보존 |
+| Metric squeeze 버그 | `squeeze()` 전체 차원 제거 | `squeeze(dim=1)` 특정 차원만 제거 |
 
 ## External Documentation
 

@@ -18,7 +18,7 @@ from mmengine.structures import InstanceData
 
 import numpy as np
 import math
-from .blocks import PoseDecoder,HeatmapDecoder
+from .blocks import PoseDecoder, HeatmapDecoder, EfficientHeatmapDecoder
 
 OptIntSeq = Optional[Sequence[int]]
 
@@ -207,6 +207,7 @@ class CustomxRegoposeBaselinel1(BaseHead):
 				loss_backbone_heatmap: ConfigType = dict(
 					type='KeypointMSELoss'),
 				decoder: OptConfigType = None,
+				heatmap_decoder_type: str = 'original',  # 'original' or 'efficient'
 				init_cfg: OptConfigType = None):
 
 		if init_cfg is None:
@@ -234,7 +235,15 @@ class CustomxRegoposeBaselinel1(BaseHead):
 
 		
 		self.encoder = Encoder(num_classes=out_channels, output_size = 64, hmd_info_size = 9)
-		self.heatmap_decoder = HeatmapDecoder(num_classes=out_channels,heatmap_resolution=47, input_size = 64)
+
+		# Select heatmap decoder type
+		self.heatmap_decoder_type = heatmap_decoder_type
+		if heatmap_decoder_type == 'efficient':
+			self.heatmap_decoder = EfficientHeatmapDecoder(
+				num_classes=out_channels, heatmap_resolution=47, input_size=64)
+		else:  # 'original'
+			self.heatmap_decoder = HeatmapDecoder(
+				num_classes=out_channels, heatmap_resolution=47, input_size=64)
 		self.pose_decoder = LinearModel(
 			input_size = 64, 
 			num_classes = 16,	

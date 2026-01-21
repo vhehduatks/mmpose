@@ -313,6 +313,76 @@ class HeatmapDecoder(nn.Module):
         x = self.deconv3(x)
         return x
 
+
+class EfficientHeatmapDecoder(nn.Module):
+    """
+    Efficient HeatmapDecoder using ConvTranspose2d instead of large FC layer.
+
+    Original HeatmapDecoder: ~40M params (linear3: 2048 -> 18432 = 37.77M)
+    EfficientHeatmapDecoder: ~1.5M params (96% reduction)
+
+    Key change: Instead of FC to create 6x6x512 spatial feature,
+    use progressive ConvTranspose2d upsampling from 1x1.
+    """
+    def __init__(self, num_classes=16, heatmap_resolution=47, input_size=64):
+        super(EfficientHeatmapDecoder, self).__init__()
+        self.heatmap_resolution = heatmap_resolution
+
+        # Latent -> small spatial feature (256 channels, 1x1)
+        self.fc = nn.Sequential(
+            nn.Linear(input_size, 256),
+            nn.LeakyReLU(0.2),
+            nn.Linear(256, 256),
+            nn.LeakyReLU(0.2),
+        )
+
+        # Progressive upsampling: 1x1 -> 2x2 -> 4x4 -> 8x8 -> 16x16 -> 32x32 -> 47x47
+        self.upsample = nn.Sequential(
+            # 1x1 -> 2x2
+            nn.ConvTranspose2d(256, 256, kernel_size=2, stride=1, padding=0),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(0.2),
+
+            # 2x2 -> 4x4
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.2),
+
+            # 4x4 -> 8x8
+            nn.ConvTranspose2d(128, 128, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.2),
+
+            # 8x8 -> 16x16
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.2),
+
+            # 16x16 -> 32x32
+            nn.ConvTranspose2d(64, 64, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.2),
+        )
+
+        # Final layer to target resolution and channels
+        # 32x32 -> 47x47 with num_classes channels
+        self.final = nn.Sequential(
+            nn.Upsample(size=(heatmap_resolution, heatmap_resolution), mode='bilinear', align_corners=False),
+            nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(32, num_classes, kernel_size=1, stride=1, padding=0),
+        )
+
+    def forward(self, x):
+        # x: [B, input_size]
+        x = self.fc(x)                          # [B, 256]
+        x = x.view(-1, 256, 1, 1)               # [B, 256, 1, 1]
+        x = self.upsample(x)                    # [B, 64, 32, 32]
+        x = self.final(x)                       # [B, num_classes, 47, 47]
+        return x
+
+
 class HM2Pose(nn.Module):
     def __init__(self, num_class=16, heatmap_resolution=47, dropout=0.0):
         super(HM2Pose, self).__init__()
