@@ -2,38 +2,30 @@
 
 ## 목표
 
-**Single COCO (42.07mm)보다 나은 성능을 Dual Backbone mutual learning으로 달성하기.**
+**Single COCO (41.37mm)보다 나은 성능을 Dual Backbone mutual learning으로 달성하기.**
 
-현재 문제: Dual COCO+MPII (44.91mm)가 Single COCO (42.07mm)보다 2.84mm 나쁨
+현재 문제: Dual COCO+MPII (43.26mm)가 Single COCO (41.37mm)보다 1.89mm 나쁨
 
 ---
 
-## 베이스라인 결과 (Updated: 2026-01-20)
+## 베이스라인 결과 (Updated: 2026-01-21)
 
-### Wandb 실험 결과
-
-**mmpose_xregopose_single_coco:**
-| Run | State | Full Body | Upper Body | Lower Body |
-|-----|-------|-----------|------------|------------|
-| fresh-haze-6 | running | **42.07mm** | 29.15mm | 55.00mm |
-
-**mmpose_xregopose_coco_mpii:**
-| Run | State | Full Body | Upper Body | Lower Body |
-|-----|-------|-----------|------------|------------|
-| full셋 test로 val | finished | 44.91mm | 30.56mm | 59.26mm |
+> **상세 결과**: `EXPERIMENT_RESULTS.md` 참조
 
 ### 핵심 비교
 
 | Model | Full Body MPJPE | 차이 | 비고 |
 |-------|-----------------|------|------|
-| **Single COCO** | **42.07mm** | - | 🏆 현재 최고 |
-| Dual COCO+MPII | 44.91mm | +2.84mm | Dual이 약간 나쁨 |
+| **Single COCO** | **41.37mm** | - | 🏆 현재 최고 (epoch 8) |
+| Dual COCO+MPII | 43.26mm | +1.89mm | Dual이 나쁨 (epoch 8) |
+| Dual Warmup v2 | 45.93mm | +4.56mm | warmup 효과 없음 |
+| Single Lifting | 45.92mm | +4.55mm | depth 부족 |
 
 ---
 
 ## 현재 모델 구조
 
-### Single COCO (42.07mm)
+### Single COCO (41.37mm)
 
 **Config**: `HMD_xregopose_single_coco_full_config.py`
 
@@ -64,7 +56,7 @@
 
 ---
 
-### Dual COCO+MPII (44.91mm)
+### Dual COCO+MPII (43.26mm)
 
 **Config**: `HMD_xregopose_h5cache_coco_mpii_config.py`
 
@@ -98,7 +90,7 @@
 
 ## 문제 분석
 
-**현상**: Dual (44.91mm) > Single (42.07mm) - Dual이 2.84mm 더 나쁨
+**현상**: Dual (43.26mm) > Single (41.37mm) - Dual이 1.89mm 더 나쁨
 
 ### 문제 1: Mutual Learning 방식
 
@@ -273,10 +265,10 @@ loss_kd = MSE(feat_main, feat_sub.detach())
 | Backbone | ResNet-101 COCO | ResNet-101 COCO (동일) |
 | 2D→3D | Encoder→Z[64]→Decoder | soft_argmax→Lifting |
 | Head Params | ~61M | ~13M |
-| MPJPE | **42.07mm** | ? (실험 필요) |
+| MPJPE | **41.37mm** | ? (실험 필요) |
 
 > **주의**: Lifting은 Dual이 아닌 **Single backbone**과 비교해야 함!
-> Dual (44.91mm)과 비교하면 구조 차이가 너무 커서 의미 없음.
+> Dual (43.26mm)과 비교하면 구조 차이가 너무 커서 의미 없음.
 
 ---
 
@@ -343,19 +335,19 @@ Backbone feat → GAP → FC → Context [256]
 
 | Phase | 개선 방향 | 구현 상태 | 비교 대상 |
 |-------|----------|----------|----------|
-| 1 | Progressive Warmup | ✅ 완료 | vs Dual COCO+MPII (44.91mm) |
+| 1 | Progressive Warmup | ✅ 완료 | vs Dual COCO+MPII (43.26mm) |
 | 2 | Ensemble Teacher | ❌ 미구현 | vs Dual |
 | 3 | KL Divergence | ❌ 미구현 | vs Dual |
 | 4 | One-way KD | ❌ 미구현 | vs Dual |
 | **5-A** | HeatmapDecoder 최적화 | ❌ 미구현 | - |
-| **5-B** | **2D→3D Lifting** | **✅ 완료 (190mm - 실패)** | **vs Single COCO (42.07mm)** |
-| **5-C** | **Lifting + Backbone Fusion** | **❌ 미구현** | **vs 5-B** |
+| **5-B** | **2D→3D Lifting** | **✅ 완료 (190mm - 실패)** | **vs Single COCO (41.37mm)** |
+| **5-C** | **Lifting + Backbone Fusion** | **✅ 완료** | **vs 5-B** |
 | **5-D** | **Attention Lifting** | **❌ 미구현** | **vs 5-C** |
 | 6 | Backbone Feature Fusion (기존 구조) | ❌ 미구현 | vs Single/Dual |
 
 ---
 
-### Phase 5-C: Lifting + Backbone Feature Fusion (계획)
+### Phase 5-C: Lifting + Backbone Feature Fusion (✅ 구현 완료)
 
 **목적**: Lifting Head에 Backbone feature를 추가하여 depth cues 활용
 
@@ -368,7 +360,7 @@ Backbone feat [2048, 8, 8]
 Heatmap [16, 47, 47]          Z_backbone [256]
        ↓ (soft_argmax)             │
 2D [32] + conf [16]                │ (depth cues!)
-       │                           │
+       │  ← gradient 차단           │  ← gradient 흐름
        └────── Concat ─────────────┘
                   ↓
        [32 + 16 + 256 + 9] = 313
@@ -376,15 +368,16 @@ Heatmap [16, 47, 47]          Z_backbone [256]
          Lifting Network → 3D
 ```
 
-**핵심 가설**:
-- Backbone feature는 texture/context에서 depth 정보를 implicit하게 인코딩
-- Heatmap (2D 위치) + Backbone (depth) → 상호 보완
+**핵심 설계**:
+- `coords_2d.detach()`: Heatmap은 2D 위치만 학습 (3D loss 차단)
+- `z_backbone`: Backbone은 depth cues 학습 (3D loss 흐름)
+- 역할 분리 (Role Separation)
 
-**구현 파일** (예정):
-- Head: `custom_egopose_lifting_backbone_fusion_head.py`
-- Config: `HMD_xregopose_single_lifting_backbone_config.py`
+**구현 파일**:
+- Head: `custom_egopose_lifting_backbone_fusion_head.py` ✅
+- Config: `HMD_xregopose_lifting_backbone_fusion_config.py` ✅
 
-**비교 대상**: Phase 5-B Lifting 결과 (not Single COCO directly)
+**비교 대상**: Phase 5-B Lifting (190mm) → 개선 기대
 
 ---
 
@@ -482,6 +475,30 @@ HMD_xregopose_h5cache_coco_mpii_{variant}_config.py
 | kldiv | Phase 3: KL divergence |
 | full | 전체 조합 |
 | lifting | Phase 5-B: 2D→3D lifting |
+| **_small** | Smoke test config (1 epoch, no checkpoint) |
+
+---
+
+## Smoke Test 규칙
+
+**목적**: 새 구현체의 훈련 파이프라인이 정상 동작하는지 빠르게 확인
+
+**Config 설정**:
+```python
+max_epochs = 1              # 1 epoch만
+val_interval = 1            # validation 1회
+checkpoint = None           # 가중치 저장 안함
+visualization = False       # 시각화 비활성화
+dataset = small cache       # train_small_1k.h5 / val_small_500.h5
+```
+
+**확인 사항**:
+- [ ] Forward pass 정상 동작
+- [ ] Loss 계산 정상
+- [ ] Backward pass / gradient 흐름
+- [ ] Validation loop 정상 동작
+
+**주의**: Smoke test 결과(MPJPE)는 성능 평가에 사용하지 않음
 
 ---
 
@@ -533,10 +550,12 @@ HMD_xregopose_h5cache_coco_mpii_{variant}_config.py
   - [x] **Head 생성: `custom_egopose_lifting_head.py`**
   - [x] **Config 생성: `HMD_xregopose_single_lifting_config.py`**
   - [x] **실험 결과: 190mm (실패 - depth 정보 부족)**
-- [ ] Phase 1 실험 실행 (비교: Dual 44.91mm)
-- [ ] **Phase 5-C: Lifting + Backbone Fusion 구현**
-  - [ ] Head 생성: `custom_egopose_lifting_backbone_fusion_head.py`
-  - [ ] Config 생성: `HMD_xregopose_single_lifting_backbone_config.py`
+- [ ] Phase 1 실험 실행 (비교: Dual 43.26mm)
+- [x] **Phase 5-C: Lifting + Backbone Fusion 구현**
+  - [x] Head 생성: `custom_egopose_lifting_backbone_fusion_head.py`
+  - [x] Config 생성: `HMD_xregopose_lifting_backbone_fusion_config.py`
+  - [x] Smoke test 완료 (2026-01-21): 훈련 파이프라인 정상 동작 확인
+  - [ ] Full dataset 훈련 (목표: < 41.37mm)
 - [ ] **Phase 5-D: Attention Lifting 구현**
   - [ ] Head 생성: `custom_egopose_attention_lifting_head.py`
   - [ ] Config 생성: `HMD_xregopose_attention_lifting_config.py`

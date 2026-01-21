@@ -123,35 +123,35 @@ hmd_info = [
 ### Custom Configs
 Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for details):
 
-| Config | Head Type | 특징 |
-|--------|-----------|------|
-| `HMD_xregopose_h5cache_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | Baseline (Dual backbone, H5 캐시) |
-| `HMD_xregopose_h5cache_single_coco_config.py` | `CustomxRegoposeBaselinel1` | Single backbone + COCO pretrained |
-| `HMD_xregopose_h5cache_coco_mpii_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | COCO+MPII dual backbone |
-| `HMD_xregopose_h5cache_coco_mpii_warmup_config.py` | `CustomxRegoposeBaselinel1_multi_backbone_v2` | **Progressive Warmup** for mutual learning |
-| `HMD_xregopose_h5cache_augmented_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | + Data Augmentation + Deeper Decoder |
-| `HMD_xregopose_confidence_weighted_config.py` | `ConfidenceWeightedHMDHead` | Confidence-weighted HMD Fusion |
-| `HMD_xregopose_single_coco_full_config.py` | `CustomxRegoposeBaselinel1` | Single COCO, full dataset training |
+| Config | Head Type | 특징 | 결과 |
+|--------|-----------|------|------|
+| `HMD_xregopose_single_coco_full_config.py` | `CustomxRegoposeBaselinel1` | **Single COCO baseline** | **41.37mm 🏆** |
+| `HMD_xregopose_h5cache_coco_mpii_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | Dual COCO+MPII | 43.26mm |
+| `HMD_xregopose_h5cache_coco_mpii_warmup_10ep_config.py` | `CustomxRegoposeBaselinel1_multi_backbone_v2` | Dual + Progressive Warmup | 45.93mm |
+| `HMD_xregopose_single_lifting_config.py` | `CustomEgoposeLiftingHead` | Soft-argmax 2D→3D Lifting | 45.92mm |
+| `HMD_xregopose_lifting_backbone_fusion_config.py` | `CustomEgoposeLiftingBackboneFusionHead` | **Lifting + Backbone Fusion** | 실험 대기 |
 
-### Dual Backbone Mutual Learning (실험 진행중)
+### 실험 결과 요약 (2026-01-21)
 
-**현재 결과** (2026-01-20):
-| Model | Full Body MPJPE | Wandb Project |
-|-------|-----------------|---------------|
-| Single COCO | **42.07mm** | `mmpose_xregopose_single_coco` |
-| Dual COCO+MPII | 44.91mm | `mmpose_xregopose_coco_mpii` |
+| Model | Full Body MPJPE | vs Baseline |
+|-------|-----------------|-------------|
+| **Single COCO (Baseline)** | **41.37mm** 🏆 | - |
+| Dual COCO+MPII | 43.26mm | +1.89mm ❌ |
+| Dual Warmup v2 | 45.93mm | +4.56mm ❌ |
+| Single Lifting | 45.92mm | +4.55mm ❌ |
 
-**문제**: Dual backbone mutual learning이 Single보다 2.84mm 나쁨
+**목표**: 41mm 이하 달성
 
-**개선 전략** (see `my_code/custom_config/DUAL_BACKBONE_IMPROVEMENT_IDEAS.md`):
-1. **Progressive Warmup** (v2, 구현완료): 초기 epoch에서 mutual learning 제외
-2. **Ensemble Teacher** (v3, 미구현): Confidence 기반 앙상블
-3. **Heatmap KL Divergence** (v4, 미구현): Soft target으로 knowledge transfer
+**다음 실험**: Lifting + Backbone Fusion (역할 분리: 2D coords → gradient 차단, backbone → depth cues)
 
-**관련 문서**:
-- `my_code/custom_config/DUAL_BACKBONE_IMPROVEMENT_IDEAS.md` - 개선 아이디어
-- `my_code/custom_config/DUAL_BACKBONE_EXPERIMENT_PLAN.md` - 실험 계획 및 모델 구조
-- `my_code/custom_config/TRAINING_PLAN.md` - 훈련 실행 계획
+### 문서 구조
+
+| 파일 | 용도 |
+|------|------|
+| `EXPERIMENT_RESULTS.md` | **실험 결과 및 분석** (epoch별 상세, 종합 분석) |
+| `DUAL_BACKBONE_EXPERIMENT_PLAN.md` | 실험 계획 및 Phase별 구현 상태 |
+| `DUAL_BACKBONE_IMPROVEMENT_IDEAS.md` | 개선 아이디어 (Attention Lifting 등) |
+| `README.md` | Config 설명 |
 
 ## Key Files Reference
 
@@ -163,10 +163,20 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | Default runtime | `configs/_base_/default_runtime.py` |
 | H5 cache builder (annotation) | `tools/dataset_converters/build_egopose_h5cache.py` |
 | H5 cache builder (with images) | `tools/dataset_converters/build_egopose_h5cache_with_images.py` |
+| **실험 결과** | `my_code/custom_config/EXPERIMENT_RESULTS.md` |
+| **실험 계획** | `my_code/custom_config/DUAL_BACKBONE_EXPERIMENT_PLAN.md` |
+| **개선 아이디어** | `my_code/custom_config/DUAL_BACKBONE_IMPROVEMENT_IDEAS.md` |
 | Config README | `my_code/custom_config/README.md` |
-| Confidence-weighted head | `mmpose/models/heads/heatmap_heads/custom_egopose_confidence_weighted_head.py` |
-| **Dual backbone head (v2 warmup)** | `mmpose/models/heads/heatmap_heads/custom_egopose_baselinel1_head_multi_backbone_v2.py` |
-| **Mutual learning warmup hook** | `mmpose/engine/hooks/mutual_learning_hook.py` |
+
+### Head 파일
+
+| Head | File | 용도 |
+|------|------|------|
+| `CustomxRegoposeBaselinel1` | `custom_egopose_baselinel1_head.py` | Single backbone baseline (🏆 41.37mm) |
+| `CustomxRegoposeBaselinel1_multi_backbone` | `custom_egopose_baselinel1_head_multi_backbone.py` | Dual backbone |
+| `CustomxRegoposeBaselinel1_multi_backbone_v2` | `custom_egopose_baselinel1_head_multi_backbone_v2.py` | Dual + Warmup |
+| `CustomEgoposeLiftingHead` | `custom_egopose_lifting_head.py` | Soft-argmax 2D→3D Lifting |
+| `CustomEgoposeLiftingBackboneFusionHead` | `custom_egopose_lifting_backbone_fusion_head.py` | **Lifting + Backbone Fusion (신규)** |
 
 ## External Documentation
 

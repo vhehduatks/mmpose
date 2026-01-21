@@ -252,29 +252,10 @@ class AttentionFusion(nn.Module):
 
 ---
 
-## 현재 실험 결과 (Updated: 2026-01-20)
-
-### Wandb 프로젝트별 결과
-
-**mmpose_xregopose_single_coco:**
-| Run | State | Full Body | Upper Body | Lower Body |
-|-----|-------|-----------|------------|------------|
-| fresh-haze-6 | running | **42.07mm** | 29.15mm | 55.00mm |
-
-**mmpose_xregopose_coco_mpii:**
-| Run | State | Full Body | Upper Body | Lower Body |
-|-----|-------|-----------|------------|------------|
-| full셋 test로 val | finished | 44.91mm | 30.56mm | 59.26mm |
-
-### 핵심 비교
-
-| Model | Full Body MPJPE | 차이 | 비고 |
-|-------|-----------------|------|------|
-| **Single (COCO)** | **42.07mm** | - | 🏆 현재 최고 |
-| Dual (COCO+MPII) | 44.91mm | +2.84mm | mutual learning 적용 |
-
-> **문제: Mutual learning이 오히려 성능을 2.84mm 악화시킴**
-> 목표: Dual backbone mutual learning으로 Single (42mm) 이하 달성
+> **참고**: 실험 결과는 `EXPERIMENT_RESULTS.md` 참조
+> - Single COCO Baseline: **41.37mm** 🏆
+> - Dual COCO+MPII: 43.26mm (+1.89mm)
+> - 목표: 41mm 이하 달성
 
 ---
 
