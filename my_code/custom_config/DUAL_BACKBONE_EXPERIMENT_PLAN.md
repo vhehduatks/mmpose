@@ -348,8 +348,9 @@ Backbone feat → GAP → FC → Context [256]
 | 3 | KL Divergence | ❌ 미구현 | vs Dual |
 | 4 | One-way KD | ❌ 미구현 | vs Dual |
 | **5-A** | HeatmapDecoder 최적화 | ❌ 미구현 | - |
-| **5-B** | **2D→3D Lifting** | **✅ 완료** | **vs Single COCO (42.07mm)** |
-| **5-C** | **Lifting + Backbone Fusion** | **❌ 미구현** | **vs 5-B Lifting** |
+| **5-B** | **2D→3D Lifting** | **✅ 완료 (190mm - 실패)** | **vs Single COCO (42.07mm)** |
+| **5-C** | **Lifting + Backbone Fusion** | **❌ 미구현** | **vs 5-B** |
+| **5-D** | **Attention Lifting** | **❌ 미구현** | **vs 5-C** |
 | 6 | Backbone Feature Fusion (기존 구조) | ❌ 미구현 | vs Single/Dual |
 
 ---
@@ -384,6 +385,48 @@ Heatmap [16, 47, 47]          Z_backbone [256]
 - Config: `HMD_xregopose_single_lifting_backbone_config.py`
 
 **비교 대상**: Phase 5-B Lifting 결과 (not Single COCO directly)
+
+---
+
+### Phase 5-D: Attention 기반 Lifting (계획)
+
+**목적**: Cross-Attention으로 각 관절이 backbone에서 필요한 depth 정보를 선택적으로 쿼리
+
+**구조**:
+```
+2D coords [16, 2] → Joint queries [16, D]
+                          ↓
+Backbone [2048,8,8] → Spatial tokens [64, D]
+                          ↓
+              Cross-Attention (Q: joints, K/V: backbone)
+                          ↓
+              Depth-aware joints [16, D]
+                          ↓
+                     + HMD → 3D Pose
+```
+
+**핵심 설계**:
+```python
+# Gradient 흐름 설계
+coords_2d = soft_argmax(heatmaps).detach()  # 2D: gradient 차단
+joint_q = embed(coords_2d)                   # Query
+
+backbone_kv = backbone_proj(backbone_feat)   # K/V: gradient 흐름!
+
+depth_joints = cross_attention(joint_q, backbone_kv, backbone_kv)
+pose_3d = output(depth_joints)
+```
+
+**장점**:
+1. 각 관절이 **필요한 spatial 위치에서 depth 쿼리**
+2. `attn_weights`로 **어느 위치 참조했는지 해석 가능**
+3. **역할 분리**: 2D coords=위치(Query), Backbone=depth(Key/Value)
+
+**구현 파일** (예정):
+- Head: `custom_egopose_attention_lifting_head.py`
+- Config: `HMD_xregopose_attention_lifting_config.py`
+
+**비교 대상**: Phase 5-C Backbone Fusion 결과
 
 **추천 실험 순서**:
 1. Phase 1 (Warmup) - 이미 구현, 실험 진행
@@ -489,10 +532,12 @@ HMD_xregopose_h5cache_coco_mpii_{variant}_config.py
 - [x] **Phase 5-B: 2D→3D Lifting 구현 (Single backbone용)**
   - [x] **Head 생성: `custom_egopose_lifting_head.py`**
   - [x] **Config 생성: `HMD_xregopose_single_lifting_config.py`**
+  - [x] **실험 결과: 190mm (실패 - depth 정보 부족)**
 - [ ] Phase 1 실험 실행 (비교: Dual 44.91mm)
-- [ ] **Phase 5-B 실험 실행 (비교: Single COCO 42.07mm)**
 - [ ] **Phase 5-C: Lifting + Backbone Fusion 구현**
   - [ ] Head 생성: `custom_egopose_lifting_backbone_fusion_head.py`
   - [ ] Config 생성: `HMD_xregopose_single_lifting_backbone_config.py`
-- [ ] Phase 5-C 실험 실행 (비교: Phase 5-B Lifting)
+- [ ] **Phase 5-D: Attention Lifting 구현**
+  - [ ] Head 생성: `custom_egopose_attention_lifting_head.py`
+  - [ ] Config 생성: `HMD_xregopose_attention_lifting_config.py`
 - [ ] Phase 2, 3 구현 (필요시)
