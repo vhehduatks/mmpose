@@ -296,7 +296,10 @@ class CustomPose3dLocalVisualizer_xregopose(PoseLocalVisualizer):
 		
 		if 'keypoint_3d' in pred_instances:
 			keypoints = pred_instances.get('keypoint_3d', pred_instances.keypoint_3d)
-			keypoints = keypoints.cpu().numpy().copy()
+			if hasattr(keypoints, 'cpu'):
+				keypoints = keypoints.cpu().numpy().copy()
+			elif isinstance(keypoints, np.ndarray):
+				keypoints = keypoints.copy()
 			if 'keypoint_scores' in pred_instances:
 				# scores = pred_instances.keypoint_scores # 2d heatmap의 max 값을 score로 직접적으로 사용하므로 3d 에 사용하면 안됨 
 				scores = np.ones(keypoints.shape[:-1])

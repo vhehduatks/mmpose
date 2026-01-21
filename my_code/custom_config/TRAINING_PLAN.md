@@ -134,21 +134,32 @@ python tools/train.py my_code/custom_config/HMD_xregopose_single_lifting_config.
 
 ## 결과 기록
 
-### 실험 1: Progressive Warmup
+### 실험 1: Progressive Warmup (10 epoch version)
 
 | Metric | Value |
 |--------|-------|
-| Full Body MPJPE | |
-| Upper Body MPJPE | |
-| Lower Body MPJPE | |
-| Best Epoch | |
-| Wandb Run | |
+| Full Body MPJPE | **45.93mm** |
+| Upper Body MPJPE | 31.07mm |
+| Lower Body MPJPE | 60.79mm |
+| Best Epoch | 9 |
+| Wandb Run | `mmpose_xregopose_coco_mpii_warmup_10ep` |
+
+**Warmup 스케줄 (10 epoch)**:
+- Epoch 0-1: mutual_weight = 0.0 (warmup)
+- Epoch 2-6: mutual_weight = 0.0 → 0.8 (ramp-up)
+- Epoch 7-9: mutual_weight = 1.0 (full mutual learning)
 
 **관찰**:
--
+- Epoch 5 (0.6 weight): 48.67mm - 초반 성능 좋음
+- Epoch 6-7 (0.8-1.0 weight): 49-50mm - 약간 후퇴
+- Epoch 8-9 (1.0 weight): 45.93mm - 수렴 후 최고 성능
+- Epoch 10: 49.47mm - overfitting 징후
 
 **결론**:
--
+- Warmup v2 (45.93mm) vs 기존 Dual (43.26mm): **2.67mm 나쁨**
+- Warmup v2 (45.93mm) vs Single COCO (42.07mm): **3.86mm 나쁨**
+- Progressive warmup만으로는 충분하지 않음
+- 다른 접근법 필요 (Ensemble Teacher, KL Divergence 등)
 
 ---
 

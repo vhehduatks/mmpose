@@ -197,11 +197,20 @@ class CustomxRegoposeMetric(BaseMetric):
 		batch_actions = []
 
 		for pred_, gt_ in zip(preds,gts):
-			pred_batch_3d_keypoints.append(pred_['keypoint3d'])
-			gt_batch_keypoint_3d.append(gt_['keypoint3d'])
+			kpt3d = pred_['keypoint3d']
+			# Handle both numpy arrays and torch tensors
+			if isinstance(kpt3d, np.ndarray):
+				kpt3d = torch.from_numpy(kpt3d)
+			pred_batch_3d_keypoints.append(kpt3d)
+
+			gt_kpt3d = gt_['keypoint3d']
+			if isinstance(gt_kpt3d, np.ndarray):
+				gt_kpt3d = torch.from_numpy(gt_kpt3d)
+			gt_batch_keypoint_3d.append(gt_kpt3d)
+
 			if self.use_action:
 				batch_actions.append(gt_['action'])
-		
+
 		pred_batch_3d_keypoints = torch.stack(pred_batch_3d_keypoints).squeeze()
 		gt_batch_keypoint_3d = torch.stack(gt_batch_keypoint_3d).squeeze()
 

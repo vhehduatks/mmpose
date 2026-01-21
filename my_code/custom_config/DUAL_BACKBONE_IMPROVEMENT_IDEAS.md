@@ -455,6 +455,140 @@ Backbone feat [1024, 16, 16]  (from earlier stage)
 
 ---
 
+## 제안: Lifting + Backbone Feature Fusion (구현 예정)
+
+### 배경
+
+**구현 완료된 Lifting Head** (`CustomEgoposeLiftingHead`):
+```
+Backbone → Heatmap → soft_argmax → 2D coords [16,2] + conf [16]
+                                        ↓
+                              [2D: 32] + [conf: 16] + [HMD: 9] = 57
+                                        ↓
+                              Lifting Network (4M params)
+                                        ↓
+                                   3D Pose
+```
+
+**문제**: 여전히 **Backbone feature의 depth cues를 활용하지 못함**
+- soft_argmax는 2D 위치만 추출 (depth 정보 없음)
+- Lifting network 입력에 spatial/context 정보 부족
+
+### 제안 구조: Lifting + Backbone Fusion
+
+```
+Backbone feat [2048, 8, 8]
+       │
+       ├──────────────────────────────────┐
+       │                                  │
+       ↓ (Deconv)                         ↓ (GAP → FC)
+Heatmap [16, 47, 47]                Z_backbone [256]
+       │                                  │
+       ↓ (soft_argmax)                    │ (depth/context cues)
+2D coords [16,2] + conf [16]              │
+       │                                  │
+       └────────── Concat ────────────────┘
+                     ↓
+         [32 + 16 + 256 + 9(HMD)] = 313
+                     ↓
+              Lifting Network
+                     ↓
+                3D Pose [16, 3]
+```
+
+### 역할 분리 (명확!)
+
+| Component | 차원 | 역할 | 정보 유형 |
+|-----------|------|------|----------|
+| 2D coords | [16, 2] = 32 | 정확한 관절 위치 | x, y (sub-pixel) |
+| confidence | [16] | 2D 예측 신뢰도 | 가려짐/불확실성 |
+| **Z_backbone** | **[256]** | **depth/texture/context** | **3D 단서** |
+| HMD info | [9] | 머리/손 3D 위치 | absolute reference |
+
+### 핵심 가설
+
+> **Backbone feature는 3D 정보를 implicit하게 인코딩하고 있다**
+>
+> - Texture gradients → depth cues
+> - Scene context → scale/distance 추정
+> - Body part relationships → 3D structure
+>
+> Heatmap은 2D 위치에 집중, Backbone은 3D context 제공 → **상호 보완**
+
+### 학술적 근거
+
+1. **[Lifting by Image](https://arxiv.org/abs/2312.15636)**:
+   - "이미지의 semantic/texture 정보가 더 정확한 3D lifting에 기여"
+   - 2D pose만으로는 depth ambiguity 해결 불가
+
+2. **[Multi-Feature Fusion](https://www.sciencedirect.com/science/article/abs/pii/S1047320324001159)**:
+   - "2D prior + backbone semantic features 융합이 효과적"
+
+3. **Depth from single image 연구들**:
+   - CNN은 texture gradients, occlusion 등에서 depth 추론 가능
+   - Backbone feature에 이미 depth cues 존재
+
+### 구현 계획
+
+**파일**: `custom_egopose_lifting_backbone_fusion_head.py`
+
+```python
+class LiftingBackboneFusionHead(CustomEgoposeLiftingHead):
+    def __init__(self, ..., backbone_latent_dim=256):
+        super().__init__(...)
+
+        # Backbone feature → latent
+        self.backbone_pool = nn.AdaptiveAvgPool2d(1)
+        self.backbone_fc = nn.Sequential(
+            nn.Linear(2048, 512),
+            nn.ReLU(),
+            nn.Linear(512, backbone_latent_dim)
+        )
+
+        # Lifting network 입력 크기 증가
+        # 기존: 32 + 16 + 9 = 57
+        # 변경: 32 + 16 + 256 + 9 = 313
+        self.lifting_network = LiftingNetwork(
+            input_dim=32 + 16 + backbone_latent_dim + 9,
+            ...
+        )
+
+    def forward_lifting(self, heatmaps, backbone_feat, hmd_info):
+        # 2D coords from heatmap
+        coords_2d, confidence = soft_argmax_2d(heatmaps)
+
+        # Backbone latent (depth cues)
+        z_backbone = self.backbone_pool(backbone_feat).flatten(1)
+        z_backbone = self.backbone_fc(z_backbone)
+
+        # Lifting with all features
+        pose_3d = self.lifting_network(coords_2d, confidence, z_backbone, hmd_info)
+
+        return pose_3d, coords_2d, confidence
+```
+
+### 실험 계획
+
+| 실험 | 구성 | 비교 대상 |
+|------|------|----------|
+| Lifting (현재) | 2D + conf + HMD | Single COCO (42.07mm) |
+| **Lifting + Backbone** | 2D + conf + **Z_backbone** + HMD | Lifting 결과 |
+
+**성공 기준**: Lifting 대비 MPJPE 개선
+
+### 파라미터 비교
+
+| 모델 | Head Params | 입력 차원 |
+|------|-------------|----------|
+| 기존 (Encoder/Decoder) | ~61M | Z[64] + HMD[64] |
+| Lifting (현재) | ~13M | 2D[32] + conf[16] + HMD[9] = 57 |
+| **Lifting + Backbone** | **~14M** | **2D[32] + conf[16] + backbone[256] + HMD[9] = 313** |
+
+> Backbone fusion 추가해도 파라미터 증가 미미 (~1M)
+> 하지만 depth cues로 인한 성능 향상 기대
+
+---
+
 ## 구조적 문제: Heatmap → Latent 압축
 
 ### 현재 파이프라인

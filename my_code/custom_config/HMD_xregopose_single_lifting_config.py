@@ -61,11 +61,17 @@ backend_args = dict(backend='local')
 
 train_cfg = dict(
     type='EpochBasedTrainLoop',
-    max_epochs=15,
+    max_epochs=10,
     val_interval=1,
 )
 val_cfg = dict()
 test_cfg = dict()
+
+# Enable find_unused_parameters for distributed training
+model_wrapper_cfg = dict(
+    type='MMDistributedDataParallel',
+    find_unused_parameters=True
+)
 
 optim_wrapper = dict(
     optimizer=dict(lr=0.0005, type='AdamW'),
@@ -75,16 +81,16 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=15,
-        milestones=[8, 12],
-        gamma=0.1,
+        end=10,
+        milestones=[4, 7],
+        gamma=0.5,
         by_epoch=True
     ),
 ]
 
 default_hooks = dict(
     checkpoint=dict(
-        interval=2,
+        interval=1,
         max_keep_ckpts=3,
         rule='less',
         save_best='xregopose/Full Body_All_mpjpe',

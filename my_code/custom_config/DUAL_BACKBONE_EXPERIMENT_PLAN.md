@@ -349,7 +349,41 @@ Backbone feat → GAP → FC → Context [256]
 | 4 | One-way KD | ❌ 미구현 | vs Dual |
 | **5-A** | HeatmapDecoder 최적화 | ❌ 미구현 | - |
 | **5-B** | **2D→3D Lifting** | **✅ 완료** | **vs Single COCO (42.07mm)** |
-| **6** | **Backbone Feature Fusion** | **❌ 미구현** | vs Single/Dual |
+| **5-C** | **Lifting + Backbone Fusion** | **❌ 미구현** | **vs 5-B Lifting** |
+| 6 | Backbone Feature Fusion (기존 구조) | ❌ 미구현 | vs Single/Dual |
+
+---
+
+### Phase 5-C: Lifting + Backbone Feature Fusion (계획)
+
+**목적**: Lifting Head에 Backbone feature를 추가하여 depth cues 활용
+
+**구조**:
+```
+Backbone feat [2048, 8, 8]
+       │
+       ├───────────────────────────┐
+       ↓ (Deconv)                  ↓ (GAP → FC)
+Heatmap [16, 47, 47]          Z_backbone [256]
+       ↓ (soft_argmax)             │
+2D [32] + conf [16]                │ (depth cues!)
+       │                           │
+       └────── Concat ─────────────┘
+                  ↓
+       [32 + 16 + 256 + 9] = 313
+                  ↓
+         Lifting Network → 3D
+```
+
+**핵심 가설**:
+- Backbone feature는 texture/context에서 depth 정보를 implicit하게 인코딩
+- Heatmap (2D 위치) + Backbone (depth) → 상호 보완
+
+**구현 파일** (예정):
+- Head: `custom_egopose_lifting_backbone_fusion_head.py`
+- Config: `HMD_xregopose_single_lifting_backbone_config.py`
+
+**비교 대상**: Phase 5-B Lifting 결과 (not Single COCO directly)
 
 **추천 실험 순서**:
 1. Phase 1 (Warmup) - 이미 구현, 실험 진행
@@ -457,6 +491,8 @@ HMD_xregopose_h5cache_coco_mpii_{variant}_config.py
   - [x] **Config 생성: `HMD_xregopose_single_lifting_config.py`**
 - [ ] Phase 1 실험 실행 (비교: Dual 44.91mm)
 - [ ] **Phase 5-B 실험 실행 (비교: Single COCO 42.07mm)**
-- [ ] Phase 2 구현 및 실험
-- [ ] Phase 3 구현 및 실험
-- [ ] Phase 6 Backbone Feature Fusion
+- [ ] **Phase 5-C: Lifting + Backbone Fusion 구현**
+  - [ ] Head 생성: `custom_egopose_lifting_backbone_fusion_head.py`
+  - [ ] Config 생성: `HMD_xregopose_single_lifting_backbone_config.py`
+- [ ] Phase 5-C 실험 실행 (비교: Phase 5-B Lifting)
+- [ ] Phase 2, 3 구현 (필요시)
