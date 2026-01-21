@@ -18,7 +18,7 @@
 | 1 | Dual COCO+MPII | `HMD_xregopose_h5cache_coco_mpii_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | 43.26 | 8 | ❌ |
 | 2 | Dual Warmup v2 | `HMD_xregopose_h5cache_coco_mpii_warmup_10ep_config.py` | `CustomxRegoposeBaselinel1_multi_backbone_v2` | 45.93 | 9 | ❌ |
 | 3 | Single Lifting | `HMD_xregopose_single_lifting_config.py` | `CustomEgoposeLiftingHead` | 45.92 | 9 | ❌ |
-| 4 | Lifting + Backbone Fusion | `HMD_xregopose_lifting_backbone_fusion_config.py` | `CustomEgoposeLiftingBackboneFusionHead` | ? | - | 🔄 Ready |
+| 4 | Lifting + Backbone Fusion | `HMD_xregopose_lifting_backbone_fusion_config.py` | `CustomEgoposeLiftingBackboneFusionHead` | 105.18 | 5 | ❌ (7ep 중단) |
 
 ### 부위별 결과 상세
 

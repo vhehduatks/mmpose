@@ -614,6 +614,10 @@ def compute_error(pred, gt, return_mean=True, mode='baseline', protocol=None, _S
 	pred = pred.numpy()
 	gt = gt.numpy()
 	if mode == 'baseline' or mode == 'sequential':
+		# Shape validation
+		assert pred.ndim == 2, f"Expected 2D pred array, got {pred.ndim}D with shape {pred.shape}"
+		assert gt.ndim == 2, f"Expected 2D gt array, got {gt.ndim}D with shape {gt.shape}"
+
 		if pred.shape[1] != 3:
 			pred = np.transpose(pred, [1, 0])
 

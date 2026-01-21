@@ -99,9 +99,11 @@ assert pred['keypoint3d'].shape[-2:] == (16, 3), \
 
 | # | 파일 | 문제 | 우선순위 | 상태 |
 |---|------|------|----------|------|
-| 1 | `custom_xr_egopose_metric.py:214-215` | squeeze() 버그 | Critical | ⬜ |
-| 2 | `mo2cap2_evaluate.py:616-621` | transpose 취약 | Medium | ⬜ |
-| 3 | `custom_xr_egopose_metric.py` | shape 검증 부재 | Low | ⬜ |
+| 1 | `custom_xr_egopose_metric.py:214-215` | squeeze() 버그 | Critical | ✅ 수정완료 |
+| 2 | `mo2cap2_evaluate.py:616-621` | transpose 취약 | Medium | ✅ 수정완료 |
+| 3 | `custom_xr_egopose_metric.py` | shape 검증 부재 | Low | ✅ 수정완료 |
+
+> 수정일: 2026-01-21
 
 ---
 

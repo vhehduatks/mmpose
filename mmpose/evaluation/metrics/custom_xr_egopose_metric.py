@@ -145,6 +145,9 @@ class CustomxRegoposeMetric(BaseMetric):
 
 			## 3d baseline
 			pred['keypoint3d'] = data_sample['pred_instances']['keypoint_3d']
+			# Shape validation
+			assert pred['keypoint3d'].shape[-2:] == (16, 3), \
+				f"Expected pred keypoint3d shape [..., 16, 3], got {pred['keypoint3d'].shape}"
 			##
 
 
@@ -166,6 +169,9 @@ class CustomxRegoposeMetric(BaseMetric):
 				# gt['raw_ann_info'] = anns if isinstance(anns, list) else [anns]
 			## 3d baseline
 			gt['keypoint3d'] = data_sample['gt_instance_labels']['keypoint3d']
+			# Shape validation
+			assert gt['keypoint3d'].shape[-2:] == (16, 3), \
+				f"Expected gt keypoint3d shape [..., 16, 3], got {gt['keypoint3d'].shape}"
 			##
 
 			## mo2cap2
@@ -211,8 +217,9 @@ class CustomxRegoposeMetric(BaseMetric):
 			if self.use_action:
 				batch_actions.append(gt_['action'])
 
-		pred_batch_3d_keypoints = torch.stack(pred_batch_3d_keypoints).squeeze()
-		gt_batch_keypoint_3d = torch.stack(gt_batch_keypoint_3d).squeeze()
+		# squeeze(dim=1)로 instance 차원만 제거 (N=1일 때 batch 차원 보존)
+		pred_batch_3d_keypoints = torch.stack(pred_batch_3d_keypoints).squeeze(dim=1)
+		gt_batch_keypoint_3d = torch.stack(gt_batch_keypoint_3d).squeeze(dim=1)
 
 		##
 
