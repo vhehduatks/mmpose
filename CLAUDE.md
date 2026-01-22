@@ -153,7 +153,7 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 |------|------|
 | `EXPERIMENT_RESULTS.md` | **실험 결과 및 분석** (epoch별 상세, 종합 분석) |
 | `DUAL_BACKBONE_EXPERIMENT_PLAN.md` | 실험 계획 및 Phase별 구현 상태 |
-| `DUAL_BACKBONE_IMPROVEMENT_IDEAS.md` | 개선 아이디어 (Attention Lifting, Backbone Fusion 등) |
+| `IMPROVEMENT_IDEAS.md` | 개선 아이디어 (EfficientDecoder, Attention Lifting 등) |
 | `SPATIAL_DEPTH_EXTRACTION_IDEAS.md` | 공간 정보 보존 Depth 추출 방법 (Grid Sampling 등) |
 | `PROBLEM.md` | 코드 수정 필요 사항 (Metric squeeze 버그 등) |
 | `README.md` | Config 설명 및 Smoke Test 규칙 |
@@ -170,7 +170,7 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | H5 cache builder (with images) | `tools/dataset_converters/build_egopose_h5cache_with_images.py` |
 | **실험 결과** | `my_code/custom_config/EXPERIMENT_RESULTS.md` |
 | **실험 계획** | `my_code/custom_config/DUAL_BACKBONE_EXPERIMENT_PLAN.md` |
-| **개선 아이디어** | `my_code/custom_config/DUAL_BACKBONE_IMPROVEMENT_IDEAS.md` |
+| **개선 아이디어** | `my_code/custom_config/IMPROVEMENT_IDEAS.md` |
 | **Spatial Depth 방법** | `my_code/custom_config/SPATIAL_DEPTH_EXTRACTION_IDEAS.md` |
 | **코드 수정 사항** | `my_code/custom_config/PROBLEM.md` |
 | Config README | `my_code/custom_config/README.md` |
