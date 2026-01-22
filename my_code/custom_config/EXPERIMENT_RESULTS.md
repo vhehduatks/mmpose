@@ -1,6 +1,6 @@
 # EgoPose 3D 실험 결과 및 분석
 
-> 최종 업데이트: 2026-01-21
+> 최종 업데이트: 2026-01-22
 
 ## 목표
 
@@ -19,6 +19,7 @@
 | 2 | Dual Warmup v2 | `HMD_xregopose_h5cache_coco_mpii_warmup_10ep_config.py` | `CustomxRegoposeBaselinel1_multi_backbone_v2` | 45.93 | 9 | ❌ |
 | 3 | Single Lifting | `HMD_xregopose_single_lifting_config.py` | `CustomEgoposeLiftingHead` | 45.92 | 9 | ❌ |
 | 4 | Lifting + Backbone Fusion | `HMD_xregopose_lifting_backbone_fusion_config.py` | `CustomEgoposeLiftingBackboneFusionHead` | 105.18 | 5 | ❌ (7ep 중단) |
+| 5 | EfficientHeatmapDecoder | `HMD_xregopose_efficient_decoder_full_config.py` | `CustomxRegoposeBaselinel1` | 45.06 | 8 | ❌ (param 효율화) |
 
 ### 부위별 결과 상세
 
@@ -28,6 +29,7 @@
 | Dual COCO+MPII | 43.26mm | 30.03mm | 56.48mm | 8 |
 | Dual Warmup v2 | 45.93mm | 31.07mm | 60.79mm | 9 |
 | Single Lifting | 45.92mm | 33.91mm | 57.93mm | 9 |
+| EfficientHeatmapDecoder | 45.06mm | 30.54mm | 59.58mm | 8 |
 
 ### Baseline 대비 비교
 
@@ -37,6 +39,7 @@
 | Dual COCO+MPII | 43.26mm | +1.89mm ❌ | mutual learning 악화 |
 | Dual Warmup v2 | 45.93mm | +4.56mm ❌ | warmup도 효과 없음 |
 | Single Lifting | 45.92mm | +4.55mm ❌ | depth 정보 부족 |
+| EfficientHeatmapDecoder | 45.06mm | +3.69mm ❌ | 96% param 절감, 성능 하락 |
 
 ---
 
@@ -230,7 +233,73 @@ pose_3d = lifting_network(coords_2d_detached, confidence, z_backbone, hmd_info)
 - Backbone: 3D depth cues 학습 (3D loss만)
 - 역할 분리로 학습 안정화 기대
 
-**상태**: 🔄 구현 완료, 실험 대기
+**상태**: ❌ 실패 (105.18mm, 7ep 중단)
+
+---
+
+### 실험 5: EfficientHeatmapDecoder (파라미터 효율화)
+
+**Config**: `HMD_xregopose_efficient_decoder_full_config.py`
+**Work Dir**: `work_dirs/HMD_xregopose_efficient_decoder_full`
+
+**가설**: FC-heavy HeatmapDecoder를 Conv-based로 교체하면 파라미터 효율화 (40M → 1.35M)
+
+**구조 비교**:
+```
+[Original HeatmapDecoder - 40M params]
+Z[64] → FC(64→47*47*16) → reshape → Heatmap[16,47,47]
+         ↑ 약 2.3M params (출력만)
+
+[EfficientHeatmapDecoder - 1.35M params]
+Z[64] → FC(64→256*6*6) → reshape → [256,6,6]
+                                       ↓
+                           ConvTranspose2d (256→128, 3×3, s2)
+                                       ↓ [128,12,12]
+                           ConvTranspose2d (128→64, 3×3, s2)
+                                       ↓ [64,24,24]
+                           ConvTranspose2d (64→16, 3×3, s2)
+                                       ↓ [16,48,48]
+                           AdaptiveAvgPool2d → [16,47,47]
+```
+
+**파라미터 비교**:
+| 항목 | Original | Efficient | 절감율 |
+|------|----------|-----------|--------|
+| HeatmapDecoder | 40.0M | 1.35M | **96.6%** |
+| 전체 Head | ~61M | ~22M | ~64% |
+
+**Epoch별 결과** (10 epoch):
+| Epoch | Full Body | Upper Body | Lower Body |
+|-------|-----------|------------|------------|
+| 1 | 82.52mm | 59.72mm | 105.32mm |
+| 2 | 58.12mm | 38.93mm | 77.31mm |
+| 3 | 52.10mm | 34.12mm | 70.08mm |
+| 4 | 49.93mm | 33.69mm | 66.17mm |
+| 5 | 47.93mm | 32.00mm | 63.86mm |
+| 6 | 48.82mm | 33.17mm | 64.48mm |
+| 7 | 46.90mm | 31.83mm | 61.97mm |
+| **8** | **45.06mm** | **30.54mm** | **59.58mm** |
+| 9 | 46.01mm | 31.50mm | 60.52mm |
+| 10 | 46.92mm | 31.77mm | 62.08mm |
+
+**분석**:
+- **파라미터 효율화 성공**: 96.6% 절감 (40M → 1.35M)
+- **성능 하락**: +3.69mm vs Baseline (41.37mm → 45.06mm)
+- **Trade-off**: 파라미터 30배 절감 vs 성능 9% 하락
+
+**실패 원인 분석**:
+1. **표현력 부족**: ConvTranspose2d의 점진적 업샘플링이 Z→Heatmap 직접 매핑보다 표현력 제한
+2. **Checkerboard Artifact**: ConvTranspose2d 고유의 artifact가 heatmap 품질 저하
+3. **정보 손실**: 6×6 → 47×47 업샘플링 과정에서 정보 손실
+
+**개선 아이디어**:
+- AdaIN (Adaptive Instance Normalization): Z가 각 레이어에 영향
+- PixelShuffle: Checkerboard artifact 방지
+- Joint-wise Generation: 관절별 독립 decoder
+
+**결론**:
+> EfficientHeatmapDecoder는 파라미터 효율화에는 성공했으나,
+> 성능 하락이 발생. 순수 효율화보다는 구조적 개선이 필요.
 
 ---
 
@@ -243,6 +312,8 @@ pose_3d = lifting_network(coords_2d_detached, confidence, z_backbone, hmd_info)
 | Dual Backbone + Mutual Learning | 43.26mm (+1.89mm) | COCO/MPII feature 분포 충돌 |
 | Progressive Warmup | 45.93mm (+4.56mm) | 근본적 mutual learning 문제 해결 불가 |
 | Pure 2D→3D Lifting | 45.92mm (+4.55mm) | Depth 정보 부재, 학습 불안정 |
+| Lifting + Backbone Fusion | 105.18mm (+63.81mm) | 역할 분리 실패, gradient 차단 부작용 |
+| EfficientHeatmapDecoder | 45.06mm (+3.69mm) | Conv 업샘플링 표현력 부족 |
 
 ### 핵심 인사이트
 
@@ -255,8 +326,9 @@ pose_3d = lifting_network(coords_2d_detached, confidence, z_backbone, hmd_info)
 
 | 우선순위 | 실험 | 기대 효과 |
 |----------|------|----------|
-| 1 | **Lifting + Backbone Fusion (5-C)** | 역할 분리로 depth 정보 활용 |
-| 2 | Attention Lifting (5-D) | 관절별 selective depth query |
+| 1 | AdaIN HeatmapDecoder | Z가 각 Conv layer에 영향, 표현력 향상 |
+| 2 | PixelShuffle Decoder | Checkerboard artifact 방지 |
+| 3 | Attention Lifting | 관절별 selective depth query |
 
 ---
 
@@ -266,8 +338,8 @@ pose_3d = lifting_network(coords_2d_detached, confidence, z_backbone, hmd_info)
 # Baseline (참고용)
 python tools/train.py my_code/custom_config/HMD_xregopose_single_coco_full_config.py
 
-# Lifting + Backbone Fusion (다음 실험)
-python tools/train.py my_code/custom_config/HMD_xregopose_lifting_backbone_fusion_config.py
+# EfficientHeatmapDecoder (완료)
+python tools/train.py my_code/custom_config/HMD_xregopose_efficient_decoder_full_config.py
 ```
 
 ---
@@ -279,10 +351,11 @@ python tools/train.py my_code/custom_config/HMD_xregopose_lifting_backbone_fusio
 | Head | 파일 | 용도 | 결과 |
 |------|------|------|------|
 | `CustomxRegoposeBaselinel1` | `custom_egopose_baselinel1_head.py` | Single backbone baseline | **41.37mm 🏆** |
+| `CustomxRegoposeBaselinel1` | `custom_egopose_baselinel1_head.py` | + EfficientHeatmapDecoder | 45.06mm |
 | `CustomxRegoposeBaselinel1_multi_backbone` | `custom_egopose_baselinel1_head_multi_backbone.py` | Dual backbone | 43.26mm |
 | `CustomxRegoposeBaselinel1_multi_backbone_v2` | `custom_egopose_baselinel1_head_multi_backbone_v2.py` | Dual + Warmup | 45.93mm |
 | `CustomEgoposeLiftingHead` | `custom_egopose_lifting_head.py` | Soft-argmax lifting | 45.92mm |
-| `CustomEgoposeLiftingBackboneFusionHead` | `custom_egopose_lifting_backbone_fusion_head.py` | **Lifting + Backbone** | 실험 대기 |
+| `CustomEgoposeLiftingBackboneFusionHead` | `custom_egopose_lifting_backbone_fusion_head.py` | Lifting + Backbone | 105.18mm ❌ |
 
 ### Config 파일
 
@@ -292,4 +365,5 @@ python tools/train.py my_code/custom_config/HMD_xregopose_lifting_backbone_fusio
 | `HMD_xregopose_h5cache_coco_mpii_config.py` | Dual COCO+MPII | 43.26mm |
 | `HMD_xregopose_h5cache_coco_mpii_warmup_10ep_config.py` | Dual + Warmup | 45.93mm |
 | `HMD_xregopose_single_lifting_config.py` | Lifting only | 45.92mm |
-| `HMD_xregopose_lifting_backbone_fusion_config.py` | **Lifting + Backbone** | 실험 대기 |
+| `HMD_xregopose_lifting_backbone_fusion_config.py` | Lifting + Backbone | 105.18mm ❌ |
+| `HMD_xregopose_efficient_decoder_full_config.py` | EfficientHeatmapDecoder | 45.06mm |

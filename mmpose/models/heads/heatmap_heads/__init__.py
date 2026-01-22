@@ -18,6 +18,7 @@ from .custom_egopose_confidence_weighted_head import ConfidenceWeightedHMDHead
 from .custom_egopose_lifting_head import CustomEgoposeLiftingHead
 from .custom_egopose_lifting_backbone_fusion_head import CustomEgoposeLiftingBackboneFusionHead
 from .custom_egopose_spatial_lifting_head import CustomEgoposeSpatialLiftingHead
+from .custom_egopose_attention_lifting_head import CustomEgoposeAttentionLiftingHead
 
 __all__ = [
     'HeatmapHead', 'CPMHead', 'MSPNHead', 'ViPNASHead',
@@ -27,5 +28,5 @@ __all__ = [
 	'CustomxRegoposeBaselinel1',
 	'CustomxRegoposeBaselinel1_multi_backbone_segdepth', 'ConfidenceWeightedHMDHead',
 	'CustomEgoposeLiftingHead', 'CustomEgoposeLiftingBackboneFusionHead',
-	'CustomEgoposeSpatialLiftingHead'
+	'CustomEgoposeSpatialLiftingHead', 'CustomEgoposeAttentionLiftingHead'
 ]

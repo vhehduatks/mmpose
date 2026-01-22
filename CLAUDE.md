@@ -131,21 +131,23 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | `HMD_xregopose_single_lifting_config.py` | `CustomEgoposeLiftingHead` | Soft-argmax 2D→3D Lifting | 45.92mm |
 | `HMD_xregopose_lifting_backbone_fusion_config.py` | `CustomEgoposeLiftingBackboneFusionHead` | Lifting + Backbone Fusion | 105.18mm ❌ |
 | `HMD_xregopose_spatial_lifting_full_config.py` | `CustomEgoposeSpatialLiftingHead` | Grid Sampling Spatial Depth | 실험 대기 |
-| `HMD_xregopose_efficient_decoder_small_config.py` | `CustomxRegoposeBaselinel1` | **EfficientHeatmapDecoder 검증** | Smoke test 진행 |
+| `HMD_xregopose_efficient_decoder_full_config.py` | `CustomxRegoposeBaselinel1` | EfficientHeatmapDecoder (40M→1.35M) | 45.06mm |
+| `HMD_xregopose_attention_lifting_full_config.py` | `CustomEgoposeAttentionLiftingHead` | **Attention Lifting (신규)** | 실험 대기 |
 
-### 실험 결과 요약 (2026-01-21)
+### 실험 결과 요약 (2026-01-22)
 
 | Model | Full Body MPJPE | vs Baseline |
 |-------|-----------------|-------------|
 | **Single COCO (Baseline)** | **41.37mm** 🏆 | - |
 | Dual COCO+MPII | 43.26mm | +1.89mm ❌ |
+| EfficientHeatmapDecoder | 45.06mm | +3.69mm ❌ (96% param 절감) |
 | Dual Warmup v2 | 45.93mm | +4.56mm ❌ |
 | Single Lifting | 45.92mm | +4.55mm ❌ |
-| Lifting + Backbone Fusion | 105.18mm | +63.81mm ❌ (GAP 공간 정보 손실) |
+| Lifting + Backbone Fusion | 105.18mm | +63.81mm ❌ |
 
 **목표**: 41mm 이하 달성
 
-**진행 중**: EfficientHeatmapDecoder (40M → 1.35M, 96.6% 감소) 검증 중
+**다음 실험**: Attention Lifting (Cross-Attention depth query + HMD attention)
 
 ### 문서 구조
 
@@ -185,6 +187,7 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | `CustomEgoposeLiftingHead` | `custom_egopose_lifting_head.py` | Soft-argmax 2D→3D Lifting |
 | `CustomEgoposeLiftingBackboneFusionHead` | `custom_egopose_lifting_backbone_fusion_head.py` | Lifting + Backbone Fusion |
 | `CustomEgoposeSpatialLiftingHead` | `custom_egopose_spatial_lifting_head.py` | Grid Sampling 기반 Spatial Depth |
+| `CustomEgoposeAttentionLiftingHead` | `custom_egopose_attention_lifting_head.py` | **Attention Lifting (신규)** |
 
 ### Smoke Test 규칙
 
