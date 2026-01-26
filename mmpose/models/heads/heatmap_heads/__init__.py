@@ -23,6 +23,7 @@ from .custom_egopose_skeleton_gat_head import CustomEgoposeSkeletonGATHead
 from .custom_egopose_global_attention_lifting_head import CustomEgoposeGlobalAttentionLiftingHead
 from .custom_egopose_heatmap_attention_lifting_head import CustomEgoposeHeatmapAttentionLiftingHead
 from .custom_egopose_vit_lifting_head import CustomEgoposeViTLiftingHead
+from .custom_egopose_vit_lifting_head_v5 import CustomEgoposeViTLiftingHeadV5
 
 __all__ = [
     'HeatmapHead', 'CPMHead', 'MSPNHead', 'ViPNASHead',
@@ -36,5 +37,6 @@ __all__ = [
 	'CustomEgoposeSkeletonGATHead',
 	'CustomEgoposeGlobalAttentionLiftingHead',
 	'CustomEgoposeHeatmapAttentionLiftingHead',
-	'CustomEgoposeViTLiftingHead'
+	'CustomEgoposeViTLiftingHead',
+	'CustomEgoposeViTLiftingHeadV5'
 ]
