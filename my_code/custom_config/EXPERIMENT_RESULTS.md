@@ -1,6 +1,6 @@
 # EgoPose 3D 실험 결과 및 분석
 
-> 최종 업데이트: 2026-01-23
+> 최종 업데이트: 2026-01-27
 
 ## 목표
 
@@ -24,6 +24,15 @@
 | 7 | Attention Lifting v2 | `HMD_xregopose_attention_lifting_v2_full_config.py` | `CustomEgoposeAttentionLiftingHead` | 48.38 | 8 | ❌ (v1보다 악화) |
 | 8 | Attention Lifting v3 | `HMD_xregopose_attention_lifting_v3_full_config.py` | `CustomEgoposeAttentionLiftingHead` | 46.68 | 1 | ❌ (epoch 2 발산) |
 | 9 | Attention Lifting v4 | `HMD_xregopose_attention_lifting_v4_full_config.py` | `CustomEgoposeAttentionLiftingHead` | 47.95 | 6 | ❌ (v1보다 나쁨) |
+| 10 | Attention Lifting v5 | `HMD_xregopose_attention_lifting_v5_full_config.py` | `CustomEgoposeAttentionLiftingHead` | 49.75 | 8 | ❌ (LR 과다) |
+| 11 | Attention Lifting v6 | `HMD_xregopose_attention_lifting_v6_full_config.py` | `CustomEgoposeAttentionLiftingHead` | 51.82 | 6 | ❌ (epoch 10 발산) |
+| 12 | Attention Lifting v7 | `HMD_xregopose_attention_lifting_v7_full_config.py` | `CustomEgoposeAttentionLiftingHead` | 45.73 | 7 | ❌ (v1과 유사, warmup 역효과) |
+| 13 | Skeleton GAT | `HMD_xregopose_skeleton_gat_full_config.py` | `CustomEgoposeSkeletonGATHead` | 50.88 | 7 | ❌ (sparse attention 실패) |
+| 14 | ViT Lifting v1 | `HMD_xregopose_vit_lifting_v1_full_config.py` | `CustomEgoposeViTLiftingHead` | 50.84 | 8 | ❌ (별도 heatmap, 정보 공유 없음) |
+| 15 | ViT Lifting v2 | `HMD_xregopose_vit_lifting_v2_full_config.py` | `CustomEgoposeViTLiftingHead` | 51.77 | 1 | ❌ (no recon, v1보다 악화) |
+| 16 | **ViT Lifting v3** | `HMD_xregopose_vit_lifting_v3_full_config.py` | `CustomEgoposeViTLiftingHead` | **45.34** | 4 | ⭐ ViT 최고 (Recon + Self-Attn) |
+| 17 | ViT Lifting v4 | `HMD_xregopose_vit_lifting_v4_full_config.py` | `CustomEgoposeViTLiftingHead` | 45.66 | 7 | ❌ (CosineAnnealingLR) |
+| 18 | ViT Lifting v5 | `HMD_xregopose_vit_lifting_v5_full_config.py` | `CustomEgoposeViTLiftingHeadV5` | 47.22 | 7 | ❌ (Hybrid Attention) |
 
 ### 부위별 결과 상세
 
@@ -38,6 +47,15 @@
 | Attention Lifting v2 | 48.38mm | 32.03mm | 64.73mm | 8 |
 | Attention Lifting v3 | 46.68mm | 34.41mm | 58.95mm | 1 |
 | Attention Lifting v4 | 47.95mm | 30.10mm | 65.80mm | 6 |
+| Attention Lifting v5 | 49.75mm | 31.08mm | 68.41mm | 8 |
+| Attention Lifting v6 | 51.82mm | 32.89mm | 70.75mm | 6 |
+| Attention Lifting v7 | 45.73mm | 32.69mm | 58.78mm | 7 |
+| Skeleton GAT | 50.88mm | 33.83mm | 67.92mm | 7 |
+| ViT Lifting v1 | 50.84mm | 28.77mm | 72.91mm | 8 |
+| ViT Lifting v2 | 51.77mm | 33.37mm | 70.17mm | 1 |
+| **ViT Lifting v3** | **45.34mm** | **23.49mm** | **67.19mm** | 4 |
+| ViT Lifting v4 | 45.66mm | 25.76mm | 65.56mm | 7 |
+| ViT Lifting v5 | 47.22mm | 29.09mm | 65.35mm | 7 |
 
 ### Baseline 대비 비교
 
@@ -52,6 +70,15 @@
 | Attention Lifting v2 | 48.38mm | +7.01mm ❌ | warmup 역효과, v1보다 악화 |
 | Attention Lifting v3 | 46.68mm | +5.31mm ❌ | LR 과다, epoch 2 발산 |
 | Attention Lifting v4 | 47.95mm | +6.58mm ❌ | CosineAnnealing, v1보다 나쁨 |
+| Attention Lifting v5 | 49.75mm | +8.38mm ❌ | LR=0.002 과다, epoch 2 spike |
+| Attention Lifting v6 | 51.82mm | +10.45mm ❌ | CosineRestartLR, epoch 10 발산 |
+| Attention Lifting v7 | 45.73mm | +4.36mm ❌ | Optimized schedule, epoch 2 spike |
+| Skeleton GAT | 50.88mm | +9.51mm ❌ | Sparse attention, 하체 성능 악화 |
+| ViT Lifting v1 | 50.84mm | +9.47mm ❌ | 별도 heatmap 경로, 정보 공유 없음 |
+| ViT Lifting v2 | 51.77mm | +10.40mm ❌ | No reconstruction, Self-Attn만 |
+| **ViT Lifting v3** | **45.34mm** | **+3.97mm** ⭐ | Recon + Self-Attn, Upper Body 최고 |
+| ViT Lifting v4 | 45.66mm | +4.29mm ❌ | CosineAnnealingLR, validation spike |
+| ViT Lifting v5 | 47.22mm | +5.85mm ❌ | Hybrid Attention, gradient scaling |
 
 ---
 
@@ -537,12 +564,16 @@ param_scheduler = [
 | 버전 | 설정 | Best MPJPE | 결과 |
 |------|------|------------|------|
 | **v1** | LR=5e-4, MultiStepLR | **45.43mm** | 🏆 Best |
-| v2 | LR=5e-4, Warmup+Cosine | 48.38mm | ❌ Warmup 역효과 |
+| v7 | LR=5e-4, MultiStepLR+Warmup | 45.73mm | ❌ Warmup 역효과 |
 | v3 | LR=1e-3, MultiStepLR | 46.68mm | ❌ LR 과다, 발산 |
 | v4 | LR=1e-3, CosineAnnealing | 47.95mm | ❌ 초기 수렴 방해 |
+| v2 | LR=5e-4, Warmup+Cosine | 48.38mm | ❌ Warmup 역효과 |
+| v5 | LR=2e-3, CosineAnnealing | 49.75mm | ❌ LR 과다 (v4의 2배) |
+| v6 | LR=1e-3, CosineRestartLR | 51.82mm | ❌ LR restart 불안정, 발산 |
 
 > **결론**: Attention Lifting v1 (45.43mm)이 최선이나, Baseline (41.37mm)보다 +4.06mm 나쁨.
-> Attention 구조 자체의 한계 또는 완전히 다른 접근법 필요.
+> v7에서도 warmup이 역효과를 일으킴 (epoch 2 spike). **Attention 구조는 warmup 없이 빠른 초기 학습이 필요**.
+> Baseline 달성을 위해서는 완전히 다른 접근법 필요.
 
 ---
 
@@ -599,6 +630,547 @@ param_scheduler = [
 
 ---
 
+### 실험 10: Attention Lifting v5 (Higher LR = 0.002 + CosineAnnealing)
+
+**Config**: `HMD_xregopose_attention_lifting_v5_full_config.py`
+**Work Dir**: `work_dirs/HMD_xregopose_attention_lifting_v5_full`
+
+**가설**: v4의 느린 초기 수렴을 높은 LR (0.002 = v4의 2배)로 보상
+
+**설정**:
+```python
+# v4: LR=0.001, CosineAnnealing → epoch 1: 76.12mm (느린 시작)
+# v5: LR=0.002 (2x of v4) + CosineAnnealing
+optim_wrapper = dict(
+    optimizer=dict(lr=0.002, type='AdamW', weight_decay=0.01),
+    clip_grad=dict(max_norm=1.0, norm_type=2),
+)
+param_scheduler = [
+    dict(type='CosineAnnealingLR', begin=0, end=10, eta_min=1e-5, by_epoch=True),
+]
+```
+
+**Epoch별 결과**:
+| Epoch | Full Body | Upper Body | Lower Body | 비고 |
+|-------|-----------|------------|------------|------|
+| 1 | 63.99mm | 39.01mm | 88.96mm | |
+| **2** | **68.76mm** | 38.24mm | 99.28mm | **⚠️ Spike! +4.77mm** |
+| 3 | 56.37mm | 32.71mm | 80.02mm | 회복 |
+| 4 | 51.36mm | 29.44mm | 73.28mm | |
+| 5 | 58.62mm | 34.63mm | 82.61mm | ⚠️ Spike |
+| 6 | 52.35mm | 30.50mm | 74.20mm | |
+| 7 | 50.89mm | 31.65mm | 70.12mm | |
+| **8** | **49.75mm** | **31.08mm** | **68.41mm** | **🏆 Best** |
+| 9 | 51.02mm | 31.35mm | 70.70mm | |
+| 10 | 52.47mm | 32.48mm | 72.46mm | |
+
+**v4 vs v5 비교**:
+| 항목 | v4 (LR=0.001) | v5 (LR=0.002) |
+|------|---------------|---------------|
+| Epoch 1 | 76.12mm | 63.99mm |
+| Epoch 2 | 59.32mm | **68.76mm** ⚠️ |
+| Best | **47.95mm** | 49.75mm |
+| Best Epoch | 6 | 8 |
+| Spike | +5.6mm (ep5) | **+4.77mm (ep2)** |
+
+**실패 원인 분석**:
+1. **LR 0.002가 너무 높음**: Epoch 2에서 spike 발생 (63.99 → 68.76mm)
+2. **v4보다 1.8mm 나쁨**: 높은 LR이 초기 수렴은 빠르게 하지만 불안정
+3. **CosineAnnealing + 높은 LR 조합 부적합**
+
+**결론**:
+> - LR=0.002는 CosineAnnealing과 조합 시 불안정
+> - v4 (LR=0.001)가 v5보다 더 나음
+> - Attention Lifting에는 LR=0.0005 (v1)이 최적
+
+---
+
+### 실험 11: Attention Lifting v6 (CosineRestartLR - Warm Restarts)
+
+**Config**: `HMD_xregopose_attention_lifting_v6_full_config.py`
+**Work Dir**: `work_dirs/HMD_xregopose_attention_lifting_v6_full`
+
+**가설**: CosineRestartLR (warm restarts)로 주기적 LR 재시작 → local minima 탈출
+
+**설정**:
+```python
+# Warm Restarts: periods=[3,3,3,1] → 3+3+3+1 = 10 epochs
+optim_wrapper = dict(
+    optimizer=dict(lr=0.001, type='AdamW', weight_decay=0.01),
+    clip_grad=dict(max_norm=1.0, norm_type=2),
+)
+param_scheduler = [
+    dict(
+        type='CosineRestartLR',
+        periods=[3, 3, 3, 1],  # restart at epoch 3, 6, 9
+        restart_weights=[1, 1, 1, 1],
+        eta_min=1e-5,
+        by_epoch=True,
+    ),
+]
+```
+
+**예상 LR 패턴**:
+- Epoch 1-3: 0.001 → decay → ~1e-5 (Period 1)
+- Epoch 4: **restart → 0.001** (Period 2 시작)
+- Epoch 4-6: 0.001 → decay → ~1e-5
+- Epoch 7: **restart → 0.001** (Period 3 시작)
+- Epoch 7-9: 0.001 → decay → ~1e-5
+- Epoch 10: **restart → 0.001** (Period 4, 1 epoch only)
+
+**Epoch별 결과**:
+| Epoch | Full Body | Upper Body | Lower Body | LR 상태 | 비고 |
+|-------|-----------|------------|------------|---------|------|
+| 1 | 60.91mm | 37.96mm | 83.87mm | Period 1 시작 | |
+| 2 | 57.57mm | 35.05mm | 80.10mm | | |
+| 3 | 53.38mm | 33.26mm | 73.51mm | Period 1 끝 | |
+| 4 | 54.78mm | 34.33mm | 75.24mm | **LR restart** | ⚠️ 성능 하락 |
+| 5 | 60.76mm | 37.10mm | 84.43mm | | ⚠️ Spike |
+| **6** | **51.82mm** | **32.89mm** | **70.75mm** | Period 2 끝 | **🏆 Best** |
+| 7 | 54.20mm | 34.31mm | 74.09mm | **LR restart** | ⚠️ 성능 하락 |
+| 8 | 56.15mm | 39.04mm | 73.26mm | | |
+| 9 | 55.55mm | 36.90mm | 74.19mm | Period 3 끝 | |
+| 10 | 97.62mm | 51.77mm | 143.46mm | **LR restart** | ❌ **발산!** |
+
+**실패 원인 분석**:
+1. **LR restart 직후 성능 하락**: Epoch 4, 7, 10에서 restart 후 성능 악화
+   - Restart가 학습된 weight를 불안정하게 만듦
+2. **Epoch 10 발산**: Period 4가 1 epoch만 있어 restart 후 바로 종료
+   - 높은 LR(0.001)로 시작하여 회복할 시간 없이 발산 (97.62mm)
+3. **Warm restarts 부적합**: Attention Lifting은 안정적인 LR decay가 필요
+
+**v1~v6 LR Schedule 비교**:
+| 버전 | LR Schedule | Best MPJPE | Epoch 10 | 결과 |
+|------|-------------|------------|----------|------|
+| **v1** | MultiStepLR [4,7], LR=5e-4 | **45.43mm** | 45.63mm | 🏆 Best |
+| v2 | Warmup + CosineAnnealing, LR=5e-4 | 48.38mm | 48.97mm | ❌ |
+| v3 | MultiStepLR [4,7], LR=1e-3 | 46.68mm | 52.95mm | ❌ |
+| v4 | CosineAnnealing, LR=1e-3 | 47.95mm | 52.10mm | ❌ |
+| v5 | CosineAnnealing, LR=2e-3 | 49.75mm | 52.47mm | ❌ |
+| v6 | **CosineRestartLR**, LR=1e-3 | 51.82mm | **97.62mm** | ❌ 발산 |
+
+**결론**:
+> - CosineRestartLR (warm restarts)은 Attention Lifting에 **부적합**
+> - LR restart가 학습 안정성을 해침
+> - 마지막 period (1 epoch)가 너무 짧아 발산 유발
+> - **v1의 MultiStepLR이 여전히 최선**
+
+---
+
+### 실험 12: Attention Lifting v7 (Optimized LR Schedule)
+
+**Config**: `HMD_xregopose_attention_lifting_v7_full_config.py`
+**Work Dir**: `work_dirs/HMD_xregopose_attention_lifting_v7_full`
+
+**가설**: v1~v6 분석을 기반으로 최적화된 LR schedule 설계
+- v1의 LR=0.0005 유지 (최적)
+- v1의 epoch 4 spike 방지를 위해 milestone [3, 5, 7]로 앞당김
+- Gradient clipping 추가 (max_norm=1.0)
+- 500 iteration warmup (0.5x → 1x)
+
+**설정**:
+```python
+optim_wrapper = dict(
+    optimizer=dict(lr=0.0005, type='AdamW', weight_decay=0.01),
+    clip_grad=dict(max_norm=1.0, norm_type=2),
+)
+param_scheduler = [
+    dict(type='LinearLR', start_factor=0.5, by_epoch=False, begin=0, end=500),
+    dict(type='MultiStepLR', milestones=[3, 5, 7], gamma=0.5, by_epoch=True),
+]
+```
+
+**예상 LR 패턴**:
+- Iter 0-500: 0.25e-3 → 0.5e-3 (iteration warmup)
+- Epoch 1-3: 5e-4
+- Epoch 4-5: 2.5e-4 (milestone 3 이후)
+- Epoch 6-7: 1.25e-4 (milestone 5 이후)
+- Epoch 8-10: 6.25e-5 (milestone 7 이후)
+
+**Epoch별 결과**:
+| Epoch | Full Body | Upper Body | Lower Body | LR | 비고 |
+|-------|-----------|------------|------------|-----|------|
+| 1 | 52.38mm | 39.87mm | 64.89mm | warmup→5e-4 | |
+| **2** | **61.82mm** | 44.55mm | 79.09mm | 5e-4 | **⚠️ Spike! +9.44mm** |
+| 3 | 55.63mm | 39.04mm | 72.22mm | 5e-4 | 회복 시작 |
+| 4 | 47.72mm | 33.01mm | 62.44mm | 2.5e-4 | LR decay |
+| 5 | 49.33mm | 33.67mm | 64.98mm | 2.5e-4 | |
+| 6 | 46.88mm | 32.44mm | 61.31mm | 1.25e-4 | 2차 decay |
+| **7** | **45.73mm** | **32.69mm** | **58.78mm** | 1.25e-4 | **🏆 Best** |
+| 8 | 46.03mm | 31.89mm | 60.17mm | 6.25e-5 | 3차 decay |
+| 9 | 46.27mm | 32.00mm | 60.54mm | 6.25e-5 | |
+| 10 | 46.22mm | 31.89mm | 60.54mm | 6.25e-5 | 수렴 |
+
+**v1 vs v7 비교**:
+| 항목 | v1 | v7 | 비고 |
+|------|-----|-----|------|
+| **Best MPJPE** | **45.43mm 🏆** | 45.73mm | v1이 0.30mm 더 좋음 |
+| Best Epoch | 8 | 7 | |
+| Epoch 2 | 45.62mm | **61.82mm** | **v7 spike +16.2mm** |
+| Spike 위치 | Epoch 4 (+2.93mm) | Epoch 2 (+9.44mm) | v7 spike가 더 심함 |
+| Gradient Clipping | ❌ | ✅ | |
+| Warmup | ❌ | ✅ (500 iter) | |
+
+**실패 원인 분석**:
+1. **Warmup 역효과**: 500 iter warmup이 오히려 epoch 2에서 spike 유발
+   - v1은 epoch 2에서 이미 45.62mm로 안정화
+   - v7은 epoch 2에서 61.82mm로 급등
+2. **v1과 비슷한 최종 성능**: Best는 0.30mm 차이로 거의 동일
+3. **Early milestone이 spike 방지 못함**: milestone [3, 5, 7]이 epoch 2 spike와 무관
+
+**핵심 인사이트**:
+> - **Warmup은 Attention Lifting에 해로움**: v2, v7 모두 warmup으로 악화
+> - **v1의 "warmup 없는 MultiStepLR"이 최적**: 처음부터 높은 LR로 빠르게 학습
+> - Attention 구조는 초기 빠른 학습이 중요, warmup이 이를 방해
+
+**v1~v7 최종 비교**:
+| 버전 | LR Schedule | Best MPJPE | Warmup | 결과 |
+|------|-------------|------------|--------|------|
+| **v1** | MultiStepLR [4,7], LR=5e-4 | **45.43mm** | ❌ | 🏆 Best |
+| v7 | MultiStepLR [3,5,7], LR=5e-4, warmup 500iter | 45.73mm | ✅ | ❌ warmup 역효과 |
+| v3 | MultiStepLR [4,7], LR=1e-3 | 46.68mm | ❌ | ❌ LR 과다 |
+| v4 | CosineAnnealing, LR=1e-3 | 47.95mm | ❌ | ❌ 초기 수렴 방해 |
+| v2 | Warmup + CosineAnnealing, LR=5e-4 | 48.38mm | ✅ | ❌ warmup 역효과 |
+| v5 | CosineAnnealing, LR=2e-3 | 49.75mm | ❌ | ❌ LR 과다 |
+| v6 | CosineRestartLR, LR=1e-3 | 51.82mm | ❌ | ❌ restart 불안정 |
+
+**결론**:
+> **Attention Lifting v1 (45.43mm)이 최선**이며, 추가적인 LR schedule 최적화는 효과 없음.
+> Baseline (41.37mm) 달성을 위해서는 **구조적 변경**이 필요.
+
+---
+
+### 실험 13: Skeleton Graph Attention Network (GAT)
+
+**Config**: `HMD_xregopose_skeleton_gat_full_config.py`
+**Work Dir**: `work_dirs/HMD_xregopose_skeleton_gat_full`
+
+**가설**: JointSelfAttention을 SkeletonGraphAttention으로 교체하여 해부학적 구조 prior 활용
+- 관절은 연결된 이웃 관절에만 attention
+- Skeleton adjacency matrix 기반 sparse attention
+- 2-hop neighbors 포함 (second-order connections)
+- Learnable edge attention bias
+
+**구조**:
+```
+Backbone feat [2048, 8, 8]
+       │
+       ├──────────────────────────────────┐
+       │                                  │
+       ↓ (Deconv)                         ↓ (reshape)
+Heatmap [16, 47, 47]             Backbone tokens [64, D]
+       │                                  │
+       ↓ (soft_argmax)                    │
+  2D coords [16, 2]                       │
+       │                                  │
+       ↓ (Joint Embedding)                │
+  Joint tokens [16, 64]                   │
+       │                                  │
+       └── Backbone Cross-Attention ──────┘
+                    │
+                    ▼
+       HMD Cross-Attention ←── HMD tokens [3, 64]
+                    │
+                    ▼
+          ┌─────────────────────┐
+          │ Skeleton GAT × 2    │  ← Key: Only connected joints attend
+          │                     │
+          │ Adjacency Matrix:   │
+          │ head─neck─shoulders │
+          │       │    │        │
+          │      hips elbows    │
+          │       │    │        │
+          │     knees wrists    │
+          │       │             │
+          │    ankles           │
+          └─────────────────────┘
+                    │
+                    ▼
+              3D Pose [16, 3]
+```
+
+**Skeleton 연결 구조**:
+```python
+SKELETON_EDGES = [
+    (0, 1),    # head - neck
+    (1, 2),    # neck - left_shoulder
+    (2, 3),    # left_shoulder - left_elbow
+    (3, 4),    # left_elbow - left_wrist
+    (1, 5),    # neck - right_shoulder
+    (5, 6),    # right_shoulder - right_elbow
+    (6, 7),    # right_elbow - right_wrist
+    (1, 8),    # neck - left_hip
+    (8, 9),    # left_hip - left_knee
+    (9, 10),   # left_knee - left_ankle
+    (1, 11),   # neck - right_hip
+    (11, 12),  # right_hip - right_knee
+    (12, 13),  # right_knee - right_ankle
+    (2, 5),    # left_shoulder - right_shoulder
+    (8, 11),   # left_hip - right_hip
+]
+```
+
+**Epoch별 결과**:
+| Epoch | Full Body | Upper Body | Lower Body | 비고 |
+|-------|-----------|------------|------------|------|
+| 1 | 76.66mm | 50.85mm | 102.48mm | |
+| 2 | 62.78mm | 37.58mm | 87.98mm | |
+| 3 | 53.96mm | 33.04mm | 74.88mm | |
+| 4 | 54.11mm | 36.28mm | 71.93mm | |
+| 5 | 51.86mm | 33.57mm | 70.14mm | |
+| 6 | 52.20mm | 34.04mm | 70.37mm | |
+| **7** | **50.88mm** | **33.83mm** | **67.92mm** | **🏆 Best** |
+| 8 | 51.19mm | 33.72mm | 68.66mm | |
+| 9 | 51.24mm | 33.30mm | 69.17mm | |
+| 10 | 51.60mm | 33.84mm | 69.35mm | |
+
+**Attention Lifting v1 vs Skeleton GAT 비교**:
+| 항목 | Attention Lifting v1 | Skeleton GAT | 차이 |
+|------|---------------------|--------------|------|
+| **Best MPJPE** | **45.43mm 🏆** | 50.88mm | +5.45mm |
+| Upper Body | **30.14mm** | 33.83mm | +3.69mm |
+| Lower Body | **60.72mm** | 67.92mm | +7.20mm |
+| Best Epoch | 7 | 7 | |
+| Attention 방식 | Dense (fully connected) | Sparse (skeleton-based) | |
+
+**실패 원인 분석**:
+1. **Sparse attention의 한계**: 해부학적 연결만으로는 3D pose에 필요한 global context 부족
+   - 3D pose estimation은 모든 관절의 상호 관계가 필요
+   - 예: 왼손과 오른발의 상대 위치도 중요한 depth cue
+2. **하체 성능 급락**: Lower body +7.20mm 악화
+   - 하체 관절(hip, knee, ankle)은 상체와의 관계가 중요
+   - Skeleton GAT에서는 neck만 연결되어 정보 부족
+3. **2-hop neighbors도 불충분**: Second-order connections으로도 global context 복원 불가
+   - 예: ankle → knee → hip → neck (3-hop) 관계 학습 불가
+
+**핵심 인사이트**:
+> - **Dense attention이 3D pose에 필수**: 모든 관절 간 fully-connected attention 필요
+> - **Skeleton prior는 제약이 아닌 bias로 사용**: Sparse attention 대신 edge bias로 활용
+> - **Attention Lifting v1의 JointSelfAttention이 더 효과적**: 구조적 prior 없이도 학습 가능
+
+**결론**:
+> Skeleton GAT (50.88mm)는 Attention Lifting v1 (45.43mm)보다 5.45mm 나쁨.
+> Sparse attention (skeleton-based)이 Dense attention보다 열등함을 확인.
+> 3D pose estimation에는 **global context**가 필수이며, 해부학적 구조만으로는 불충분.
+
+---
+
+### 실험 14-18: ViT-Style Lifting v1~v5
+
+**개요**: ViTPose 스타일의 Learnable Joint Queries + Self-Attention 구조
+
+**핵심 아이디어**:
+```
+soft_argmax로 좌표 추출 대신 → Learnable Joint Queries 사용
+Cross-Attention 대신 → Self-Attention (joint ↔ spatial 양방향)
+Heatmap Reconstruction → 2D 관절 정보를 joint tokens에 주입
+HMD Cross-Attention → 3D depth reference 추가
+```
+
+#### ViT Lifting v1 (별도 Heatmap 경로)
+
+**Config**: `HMD_xregopose_vit_lifting_v1_full_config.py`
+
+**구조**:
+```
+Backbone ─┬─→ Deconv → Heatmap → Heatmap Loss (별도)
+          │
+          └─→ Spatial Tokens + Joint Queries
+                      ↓
+              Self-Attention
+                      ↓
+              Joint Tokens
+                      ↓
+              HMD Cross-Attention
+                      ↓
+              3D Pose Head → 3D Loss
+```
+
+**Epoch별 결과**:
+| Epoch | Full Body | Upper Body | Lower Body |
+|-------|-----------|------------|------------|
+| 1 | 52.57mm | 33.04mm | 72.09mm |
+| 4 | 51.89mm | 29.39mm | 74.39mm |
+| **8** | **50.84mm** | **28.77mm** | **72.91mm** |
+| 10 | 52.49mm | 30.11mm | 74.87mm |
+
+**분석**: Heatmap과 3D Lifting이 **독립적** (정보 공유 없음)
+
+---
+
+#### ViT Lifting v2 (No Reconstruction)
+
+**Config**: `HMD_xregopose_vit_lifting_v2_full_config.py`
+
+**구조**:
+```
+Backbone → Spatial Tokens + Joint Queries
+                    ↓
+            Self-Attention (spatial info 자동 전달?)
+                    ↓
+            Joint Tokens
+                    ↓
+            HMD Cross-Attention
+                    ↓
+            3D Pose Head → 3D Loss만
+```
+
+**Epoch별 결과**:
+| Epoch | Full Body | Upper Body | Lower Body |
+|-------|-----------|------------|------------|
+| **1** | **51.77mm** | **33.37mm** | **70.17mm** |
+| 2 | 55.91mm | 31.76mm | 80.07mm |
+| 5 | 57.70mm | 33.69mm | 81.71mm |
+
+**분석**:
+- Heatmap reconstruction 없이 Self-Attention만으로는 2D 정보 전달 불충분
+- v1보다 오히려 악화 (+0.93mm)
+- Epoch 5에서 훈련 중단 (발산)
+
+---
+
+#### ViT Lifting v3 (Reconstruction Regularization) ⭐ ViT 최고
+
+**Config**: `HMD_xregopose_vit_lifting_v3_full_config.py`
+
+**구조**:
+```
+Backbone → Spatial Tokens + Joint Queries
+                    ↓
+            Self-Attention
+                    ↓
+            Joint Tokens ◄── 공유 latent
+                    │
+       ┌────────────┴────────────┐
+       │                         │
+       ▼                         ▼
+Heatmap Decoder            HMD Cross-Attention
+       │                         │
+       ▼                         ▼
+Recon Heatmap              3D Pose Head
+       │                         │
+       ▼                         ▼
+Heatmap Loss ◄──────────────► 3D Loss
+(regularizes tokens)
+```
+
+**핵심**: Heatmap Reconstruction이 **Joint Tokens를 regularize** → 2D 정보 강제 주입
+
+**Epoch별 결과**:
+| Epoch | Full Body | Upper Body | Lower Body | 비고 |
+|-------|-----------|------------|------------|------|
+| 1 | 50.32mm | 31.40mm | 69.23mm | |
+| 2 | 53.72mm | 28.27mm | 79.17mm | ⚠️ Spike |
+| 3 | 48.28mm | 25.46mm | 71.10mm | 회복 |
+| **4** | **45.34mm** | **23.49mm** | **67.19mm** | **🏆 Best** |
+| 5 | 47.13mm | 24.76mm | 69.50mm | ⚠️ Spike |
+| 6 | 49.12mm | 26.22mm | 72.02mm | |
+| 7 | 45.59mm | 24.53mm | 66.65mm | |
+| 10 | 47.37mm | 24.56mm | 70.19mm | |
+
+**분석**:
+- **Upper Body 최고 성능**: 23.49mm (Baseline 29.42mm 대비 -5.93mm!)
+- Validation spike 문제: epoch 2, 5에서 급등
+- MultiStepLR [3, 5, 7]의 급격한 LR decay가 원인
+
+**LR Schedule 문제**:
+```
+Epoch 1-3: LR = 0.0005
+Epoch 4:   LR = 0.00025 (3에서 decay) → Best!
+Epoch 5:   LR = 0.000125 (5에서 decay) → 스파이크 시작
+```
+
+---
+
+#### ViT Lifting v4 (CosineAnnealingLR)
+
+**Config**: `HMD_xregopose_vit_lifting_v4_full_config.py`
+
+**v3 대비 변경**: MultiStepLR → CosineAnnealingLR (부드러운 LR 감소)
+
+**Epoch별 결과**:
+| Epoch | Full Body | Upper Body | Lower Body | 비고 |
+|-------|-----------|------------|------------|------|
+| 1 | 48.53mm | 30.10mm | 66.96mm | |
+| 4 | 48.98mm | 26.45mm | 71.51mm | |
+| 5 | 53.99mm | 28.65mm | 79.32mm | ⚠️ Spike |
+| **7** | **45.66mm** | **25.76mm** | **65.56mm** | **🏆 Best** |
+| 10 | 48.51mm | 27.09mm | 69.93mm | |
+
+**분석**:
+- CosineAnnealingLR로 LR 감소를 부드럽게 했으나 여전히 spike 발생
+- v3보다 0.32mm 나쁨 (45.34 → 45.66mm)
+- Lower Body는 개선 (67.19 → 65.56mm)
+
+---
+
+#### ViT Lifting v5 (Hybrid Attention)
+
+**Config**: `HMD_xregopose_vit_lifting_v5_full_config.py`
+
+**v4 대비 변경**:
+1. Self-Attention [80×80] → Cross-Attention [16×64] + Self-Attention [16×16]
+2. 역할 분리: Cross(위치 찾기) + Self(skeleton 관계)
+3. Gradient Scaling: Heatmap gradient를 0.1배로 줄여 3D 학습에 집중
+
+**구조**:
+```
+Backbone feat [2048, 8, 8]
+     ↓
+Spatial Tokens [64, D]
+     ↓
+┌─────────────────────────────────────────┐
+│  Stage 1: Cross-Attention (J → S)       │
+│  Q: Joint Queries [16, D]               │
+│  K/V: Spatial Tokens [64, D]            │  [16×64]
+└─────────────────────────────────────────┘
+     ↓
+┌─────────────────────────────────────────┐
+│  Stage 2: Self-Attention (J → J) × 2    │
+│  Q=K=V: Joint Tokens [16, D]            │  [16×16]
+└─────────────────────────────────────────┘
+     ↓
+Joint Tokens [16, D]
+     ├── Heatmap Decoder (gradient scaled 0.1)
+     ↓
+HMD Cross-Attention [16×3]
+     ↓
+3D Pose Head → [16, 3]
+```
+
+**Epoch별 결과**:
+| Epoch | Full Body | Upper Body | Lower Body | 비고 |
+|-------|-----------|------------|------------|------|
+| 1 | 51.73mm | 36.48mm | 66.98mm | |
+| 4 | 49.03mm | 29.48mm | 68.58mm | |
+| **7** | **47.22mm** | **29.09mm** | **65.35mm** | **🏆 Best** |
+| 10 | 49.15mm | 29.75mm | 68.55mm | |
+
+**분석**:
+- v4보다 1.56mm 악화 (45.66 → 47.22mm)
+- Hybrid Attention이 v3/v4의 Self-Attention보다 효과 낮음
+- Gradient Scaling이 heatmap 학습을 약화시켜 regularization 효과 감소
+
+---
+
+### ViT Lifting 시리즈 요약
+
+| 버전 | 구조 | LR Schedule | Best MPJPE | Best Epoch | 비고 |
+|------|------|-------------|------------|------------|------|
+| v1 | 별도 Heatmap | MultiStepLR | 50.84mm | 8 | 정보 공유 없음 |
+| v2 | No Recon | MultiStepLR | 51.77mm | 1 | Self-Attn만으로 불충분 |
+| **v3** | **Recon + Self-Attn** | MultiStepLR | **45.34mm** | 4 | **⭐ ViT 최고** |
+| v4 | Recon + Self-Attn | CosineAnnealingLR | 45.66mm | 7 | spike 감소 but 성능 하락 |
+| v5 | Hybrid Attention | CosineAnnealingLR | 47.22mm | 7 | Gradient Scaling 역효과 |
+
+**핵심 인사이트**:
+1. **Heatmap Reconstruction이 핵심**: v2(no recon)는 v3(recon)보다 6.43mm 나쁨
+2. **Self-Attention [80×80]이 Hybrid보다 효과적**: v5의 역할 분리가 오히려 악화
+3. **Upper Body 성능 우수**: v3의 Upper Body 23.49mm는 Baseline(29.42mm)보다 5.93mm 좋음
+4. **LR Schedule 민감**: MultiStepLR의 급격한 decay가 spike 유발, but 성능은 더 좋음
+
+---
+
 ## 종합 분석
 
 ### 실패한 접근법
@@ -614,6 +1186,15 @@ param_scheduler = [
 | Attention Lifting v2 | 48.38mm (+7.01mm) | Warmup 역효과, 초기 학습 지연 |
 | Attention Lifting v3 | 46.68mm (+5.31mm) | LR 0.001 과다, epoch 2 발산 |
 | Attention Lifting v4 | 47.95mm (+6.58mm) | CosineAnnealing이 초기 수렴 방해 |
+| Attention Lifting v5 | 49.75mm (+8.38mm) | LR=0.002 과다, epoch 2 spike |
+| Attention Lifting v6 | 51.82mm (+10.45mm) | CosineRestartLR restart 불안정, epoch 10 발산 |
+| Attention Lifting v7 | 45.73mm (+4.36mm) | Optimized schedule, warmup 역효과 |
+| Skeleton GAT | 50.88mm (+9.51mm) | Sparse attention, global context 부족, 하체 악화 |
+| ViT Lifting v1 | 50.84mm (+9.47mm) | 별도 heatmap 경로, 정보 공유 없음 |
+| ViT Lifting v2 | 51.77mm (+10.40mm) | No reconstruction, Self-Attn만으로 불충분 |
+| **ViT Lifting v3** | **45.34mm (+3.97mm)** | ⭐ Recon + Self-Attn, Upper Body 최고 (23.49mm) |
+| ViT Lifting v4 | 45.66mm (+4.29mm) | CosineAnnealingLR, spike 감소 but 성능 하락 |
+| ViT Lifting v5 | 47.22mm (+5.85mm) | Hybrid Attention, Gradient Scaling 역효과 |
 
 ### 핵심 인사이트
 
@@ -624,11 +1205,19 @@ param_scheduler = [
 
 ### 다음 실험 계획
 
+**Attention Lifting v1~v7 실험 완료**. LR schedule 최적화로는 Baseline(41.37mm) 달성 불가.
+
 | 우선순위 | 실험 | 기대 효과 |
 |----------|------|----------|
-| 1 | **Attention Lifting v3** | LR=0.001 + MultiStepLR + Gradient Clipping (높은 LR로 빠른 수렴) |
+| 1 | **구조적 개선** | Attention 외 다른 depth extraction 방식 탐색 |
 | 2 | AdaIN HeatmapDecoder | Z가 각 Conv layer에 영향, 표현력 향상 |
 | 3 | Data Augmentation 강화 | Random rotation, scale, color jitter 등 |
+
+**Attention Lifting 핵심 인사이트**:
+- Warmup은 역효과 (v2, v7 모두 실패)
+- MultiStepLR > CosineAnnealing
+- LR=0.0005가 최적 (높으면 발산)
+- 최선: v1 (45.43mm), Baseline 대비 +4.06mm
 
 ---
 
@@ -656,8 +1245,11 @@ python tools/train.py my_code/custom_config/HMD_xregopose_efficient_decoder_full
 | `CustomxRegoposeBaselinel1_multi_backbone_v2` | `custom_egopose_baselinel1_head_multi_backbone_v2.py` | Dual + Warmup | 45.93mm |
 | `CustomEgoposeLiftingHead` | `custom_egopose_lifting_head.py` | Soft-argmax lifting | 45.92mm |
 | `CustomEgoposeLiftingBackboneFusionHead` | `custom_egopose_lifting_backbone_fusion_head.py` | Lifting + Backbone | 105.18mm ❌ |
-| `CustomEgoposeAttentionLiftingHead` | `custom_egopose_attention_lifting_head.py` | Attention Lifting v1 | 45.43mm |
-| `CustomEgoposeAttentionLiftingHead` | `custom_egopose_attention_lifting_head.py` | Attention Lifting v2 | 48.38mm |
+| `CustomEgoposeAttentionLiftingHead` | `custom_egopose_attention_lifting_head.py` | Attention Lifting v1 🏆 | 45.43mm |
+| `CustomEgoposeAttentionLiftingHead` | `custom_egopose_attention_lifting_head.py` | Attention Lifting v2~v7 | 45.73~51.82mm |
+| `CustomEgoposeSkeletonGATHead` | `custom_egopose_skeleton_gat_head.py` | Skeleton Graph Attention | 50.88mm |
+| `CustomEgoposeViTLiftingHead` | `custom_egopose_vit_lifting_head.py` | ViT Lifting v1~v4 | 45.34mm (v3) ⭐ |
+| `CustomEgoposeViTLiftingHeadV5` | `custom_egopose_vit_lifting_head_v5.py` | ViT Lifting v5 (Hybrid) | 47.22mm |
 
 ### Config 파일
 
@@ -671,4 +1263,14 @@ python tools/train.py my_code/custom_config/HMD_xregopose_efficient_decoder_full
 | `HMD_xregopose_efficient_decoder_full_config.py` | EfficientHeatmapDecoder | 45.06mm |
 | `HMD_xregopose_attention_lifting_full_config.py` | Attention Lifting v1 | 45.43mm |
 | `HMD_xregopose_attention_lifting_v2_full_config.py` | Attention Lifting v2 (Warmup+Cosine) | 48.38mm ❌ |
-| `HMD_xregopose_attention_lifting_v3_full_config.py` | Attention Lifting v3 (LR=0.001) | 실험 대기 |
+| `HMD_xregopose_attention_lifting_v3_full_config.py` | Attention Lifting v3 (LR=0.001) | 46.68mm ❌ |
+| `HMD_xregopose_attention_lifting_v4_full_config.py` | Attention Lifting v4 (CosineAnnealing) | 47.95mm ❌ |
+| `HMD_xregopose_attention_lifting_v5_full_config.py` | Attention Lifting v5 (LR=0.002) | 49.75mm ❌ |
+| `HMD_xregopose_attention_lifting_v6_full_config.py` | Attention Lifting v6 (CosineRestartLR) | 51.82mm ❌ |
+| `HMD_xregopose_attention_lifting_v7_full_config.py` | Attention Lifting v7 (Optimized Schedule) | 45.73mm ❌ |
+| `HMD_xregopose_skeleton_gat_full_config.py` | Skeleton GAT | 50.88mm ❌ |
+| `HMD_xregopose_vit_lifting_v1_full_config.py` | ViT Lifting v1 (별도 Heatmap) | 50.84mm ❌ |
+| `HMD_xregopose_vit_lifting_v2_full_config.py` | ViT Lifting v2 (No Recon) | 51.77mm ❌ |
+| `HMD_xregopose_vit_lifting_v3_full_config.py` | **ViT Lifting v3 (Recon)** | **45.34mm ⭐** |
+| `HMD_xregopose_vit_lifting_v4_full_config.py` | ViT Lifting v4 (CosineAnnealing) | 45.66mm ❌ |
+| `HMD_xregopose_vit_lifting_v5_full_config.py` | ViT Lifting v5 (Hybrid Attention) | 47.22mm ❌ |
