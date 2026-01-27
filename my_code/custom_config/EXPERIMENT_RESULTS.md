@@ -34,6 +34,7 @@
 | 17 | ViT Lifting v4 | `HMD_xregopose_vit_lifting_v4_full_config.py` | `CustomEgoposeViTLiftingHead` | 45.66 | 7 | ❌ (CosineAnnealingLR) |
 | 18 | ViT Lifting v5 | `HMD_xregopose_vit_lifting_v5_full_config.py` | `CustomEgoposeViTLiftingHeadV5` | 47.22 | 7 | ❌ (Hybrid Attention) |
 | 19 | Upper-Lower Decoupled | `HMD_xregopose_decoupled_full_config.py` | `CustomEgoposeDecoupledHead` | 45.00 | 8 | ❌ (Lower body degraded) |
+| 20 | ViT Lifting v6 (SPT+LSA) | `HMD_xregopose_vit_lifting_v6_full_config.py` | `CustomEgoposeViTLiftingHeadV6` | 45.70 | 10 | ❌ (Locality bias hurt upper body) |
 
 ### Detailed Results by Body Part
 
@@ -58,6 +59,7 @@
 | ViT Lifting v4 | 45.66mm | 25.76mm | 65.56mm | 7 |
 | ViT Lifting v5 | 47.22mm | 29.09mm | 65.35mm | 7 |
 | Upper-Lower Decoupled | 45.00mm | 24.10mm | 65.89mm | 8 |
+| ViT Lifting v6 (SPT+LSA) | 45.70mm | 30.09mm | 61.32mm | 10 |
 
 ### Comparison Against Baseline
 
@@ -82,6 +84,7 @@
 | ViT Lifting v4 | 45.66mm | +4.29mm ❌ | CosineAnnealingLR, validation spike |
 | ViT Lifting v5 | 47.22mm | +5.85mm ❌ | Hybrid Attention, gradient scaling |
 | Upper-Lower Decoupled | 45.00mm | +3.63mm ❌ | Upper improved (-5.32mm), Lower degraded (+12.58mm) |
+| ViT Lifting v6 (SPT+LSA) | 45.70mm | +4.33mm ❌ | SPT/LSA locality bias: Lower improved vs v3, Upper regressed |
 
 ---
 
@@ -1165,12 +1168,112 @@ HMD Cross-Attention [16×3]
 | **v3** | **Recon + Self-Attn** | MultiStepLR | **45.34mm** | 4 | **⭐ Best ViT** |
 | v4 | Recon + Self-Attn | CosineAnnealingLR | 45.66mm | 7 | Spike reduced but performance dropped |
 | v5 | Hybrid Attention | CosineAnnealingLR | 47.22mm | 7 | Gradient Scaling counterproductive |
+| v6 | SPT+LSA (Locality) | CosineAnnealingLR+Warmup | 45.70mm | 10 | Lower body improved (-5.87mm vs v3), Upper regressed (+6.60mm) |
 
 **Key Insights**:
 1. **Heatmap Reconstruction is key**: v2 (no recon) is 6.43mm worse than v3 (recon)
 2. **Self-Attention [80×80] is more effective than Hybrid**: v5's role separation actually worsened results
 3. **Excellent Upper Body performance**: v3's Upper Body 23.49mm is 5.93mm better than Baseline (29.42mm)
 4. **LR Schedule sensitive**: MultiStepLR's abrupt decay causes spikes, but performance is better
+5. **Locality bias is a tradeoff, not a win**: v6's SPT+LSA improved lower body (-5.87mm vs v3) but regressed upper body (+6.60mm), confirming that global attention is needed for HMD-guided upper body pose
+
+---
+
+### Experiment 20: ViT Lifting v6 (SPT+LSA — Small Dataset Optimized)
+
+**Config**: `HMD_xregopose_vit_lifting_v6_full_config.py`
+**Work Dir**: `work_dirs/HMD_xregopose_vit_lifting_v6_full`
+
+**Hypothesis**: Applying locality inductive biases (SPT, LSA) from "Vision Transformer for Small-Size Datasets" paper to ViT Lifting improves generalization on the 210K dataset and stabilizes lower body prediction.
+
+**Architecture**:
+```
+Backbone feat [2048, 8, 8]
+       ↓
+SPT (Shifted Patch Tokenization)
+  - 5-way shift (original + 4 diagonal shifts)
+  - Provides locality bias without explicit convolution
+       ↓
+Depth-wise Conv Embedding
+       ↓
+Spatial Tokens [64, 128] + Joint Queries [16, 128]
+       ↓
+LSA (Locality Self-Attention) × 2
+  - Learnable temperature (init=0.5)
+  - Diagonal masking (reduce self-token attention)
+       ↓
+Joint Tokens [16, 128]
+       ├── Heatmap Decoder (Reconstruction)
+       ↓
+HMD Cross-Attention
+       ↓
+3D Pose [16, 3]
+```
+
+**Key Changes from v3**:
+| Setting | v3 | v6 (SPT+LSA) |
+|---------|-----|--------------|
+| Tokenization | Linear projection | SPT (5-way shifted) |
+| Attention | Standard Self-Attn | LSA (learnable temp + diag mask) |
+| Embedding | Linear | Depth-wise Conv |
+| embed_dim | 256 | 128 (reduced) |
+| num_layers | 4 | 2 (reduced) |
+| num_heads | 8 | 4 (reduced) |
+| mlp_ratio | 4.0 | 2.0 (reduced) |
+| dropout | 0.1 | 0.2 (increased) |
+| Optimizer | AdamW (lr=5e-4) | AdamW (lr=5e-4, wd=0.01) |
+| LR Schedule | MultiStepLR [3,5,7] | CosineAnnealingLR + 500-iter warmup |
+| Gradient Clip | None | max_norm=1.0 |
+
+**Per-Epoch Results**:
+| Epoch | Full Body | Upper Body | Lower Body | LR | Notes |
+|-------|-----------|------------|------------|-----|------|
+| 1 | 48.18mm | 35.72mm | 60.65mm | 5.00e-4 | |
+| 2 | 49.54mm | 32.32mm | 66.75mm | 4.88e-4 | |
+| 3 | 49.99mm | 31.94mm | 68.04mm | 4.52e-4 | |
+| 4 | 49.89mm | 29.76mm | 70.01mm | 3.97e-4 | Best Upper so far |
+| 5 | 47.90mm | 32.64mm | 63.16mm | 3.28e-4 | |
+| 6 | 50.78mm | 33.09mm | 68.46mm | 2.50e-4 | ⚠️ Spike |
+| 7 | 48.16mm | 32.73mm | 63.59mm | 1.73e-4 | |
+| 8 | 45.96mm | 30.09mm | 61.84mm | 1.04e-4 | |
+| 9 | 45.94mm | 30.43mm | 61.46mm | 4.87e-5 | |
+| **10** | **45.70mm** | **30.09mm** | **61.32mm** | 1.32e-5 | **🏆 Best** |
+
+**Training Loss (final step per epoch)**:
+| Epoch | Total | L2Norm | Cosine | Limb | HM Recon | HMD |
+|-------|-------|--------|--------|------|----------|-----|
+| 1 | 1.013 | 0.287 | 0.060 | 0.350 | 0.312 | 0.003 |
+| 5 | 0.618 | 0.209 | 0.041 | 0.245 | 0.121 | 0.002 |
+| 10 | 0.534 | 0.194 | 0.039 | 0.222 | 0.078 | 0.002 |
+
+Note: `loss_kpt` = 0 throughout — ViT v6 does not produce heatmaps via deconv (uses joint queries instead).
+
+**v3 vs v6 Comparison**:
+| Item | v3 (Standard ViT) | v6 (SPT+LSA) | Difference |
+|------|-------------------|--------------|------------|
+| **Full Body** | **45.34mm** | 45.70mm | +0.36mm |
+| **Upper Body** | **23.49mm** | 30.09mm | **+6.60mm** (regressed) |
+| **Lower Body** | 67.19mm | **61.32mm** | **-5.87mm** (improved) |
+| Best Epoch | 4 | 10 | Later convergence |
+| Validation Stability | ⚠️ Spikes (ep2, ep5) | ⚠️ Oscillation (ep1-7) | Similar instability |
+| Parameters | ~5M (head) | ~2.5M (head) | 50% smaller |
+
+**Analysis**:
+
+1. **SPT/LSA locality tradeoff**: The locality inductive bias achieved its intended goal — lower body improved by 5.87mm over v3 (61.32 vs 67.19mm). However, this came at the cost of upper body, which regressed by 6.60mm (30.09 vs 23.49mm). The locality constraints appear to prevent the global attention patterns that v3 used to capture HMD-guided upper body pose.
+
+2. **Late convergence**: Unlike v3 which peaked at epoch 4, v6 only converged in epochs 8-10 as the CosineAnnealingLR brought LR below 1e-4. This suggests the reduced model capacity (embed_dim=128, 2 layers) needs more training time or that locality bias slows optimization.
+
+3. **Validation oscillation**: Full body MPJPE oscillated between 45-51mm through epochs 1-7, only stabilizing after LR dropped. Lower body was particularly volatile (60-70mm range). The CosineAnnealingLR schedule was more stable than v3's MultiStepLR spikes, but still produced oscillation.
+
+4. **Model size reduction did not help**: 50% fewer parameters with stronger regularization (dropout=0.2) did not improve generalization — the reduced capacity appears insufficient to capture the complex 3D pose mapping.
+
+5. **Awkward middle ground**: v6 sacrificed v3's exceptional upper body (23.49→30.09mm) without reaching Baseline's lower body (61.32 vs 53.31mm). It converged to near-Baseline upper body performance (30.09 vs 29.42mm) while keeping the ViT family's lower body weakness.
+
+**Conclusion**:
+> ViT v6 (SPT+LSA) confirms that locality bias improves lower body at the expense of upper body.
+> The ViT architecture's strength (global attention for HMD-guided upper body) and weakness (lower body instability) are inversely linked.
+> **No ViT variant has achieved Baseline's lower body performance (53.31mm)**, reinforcing that the Baseline's MLP pipeline is uniquely suited for lower body estimation.
 
 ---
 
@@ -1281,6 +1384,7 @@ Upper Branch (ViT v3 style)          Lower Branch (Baseline style)
 | **ViT Lifting v3** | **45.34mm (+3.97mm)** | ⭐ Recon + Self-Attn, best Upper Body (23.49mm) |
 | ViT Lifting v4 | 45.66mm (+4.29mm) | CosineAnnealingLR, spike reduced but performance dropped |
 | ViT Lifting v5 | 47.22mm (+5.85mm) | Hybrid Attention, Gradient Scaling counterproductive |
+| ViT Lifting v6 (SPT+LSA) | 45.70mm (+4.33mm) | Locality bias: Lower improved vs v3, Upper regressed |
 | Upper-Lower Decoupled | 45.00mm (+3.63mm) | Upper improved (-5.32mm), Lower degraded (+12.58mm) |
 
 ### Key Insights
@@ -1337,6 +1441,7 @@ python tools/train.py my_code/custom_config/HMD_xregopose_efficient_decoder_full
 | `CustomEgoposeSkeletonGATHead` | `custom_egopose_skeleton_gat_head.py` | Skeleton Graph Attention | 50.88mm |
 | `CustomEgoposeViTLiftingHead` | `custom_egopose_vit_lifting_head.py` | ViT Lifting v1~v4 | 45.34mm (v3) ⭐ |
 | `CustomEgoposeViTLiftingHeadV5` | `custom_egopose_vit_lifting_head_v5.py` | ViT Lifting v5 (Hybrid) | 47.22mm |
+| `CustomEgoposeViTLiftingHeadV6` | `custom_egopose_vit_lifting_head_v6.py` | ViT Lifting v6 (SPT+LSA) | 45.70mm |
 | `CustomEgoposeDecoupledHead` | `custom_egopose_decoupled_head.py` | Upper-Lower Decoupled | 45.00mm |
 
 ### Config Files
@@ -1362,4 +1467,5 @@ python tools/train.py my_code/custom_config/HMD_xregopose_efficient_decoder_full
 | `HMD_xregopose_vit_lifting_v3_full_config.py` | **ViT Lifting v3 (Recon)** | **45.34mm ⭐** |
 | `HMD_xregopose_vit_lifting_v4_full_config.py` | ViT Lifting v4 (CosineAnnealing) | 45.66mm ❌ |
 | `HMD_xregopose_vit_lifting_v5_full_config.py` | ViT Lifting v5 (Hybrid Attention) | 47.22mm ❌ |
+| `HMD_xregopose_vit_lifting_v6_full_config.py` | ViT Lifting v6 (SPT+LSA) | 45.70mm ❌ |
 | `HMD_xregopose_decoupled_full_config.py` | Upper-Lower Decoupled | 45.00mm ❌ |
