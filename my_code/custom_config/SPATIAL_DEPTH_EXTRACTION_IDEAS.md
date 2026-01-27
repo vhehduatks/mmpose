@@ -1,97 +1,97 @@
-# 공간 정보 보존 Depth 추출 방법
+# Spatial Information Preserving Depth Extraction Methods
 
-> 생성일: 2026-01-21
+> Created: 2026-01-21
 
-## 문제 정의
+## Problem Definition
 
-### 현재 Phase 5-C 구조의 한계
+### Limitations of Current Phase 5-C Structure
 
 ```
 Backbone [2048, 8, 8]
-       │
-       ├→ Deconv → Heatmap → soft_argmax → coords_2d (detach)
-       │                                        │
-       └→ GAP → FC → Z_backbone [256] ──────────┼→ Lifting → 3D
-              ❌ 공간 정보 손실!                 │
-                                                └→ 3D Loss
+       |
+       +-> Deconv -> Heatmap -> soft_argmax -> coords_2d (detach)
+       |                                        |
+       +-> GAP -> FC -> Z_backbone [256] -------+-> Lifting -> 3D
+              ❌ Spatial information lost!       |
+                                                +-> 3D Loss
 ```
 
-**문제점**:
-- Global Average Pooling이 모든 공간 정보를 평균으로 압축
-- "왼쪽 팔꿈치의 depth"를 학습하려면 **어디가 왼쪽 팔꿈치인지** 알아야 함
-- Z_backbone [256]은 전체 이미지의 global context만 포함
-- 결과: MPJPE 176mm (baseline 41mm 대비 4배 이상 나쁨)
+**Problems**:
+- Global Average Pooling compresses all spatial information into a mean
+- To learn "the depth of the left elbow", the model needs to know **where the left elbow is**
+- Z_backbone [256] only contains the global context of the entire image
+- Result: MPJPE 176mm (more than 4x worse than baseline 41mm)
 
-### 목표
+### Goal
 
 ```
-각 관절의 2D 위치에서 해당 위치의 backbone feature를 추출
-→ 관절별 depth cue 학습 가능
-→ 2D/3D 역할 분리 유지하면서 공간 정보 보존
+Extract backbone features at each joint's 2D location
+-> Enables per-joint depth cue learning
+-> Preserves spatial information while maintaining 2D/3D role separation
 ```
 
 ---
 
-## 방법 비교
+## Method Comparison
 
-| 방법 | 공간 정보 | 구현 복잡도 | 메모리 | 특징 |
+| Method | Spatial Info | Implementation Complexity | Memory | Features |
 |------|----------|------------|--------|------|
-| GAP (현재) | ❌ 손실 | 낮음 | 낮음 | 실패 |
-| **1. Grid Sampling** | ✅ 정확 | **낮음** | 낮음 | **권장** |
-| 2. Heatmap Weighted | ✅ soft | 낮음 | 중간 | Soft attention |
-| 3. Cross-Attention | ✅ 학습됨 | 높음 | 높음 | 유연함 |
-| 4. Deformable Attn | ✅ 학습됨 | 높음 | 중간 | Sparse sampling |
+| GAP (current) | ❌ Lost | Low | Low | Failed |
+| **1. Grid Sampling** | ✅ Precise | **Low** | Low | **Recommended** |
+| 2. Heatmap Weighted | ✅ Soft | Low | Medium | Soft attention |
+| 3. Cross-Attention | ✅ Learned | High | High | Flexible |
+| 4. Deformable Attn | ✅ Learned | High | Medium | Sparse sampling |
 
 ---
 
-## 방법 1: Grid Sampling (권장)
+## Method 1: Grid Sampling (Recommended)
 
-### 핵심 아이디어
+### Core Idea
 
-2D 좌표를 사용하여 backbone feature map에서 해당 위치의 feature를 직접 샘플링.
+Use 2D coordinates to directly sample features at the corresponding locations from the backbone feature map.
 
 ```
-coords_2d [B, 16, 2]  →  backbone_feat [B, 2048, 8, 8]
-         │                        │
-         └────── grid_sample ─────┘
-                      ↓
+coords_2d [B, 16, 2]  ->  backbone_feat [B, 2048, 8, 8]
+         |                        |
+         +------ grid_sample -----+
+                      |
             joint_features [B, 16, 2048]
 ```
 
-### 구조도
+### Architecture Diagram
 
 ```
 Backbone feat [B, 2048, 8, 8]
-       │
-       ├─────────────────────────────────────┐
-       │                                     │
-       ↓ (Deconv)                            │
-Heatmap [B, 16, 47, 47]                      │
-       │                                     │
-       ↓ (soft_argmax)                       │
-coords_2d [B, 16, 2]                         │
-       │                                     │
-       │ (detach)                            │
-       │                                     │
-       ↓                                     ↓
-coords_2d_detached ──────────────→ grid_sample(backbone, coords)
-                                             │
-                                             ↓
+       |
+       +-------------------------------------+
+       |                                     |
+       v (Deconv)                            |
+Heatmap [B, 16, 47, 47]                      |
+       |                                     |
+       v (soft_argmax)                       |
+coords_2d [B, 16, 2]                         |
+       |                                     |
+       | (detach)                            |
+       |                                     |
+       v                                     v
+coords_2d_detached -----------------> grid_sample(backbone, coords)
+                                             |
+                                             v
                                   joint_features [B, 16, 2048]
-                                             │
-                                             ↓ (FC)
+                                             |
+                                             v (FC)
                                   joint_depth [B, 16, 64]
-                                             │
-       ┌─────────────────────────────────────┘
-       │
-       ↓
+                                             |
+       +-------------------------------------+
+       |
+       v
 Concat [coords_2d_detached, confidence, joint_depth, hmd_info]
-       │
-       ↓
-Lifting Network → 3D Pose
+       |
+       v
+Lifting Network -> 3D Pose
 ```
 
-### 상세 구현
+### Detailed Implementation
 
 ```python
 import torch
@@ -99,11 +99,11 @@ import torch.nn.functional as F
 
 class SpatialDepthExtractor(nn.Module):
     """
-    2D 좌표 위치에서 backbone feature 추출
+    Extract backbone features at 2D coordinate locations
     """
     def __init__(self, in_channels: int = 2048, out_channels: int = 64):
         super().__init__()
-        # 관절별 feature를 압축
+        # Compress per-joint features
         self.fc = nn.Sequential(
             nn.Linear(in_channels, 256),
             nn.ReLU(inplace=True),
@@ -119,20 +119,20 @@ class SpatialDepthExtractor(nn.Module):
             coords_2d: [B, K, 2] normalized coordinates (0~1)
 
         Returns:
-            joint_features: [B, K, out_channels] 관절별 depth feature
+            joint_features: [B, K, out_channels] per-joint depth features
         """
         B, K, _ = coords_2d.shape
 
-        # Step 1: coords를 grid_sample 형식으로 변환
-        # grid_sample은 [-1, 1] 범위 사용
-        coords_normalized = coords_2d * 2 - 1  # [0,1] → [-1,1]
+        # Step 1: Convert coords to grid_sample format
+        # grid_sample uses [-1, 1] range
+        coords_normalized = coords_2d * 2 - 1  # [0,1] -> [-1,1]
 
-        # Step 2: grid 형태로 reshape
+        # Step 2: Reshape to grid format
         # grid_sample expects: [B, H_out, W_out, 2]
-        # 우리는 K개 점을 샘플링: [B, K, 1, 2]
+        # We sample K points: [B, K, 1, 2]
         coords_grid = coords_normalized.unsqueeze(2)  # [B, K, 1, 2]
 
-        # Step 3: bilinear interpolation으로 feature 샘플링
+        # Step 3: Sample features via bilinear interpolation
         # backbone_feat: [B, C, H, W]
         # coords_grid: [B, K, 1, 2]
         # output: [B, C, K, 1]
@@ -148,116 +148,116 @@ class SpatialDepthExtractor(nn.Module):
         sampled = sampled.squeeze(-1)  # [B, C, K]
         sampled = sampled.permute(0, 2, 1)  # [B, K, C]
 
-        # Step 5: FC로 차원 축소
+        # Step 5: Reduce dimensions with FC
         joint_features = self.fc(sampled)  # [B, K, out_channels]
 
         return joint_features
 ```
 
-### Gradient 흐름 분석
+### Gradient Flow Analysis
 
 ```
 3D Loss
-   │
-   ↓
+   |
+   v
 Lifting Network
-   │
-   ├─── coords_2d_detached ←── coords_2d ←── heatmap
-   │         ❌ gradient 차단          ✅ heatmap loss로만 학습
-   │
-   └─── joint_depth
-              │
-              ↓ (FC)
+   |
+   +--- coords_2d_detached <-- coords_2d <-- heatmap
+   |         ❌ gradient blocked          ✅ trained only by heatmap loss
+   |
+   +--- joint_depth
+              |
+              v (FC)
         joint_features
-              │
-              ↓ (grid_sample)
-        backbone_feat ←── Backbone
-              ✅ 3D gradient 흐름!
+              |
+              v (grid_sample)
+        backbone_feat <-- Backbone
+              ✅ 3D gradient flows!
 ```
 
-**핵심**:
-- coords_2d는 detach → heatmap은 2D loss로만 학습
-- grid_sample은 미분 가능 → 3D loss가 backbone으로 흐름
-- 각 관절 위치의 feature가 해당 관절의 depth 학습에 사용됨
+**Key points**:
+- coords_2d is detached -> heatmap is trained only by 2D loss
+- grid_sample is differentiable -> 3D loss flows to the backbone
+- Features at each joint's location are used to learn that joint's depth
 
-### 좌표계 변환 상세
+### Coordinate System Conversion Details
 
 ```python
-# soft_argmax 출력: [0, 1] 범위 (normalized)
-coords_2d = soft_argmax(heatmap)  # [B, K, 2], 범위 [0, 1]
+# soft_argmax output: [0, 1] range (normalized)
+coords_2d = soft_argmax(heatmap)  # [B, K, 2], range [0, 1]
 
-# grid_sample 입력: [-1, 1] 범위
-#   (-1, -1) = 좌상단
-#   (+1, +1) = 우하단
-coords_grid = coords_2d * 2 - 1  # [0,1] → [-1,1]
+# grid_sample input: [-1, 1] range
+#   (-1, -1) = top-left
+#   (+1, +1) = bottom-right
+coords_grid = coords_2d * 2 - 1  # [0,1] -> [-1,1]
 
-# 예시:
-#   coords_2d = (0.0, 0.0) → coords_grid = (-1, -1) → 좌상단
-#   coords_2d = (0.5, 0.5) → coords_grid = (0, 0)   → 중앙
-#   coords_2d = (1.0, 1.0) → coords_grid = (1, 1)   → 우하단
+# Example:
+#   coords_2d = (0.0, 0.0) -> coords_grid = (-1, -1) -> top-left
+#   coords_2d = (0.5, 0.5) -> coords_grid = (0, 0)   -> center
+#   coords_2d = (1.0, 1.0) -> coords_grid = (1, 1)   -> bottom-right
 ```
 
-### Backbone Feature Map 해상도
+### Backbone Feature Map Resolution
 
 ```
 Backbone output: [B, 2048, 8, 8]
 Heatmap: [B, 16, 47, 47]
 
-문제: 해상도 불일치
-- coords_2d는 47x47 heatmap 기준
-- backbone은 8x8
+Problem: Resolution mismatch
+- coords_2d is based on 47x47 heatmap
+- backbone is 8x8
 
-해결: grid_sample의 bilinear interpolation
-- coords_2d [0,1]을 8x8에 매핑
-- 정수가 아닌 위치도 보간으로 처리
-- 예: (0.3, 0.7) → 8x8에서 (2.4, 5.6) → 주변 4픽셀 보간
+Solution: grid_sample's bilinear interpolation
+- Maps coords_2d [0,1] to 8x8
+- Non-integer positions are handled by interpolation
+- Example: (0.3, 0.7) -> (2.4, 5.6) on 8x8 -> interpolated from 4 neighboring pixels
 ```
 
-### 수정된 Lifting Network
+### Modified Lifting Network
 
 ```python
 class LiftingNetworkWithSpatialDepth(nn.Module):
     def __init__(self,
                  num_joints: int = 16,
                  hmd_dim: int = 9,
-                 depth_dim: int = 64,  # joint_depth 차원
+                 depth_dim: int = 64,  # joint_depth dimension
                  hidden_dim: int = 1024):
         super().__init__()
 
         # Input: coords(32) + conf(16) + joint_depth(16*64) + HMD(9)
         # = 32 + 16 + 1024 + 9 = 1081
-        # 또는 joint_depth를 flatten하지 않고 관절별 처리
+        # Or process per-joint without flattening joint_depth
 
         # Option A: Flatten all
         input_dim = num_joints * 2 + num_joints + num_joints * depth_dim + hmd_dim
 
-        # Option B: Per-joint processing (권장)
-        # 각 관절: coords(2) + conf(1) + depth(64) = 67
-        # → 관절별 MLP → concat → final MLP
+        # Option B: Per-joint processing (recommended)
+        # Per joint: coords(2) + conf(1) + depth(64) = 67
+        # -> Per-joint MLP -> concat -> final MLP
 ```
 
-### 예상 장점
+### Expected Advantages
 
-1. **공간 정보 보존**: 각 관절이 자신의 위치에서 feature 추출
-2. **관절별 depth 학습**: 16개 관절 각각 독립적인 depth cue
-3. **Gradient 분리 유지**: coords_2d는 여전히 detach
-4. **구현 간단**: grid_sample 하나로 해결
+1. **Spatial information preserved**: Each joint extracts features from its own location
+2. **Per-joint depth learning**: 16 joints each have independent depth cues
+3. **Gradient separation maintained**: coords_2d is still detached
+4. **Simple implementation**: Solved with a single grid_sample
 
-### 예상 문제점 및 해결
+### Expected Issues and Solutions
 
-| 문제 | 해결책 |
+| Issue | Solution |
 |------|--------|
-| 8x8 해상도가 너무 낮음 | 중간 feature (16x16, 32x32) 사용 |
-| 단일 점 샘플링 불안정 | 3x3 영역 pooling 또는 multi-scale |
-| coords_2d 오차 전파 | temperature 조절로 sharp heatmap |
+| 8x8 resolution too low | Use intermediate features (16x16, 32x32) |
+| Single point sampling unstable | 3x3 region pooling or multi-scale |
+| coords_2d error propagation | Temperature tuning for sharp heatmaps |
 
 ---
 
-## 방법 2: Heatmap-Weighted Pooling
+## Method 2: Heatmap-Weighted Pooling
 
-### 아이디어
+### Idea
 
-Heatmap 자체를 spatial attention으로 사용하여 backbone feature의 weighted sum 계산.
+Use the heatmap itself as spatial attention to compute a weighted sum of backbone features.
 
 ```python
 def heatmap_weighted_pooling(backbone_feat, heatmaps):
@@ -284,30 +284,30 @@ def heatmap_weighted_pooling(backbone_feat, heatmaps):
     # Weighted sum
     backbone_flat = backbone_feat.view(B, C, -1)  # [B, C, H*W]
 
-    # einsum: 관절별 weighted sum
+    # einsum: per-joint weighted sum
     joint_features = torch.einsum('bkn,bcn->bkc', attn_weights, backbone_flat)
     # [B, K, C]
 
     return joint_features
 ```
 
-### 장단점
+### Pros and Cons
 
-**장점**:
-- Soft attention으로 더 넓은 영역 참조
-- Heatmap uncertainty가 자연스럽게 반영됨
+**Pros**:
+- Soft attention references a wider area
+- Heatmap uncertainty is naturally reflected
 
-**단점**:
-- Heatmap이 detach되면 attention도 고정됨
-- 계산량이 grid_sample보다 많음
+**Cons**:
+- If heatmap is detached, the attention is also fixed
+- Higher computation cost than grid_sample
 
 ---
 
-## 방법 3: Cross-Attention (DETR 스타일)
+## Method 3: Cross-Attention (DETR Style)
 
-### 아이디어
+### Idea
 
-각 관절을 query로, backbone spatial features를 key/value로 사용하는 transformer attention.
+Transformer attention where each joint is used as a query, and backbone spatial features as key/value.
 
 ```python
 class JointCrossAttention(nn.Module):
@@ -342,56 +342,56 @@ class JointCrossAttention(nn.Module):
         return depth_features, attn_weights
 ```
 
-### 장단점
+### Pros and Cons
 
-**장점**:
-- 학습 가능한 attention으로 최적 위치 탐색
-- 여러 위치에서 정보 통합 가능
-- Attention map 시각화로 해석 가능
+**Pros**:
+- Learnable attention searches for optimal positions
+- Can integrate information from multiple positions
+- Interpretable through attention map visualization
 
-**단점**:
-- 구현 복잡
-- 파라미터 증가
-- 학습이 불안정할 수 있음
+**Cons**:
+- Complex implementation
+- Increased parameters
+- Training can be unstable
 
 ---
 
-## 방법 4: Deformable Attention
+## Method 4: Deformable Attention
 
-### 아이디어
+### Idea
 
-DETR의 deformable attention처럼, 각 관절이 학습된 offset으로 여러 위치를 sparse하게 샘플링.
+Like DETR's deformable attention, each joint sparsely samples multiple locations using learned offsets.
 
 ```python
-# 각 관절마다 K개의 sampling point
-# offset을 학습하여 최적 위치 탐색
+# K sampling points per joint
+# Offsets are learned to find optimal positions
 sampling_offsets = self.offset_network(coords_2d)  # [B, K, num_points, 2]
 sampling_locations = coords_2d.unsqueeze(2) + sampling_offsets
 
-# 각 위치에서 feature 샘플링 후 weighted sum
+# Sample features at each location and compute weighted sum
 ```
 
-### 장단점
+### Pros and Cons
 
-**장점**: Sparse sampling으로 효율적, 유연한 receptive field
+**Pros**: Efficient sparse sampling, flexible receptive field
 
-**단점**: 구현 복잡, 학습 어려움
+**Cons**: Complex implementation, difficult training
 
 ---
 
-## 구현 우선순위
+## Implementation Priority
 
-| 순위 | 방법 | 이유 |
+| Priority | Method | Reason |
 |------|------|------|
-| 1 | **Grid Sampling** | 간단, 직관적, 빠른 검증 |
-| 2 | Heatmap Weighted | Grid의 soft 버전 |
-| 3 | Cross-Attention | 성능 개선 여지 있을 때 |
+| 1 | **Grid Sampling** | Simple, intuitive, quick validation |
+| 2 | Heatmap Weighted | Soft version of Grid |
+| 3 | Cross-Attention | When there is room for performance improvement |
 
 ---
 
-## 다음 단계
+## Next Steps
 
-1. [ ] Grid Sampling 기반 `CustomEgoposeSpatialLiftingHead` 구현
-2. [ ] Smoke test로 훈련 파이프라인 검증
-3. [ ] Full dataset 훈련 및 baseline 비교
-4. [ ] 필요시 방법 2, 3 시도
+1. [ ] Implement Grid Sampling-based `CustomEgoposeSpatialLiftingHead`
+2. [ ] Smoke test to verify training pipeline
+3. [ ] Full dataset training and baseline comparison
+4. [ ] Try Method 2, 3 if needed

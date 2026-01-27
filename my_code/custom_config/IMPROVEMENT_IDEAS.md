@@ -1,23 +1,23 @@
-# EgoPose 3D 개선 아이디어
+# EgoPose 3D Improvement Ideas
 
-> 최종 업데이트: 2026-01-21
+> Last updated: 2026-01-21
 
 ---
 
-## 목차
+## Table of Contents
 
-1. [EfficientHeatmapDecoder 개선](#efficientheatmapdecoder-개선)
+1. [EfficientHeatmapDecoder Improvement](#efficientheatmapdecoder-improvement)
 2. [Dual Backbone Mutual Learning](#dual-backbone-mutual-learning)
-3. [구조적 문제: Heatmap의 3D 정보 한계](#구조적-문제-heatmap의-3d-정보-인코딩-한계)
+3. [Structural Problem: Limitations of 3D Information Encoding in Heatmaps](#structural-problem-limitations-of-3d-information-encoding-in-heatmaps)
 4. [Backbone Feature Fusion](#backbone-feature-fusion)
-5. [Attention 기반 Lifting Network](#attention-기반-lifting-network)
-6. [Cross Attention 기반 HMD Fusion](#cross-attention-기반-hmd-fusion)
+5. [Attention-based Lifting Network](#attention-based-lifting-network)
+6. [Cross Attention-based HMD Fusion](#cross-attention-based-hmd-fusion)
 
 ---
 
-## EfficientHeatmapDecoder 개선
+## EfficientHeatmapDecoder Improvement
 
-### 현재 구조 분석
+### Current Architecture Analysis
 
 ```
 Z [64] → FC → [256] → reshape → [256, 1, 1]
@@ -31,29 +31,29 @@ Z [64] → FC → [256] → reshape → [256, 1, 1]
       Heatmap [16, 47, 47]
 ```
 
-**현재 파라미터**: 1.35M (Original 40M 대비 96.6% 감소)
+**Current parameters**: 1.35M (96.6% reduction compared to original 40M)
 
-**문제점**:
-1. Z[64]가 FC로만 처리됨 → spatial 구조에 대한 guidance 부족
-2. 단순 순차 upsampling → 정보 흐름이 한 방향
-3. 각 관절이 동일한 경로로 생성 → 관절별 특성 반영 어려움
+**Problems**:
+1. Z[64] is processed only by FC → lack of guidance for spatial structure
+2. Simple sequential upsampling → information flow is unidirectional
+3. All joints are generated through the same path → difficult to reflect joint-specific characteristics
 
 ---
 
-### 개선 방안 1: AdaIN (Adaptive Instance Normalization) ⭐ 추천
+### Improvement Option 1: AdaIN (Adaptive Instance Normalization) ⭐ Recommended
 
-Z를 style로 사용하여 각 layer에 영향을 주는 방식 (StyleGAN 스타일):
+A method where Z is used as a style to influence each layer (StyleGAN style):
 
 ```python
 class AdaINHeatmapDecoder(nn.Module):
-    """StyleGAN 방식: Z가 각 layer의 normalization에 영향"""
+    """StyleGAN approach: Z influences the normalization of each layer"""
     def __init__(self, num_classes=16, input_size=64):
         super().__init__()
 
-        # Learned constant (시작점) - 4x4 spatial
+        # Learned constant (starting point) - 4x4 spatial
         self.const = nn.Parameter(torch.randn(1, 256, 4, 4))
 
-        # Z → style parameters (각 layer별 scale, shift)
+        # Z → style parameters (scale, shift for each layer)
         self.style_fc = nn.ModuleList([
             nn.Linear(input_size, 256 * 2),  # layer 1: scale + shift
             nn.Linear(input_size, 128 * 2),  # layer 2
@@ -99,26 +99,26 @@ class AdaINHeatmapDecoder(nn.Module):
         return heatmap
 ```
 
-**장점**:
-- Z가 전체 생성 과정에 **지속적으로 영향**
-- Learned constant에서 시작 → 더 안정적인 학습
-- 파라미터 증가 적음 (~0.1M)
+**Advantages**:
+- Z **continuously influences** the entire generation process
+- Starts from learned constant → more stable training
+- Minimal parameter increase (~0.1M)
 
-**예상 파라미터**: ~1.5M
+**Expected parameters**: ~1.5M
 
 ---
 
-### 개선 방안 2: PixelShuffle 기반 Upsampling
+### Improvement Option 2: PixelShuffle-based Upsampling
 
-ConvTranspose2d 대신 PixelShuffle 사용 (checkerboard artifact 감소):
+Using PixelShuffle instead of ConvTranspose2d (reduces checkerboard artifacts):
 
 ```python
 class PixelShuffleHeatmapDecoder(nn.Module):
-    """PixelShuffle로 checkerboard artifact 제거"""
+    """Eliminates checkerboard artifacts with PixelShuffle"""
     def __init__(self, num_classes=16, input_size=64):
         super().__init__()
 
-        self.fc = nn.Linear(input_size, 256 * 4 * 4)  # 직접 4x4로
+        self.fc = nn.Linear(input_size, 256 * 4 * 4)  # Directly to 4x4
 
         # PixelShuffle: Conv → channel shuffle → spatial increase
         self.up1 = nn.Sequential(
@@ -159,27 +159,27 @@ class PixelShuffleHeatmapDecoder(nn.Module):
         return x
 ```
 
-**장점**:
-- Checkerboard artifact 제거
-- 더 부드러운 upsampling
-- ConvTranspose2d와 비슷한 파라미터
+**Advantages**:
+- Eliminates checkerboard artifacts
+- Smoother upsampling
+- Similar parameters to ConvTranspose2d
 
 ---
 
-### 개선 방안 3: Joint-wise Parallel Generation
+### Improvement Option 3: Joint-wise Parallel Generation
 
-각 관절별로 독립적인 heatmap 생성:
+Independent heatmap generation for each joint:
 
 ```python
 class JointWiseHeatmapDecoder(nn.Module):
-    """각 관절이 독립적인 decoder path로 생성"""
+    """Each joint is generated through an independent decoder path"""
     def __init__(self, num_classes=16, input_size=64):
         super().__init__()
 
-        # Z → 관절별 latent 분리
+        # Z → separate latent per joint
         self.joint_fc = nn.Linear(input_size, num_classes * 32)  # [B, 16*32]
 
-        # 공유 upsampler (파라미터 효율성)
+        # Shared upsampler (parameter efficiency)
         self.shared_upsample = nn.Sequential(
             nn.ConvTranspose2d(32, 32, 4, 2, 1),  # 1→2
             nn.BatchNorm2d(32),
@@ -198,7 +198,7 @@ class JointWiseHeatmapDecoder(nn.Module):
             nn.ReLU(),
         )
 
-        # 관절별 refinement (각자 다른 가중치)
+        # Per-joint refinement (different weights for each)
         self.joint_refine = nn.ModuleList([
             nn.Sequential(
                 nn.Upsample(size=(47, 47), mode='bilinear', align_corners=False),
@@ -208,7 +208,7 @@ class JointWiseHeatmapDecoder(nn.Module):
 
     def forward(self, z):
         B = z.size(0)
-        # Z → 관절별 분리
+        # Z → separate per joint
         joint_z = self.joint_fc(z).view(B, 16, 32)  # [B, 16, 32]
 
         heatmaps = []
@@ -221,28 +221,28 @@ class JointWiseHeatmapDecoder(nn.Module):
         return torch.cat(heatmaps, dim=1)  # [B, 16, 47, 47]
 ```
 
-**장점**:
-- 각 관절의 특성(크기, 분포)을 개별 학습
-- 공유 backbone + 관절별 head 구조
+**Advantages**:
+- Individually learns characteristics of each joint (size, distribution)
+- Shared backbone + per-joint head architecture
 
-**단점**:
-- 순차 처리로 속도 저하 가능 (병렬화 필요)
+**Disadvantages**:
+- Potential speed degradation due to sequential processing (parallelization needed)
 
 ---
 
-### 개선 방안 4: Attention 기반 Upsampling
+### Improvement Option 4: Attention-based Upsampling
 
-Self-attention으로 global context 활용:
+Utilizing global context with self-attention:
 
 ```python
 class AttentionHeatmapDecoder(nn.Module):
-    """Low-resolution에서 self-attention으로 global context"""
+    """Global context via self-attention at low resolution"""
     def __init__(self, num_classes=16, input_size=64):
         super().__init__()
 
-        self.fc = nn.Linear(input_size, 256 * 4 * 4)  # 직접 4x4로
+        self.fc = nn.Linear(input_size, 256 * 4 * 4)  # Directly to 4x4
 
-        # Self-attention at 4x4 (16 tokens - 효율적)
+        # Self-attention at 4x4 (16 tokens - efficient)
         self.self_attn = nn.MultiheadAttention(256, num_heads=4, batch_first=True)
         self.attn_norm = nn.LayerNorm(256)
 
@@ -279,18 +279,18 @@ class AttentionHeatmapDecoder(nn.Module):
         return heatmap
 ```
 
-**장점**:
-- 관절 간 관계를 attention으로 모델링
-- Low-resolution (4x4)에서 attention → 효율적
+**Advantages**:
+- Models inter-joint relationships through attention
+- Attention at low resolution (4x4) → efficient
 
 ---
 
-### 개선 방안 5: UNet-style Skip Connection
+### Improvement Option 5: UNet-style Skip Connection
 
-Encoder의 intermediate feature를 decoder에 연결:
+Connecting encoder's intermediate features to the decoder:
 
 ```
-현재 Encoder 구조:
+Current Encoder architecture:
 Heatmap [16, 47, 47]
     ↓ conv1 (stride 2)
 [64, 24, 24]  ← skip1
@@ -301,7 +301,7 @@ Heatmap [16, 47, 47]
     ↓ flatten + FC
 Z [64]
 
-개선된 Decoder:
+Improved Decoder:
 Z [64]
     ↓ FC + reshape
 [256, 6, 6]
@@ -315,42 +315,42 @@ Z [64]
 Heatmap [16, 47, 47]
 ```
 
-**장점**:
-- Encoder 정보 재사용으로 reconstruction 정확도 향상
-- Low-level detail 보존
+**Advantages**:
+- Improved reconstruction accuracy through encoder information reuse
+- Preserves low-level details
 
-**단점**:
-- Encoder 수정 필요 (intermediate features 반환)
-
----
-
-### 개선 방안 비교
-
-| 방안 | 구현 난이도 | 예상 효과 | 파라미터 증가 | 추천 순위 |
-|------|------------|----------|--------------|----------|
-| **AdaIN** | 중간 | ⭐⭐⭐ | ~0.1M | **1** |
-| **PixelShuffle** | 낮음 | ⭐⭐ | 없음 | **2** |
-| Attention (low-res) | 중간 | ⭐⭐⭐ | ~0.2M | 3 |
-| Joint-wise | 높음 | ⭐⭐ | ~0.5M | 4 |
-| UNet Skip | 높음 | ⭐⭐⭐ | 없음 | 5 |
-
-**추천**: AdaIN + PixelShuffle 조합
+**Disadvantages**:
+- Requires encoder modification (returning intermediate features)
 
 ---
 
-### 구현 우선순위
+### Improvement Option Comparison
 
-1. **AdaIN 기반 decoder** - Z가 전체 생성에 영향
-2. **PixelShuffle** - checkerboard artifact 제거
-3. 필요시 Attention 추가
+| Option | Implementation Difficulty | Expected Effect | Parameter Increase | Recommendation Rank |
+|--------|--------------------------|-----------------|-------------------|---------------------|
+| **AdaIN** | Medium | ⭐⭐⭐ | ~0.1M | **1** |
+| **PixelShuffle** | Low | ⭐⭐ | None | **2** |
+| Attention (low-res) | Medium | ⭐⭐⭐ | ~0.2M | 3 |
+| Joint-wise | High | ⭐⭐ | ~0.5M | 4 |
+| UNet Skip | High | ⭐⭐⭐ | None | 5 |
+
+**Recommendation**: AdaIN + PixelShuffle combination
+
+---
+
+### Implementation Priority
+
+1. **AdaIN-based decoder** - Z influences the entire generation
+2. **PixelShuffle** - eliminates checkerboard artifacts
+3. Add Attention if needed
 
 ---
 
 ## Dual Backbone Mutual Learning
 
-서로 다른 Pretrained Weights (COCO, MPII)를 사용하는 Dual Backbone 구조에서의 Knowledge Transfer 전략.
+Knowledge Transfer strategy in a Dual Backbone architecture using different Pretrained Weights (COCO, MPII).
 
-### 현재 구현 분석
+### Current Implementation Analysis
 
 ```python
 # custom_egopose_baselinel1_head_multi_backbone.py
@@ -358,16 +358,16 @@ loss_backbone_latant = MSE(backbone_feat, backbone_feat2)
 loss_backbone_heatmap = MSE(final_heatmap, final_heatmap2)
 ```
 
-### 문제점
-1. **Diversity 손실**: 두 feature를 동일하게 만들려고 함
-2. **Pretrained 강점 상실**: COCO/MPII 각각의 고유한 knowledge 소멸
-3. **방향성 부재**: 양방향 gradient로 어느 쪽이 teacher인지 불명확
+### Problems
+1. **Diversity loss**: Trying to make two features identical
+2. **Loss of pretrained strengths**: Unique knowledge from COCO/MPII is destroyed
+3. **Lack of directionality**: Bidirectional gradient makes it unclear which side is the teacher
 
 ---
 
-### 1. Ensemble Teacher (추천)
+### 1. Ensemble Teacher (Recommended)
 
-두 backbone의 출력을 앙상블하여 더 나은 pseudo-teacher 생성.
+Creating a better pseudo-teacher by ensembling outputs from both backbones.
 
 ```
 ┌───────────────┐     ┌───────────────┐
@@ -388,17 +388,17 @@ loss_backbone_heatmap = MSE(final_heatmap, final_heatmap2)
 
 ```python
 def ensemble_mutual_learning_loss(feat1, feat2, heatmap1, heatmap2):
-    # Confidence 기반 동적 가중치
+    # Confidence-based dynamic weighting
     conf1 = heatmap1.max(dim=-1)[0].max(dim=-1)[0].mean()
     conf2 = heatmap2.max(dim=-1)[0].max(dim=-1)[0].mean()
 
     w1 = conf1 / (conf1 + conf2 + 1e-6)
     w2 = conf2 / (conf1 + conf2 + 1e-6)
 
-    # Ensemble feature (detach로 gradient 차단)
+    # Ensemble feature (gradient blocked with detach)
     feat_ensemble = w1 * feat1.detach() + w2 * feat2.detach()
 
-    # 각 backbone이 ensemble을 모방
+    # Each backbone mimics the ensemble
     loss1 = F.mse_loss(feat1, feat_ensemble)
     loss2 = F.mse_loss(feat2, feat_ensemble)
 
@@ -409,7 +409,7 @@ def ensemble_mutual_learning_loss(feat1, feat2, heatmap1, heatmap2):
 
 ### 2. Progressive Warmup
 
-초기에는 pretrained 보존, 점진적으로 mutual learning 도입.
+Preserving pretrained weights initially, gradually introducing mutual learning.
 
 ```python
 def get_mutual_loss_weight(epoch, warmup_epochs=5, rampup_epochs=10):
@@ -425,7 +425,7 @@ def get_mutual_loss_weight(epoch, warmup_epochs=5, rampup_epochs=10):
 
 ### 3. Heatmap KL Divergence
 
-Deep Mutual Learning 논문 방식:
+Deep Mutual Learning paper approach:
 
 ```python
 def heatmap_kl_divergence_loss(heatmap1, heatmap2, temperature=4.0):
@@ -445,46 +445,46 @@ def heatmap_kl_divergence_loss(heatmap1, heatmap2, temperature=4.0):
 
 ---
 
-### Dual Backbone 실험 우선순위
+### Dual Backbone Experiment Priority
 
-| 순위 | 방법 | 이유 |
-|------|------|------|
-| 1 | Ensemble Teacher | 구현 간단, 효과 검증됨 |
-| 2 | Progressive Warmup | 기존 방식에 쉽게 추가 가능 |
-| 3 | Heatmap KL Div | 논문 방식 재현 |
+| Rank | Method | Reason |
+|------|--------|--------|
+| 1 | Ensemble Teacher | Simple implementation, proven effectiveness |
+| 2 | Progressive Warmup | Easy to add to existing approach |
+| 3 | Heatmap KL Div | Reproducing the paper method |
 
 ---
 
-## 구조적 문제: Heatmap의 3D 정보 인코딩 한계
+## Structural Problem: Limitations of 3D Information Encoding in Heatmaps
 
-### 핵심 문제
+### Core Problem
 
 ```
-Backbone feat [2048, 8, 8]  ← 풍부한 3D 정보 (texture, context, depth cues)
+Backbone feat [2048, 8, 8]  ← Rich 3D information (texture, context, depth cues)
        ↓ (Deconv)
-Heatmap [16, 47, 47]        ← 2D 위치 정보만 남음 (depth 손실!)
+Heatmap [16, 47, 47]        ← Only 2D position information remains (depth lost!)
        ↓ (CNN Encoder)
-Z [64]                      ← 극단적 압축 (추가 손실)
+Z [64]                      ← Extreme compression (additional loss)
        ↓
-3D Pose                     ← depth 정보 부족으로 ambiguity
+3D Pose                     ← Ambiguity due to insufficient depth information
 ```
 
-### 학술적 근거
+### Academic Basis
 
-1. **Depth Ambiguity 문제**: "하나의 2D pose가 여러 3D pose로 매핑될 수 있음"
-2. **CNN Encoder의 정보 손실**: "CNN 기반 인코더가 heatmap 정보를 제대로 보존하지 못함"
-3. **Lifting by Image**: "이미지의 풍부한 semantic/texture 정보가 더 정확한 lifting에 기여"
+1. **Depth Ambiguity Problem**: "A single 2D pose can map to multiple 3D poses"
+2. **Information Loss in CNN Encoder**: "CNN-based encoder fails to properly preserve heatmap information"
+3. **Lifting by Image**: "Rich semantic/texture information from images contributes to more accurate lifting"
 
-### 결론
+### Conclusion
 
-**Heatmap은 2D 위치 인코딩에 최적화**되어 있으며, 3D depth 정보를 담기 어려움.
-→ **Backbone feature를 별도로 활용**하여 depth cues 보존 필요.
+**Heatmaps are optimized for 2D position encoding** and have difficulty containing 3D depth information.
+→ **Backbone features must be utilized separately** to preserve depth cues.
 
 ---
 
 ## Backbone Feature Fusion
 
-### 방안 A: Backbone + Heatmap Latent Concat (추천)
+### Option A: Backbone + Heatmap Latent Concat (Recommended)
 
 ```
 Backbone feat [2048, 8, 8]
@@ -503,7 +503,7 @@ Z_hm [64]                       │
          Pose Decoder → 3D Pose
 ```
 
-### 방안 B: 2D Coords + Backbone Feature
+### Option B: 2D Coords + Backbone Feature
 
 ```
 Heatmap → soft-argmax → 2D coords [16, 2] + conf [16]
@@ -519,15 +519,15 @@ Backbone feat → GAP → FC → Context [256]
 
 ---
 
-## Attention 기반 Lifting Network
+## Attention-based Lifting Network
 
-### Cross-Attention (2D → Backbone) ⭐ 추천
+### Cross-Attention (2D → Backbone) ⭐ Recommended
 
-각 관절의 2D 위치가 Backbone feature에서 해당 depth 정보를 쿼리:
+Each joint's 2D position queries the corresponding depth information from the backbone features:
 
 ```
-Query: 2D joint tokens [B, 16, D]    ← "이 2D 위치의 depth는?"
-Key/Value: Backbone tokens [B, 64, D] ← "spatial depth 정보"
+Query: 2D joint tokens [B, 16, D]    ← "What is the depth at this 2D position?"
+Key/Value: Backbone tokens [B, 64, D] ← "Spatial depth information"
                     ↓
             Cross-Attention
                     ↓
@@ -566,25 +566,25 @@ class CrossAttentionLifting(nn.Module):
         return pose_3d, attn_weights
 ```
 
-**장점**:
-1. 선택적 depth 쿼리: 각 관절이 필요한 spatial 위치에서 depth 정보
-2. 해석 가능: `attn_weights`로 어느 위치 참조했는지 시각화
-3. 역할 분리: 2D=Query(위치), Backbone=Key/Value(depth)
+**Advantages**:
+1. Selective depth querying: each joint gets depth information from the needed spatial location
+2. Interpretable: visualize which positions were referenced via `attn_weights`
+3. Role separation: 2D=Query (position), Backbone=Key/Value (depth)
 
 ---
 
-## Cross Attention 기반 HMD Fusion
+## Cross Attention-based HMD Fusion
 
-### Joint-wise Cross Attention (추천)
+### Joint-wise Cross Attention (Recommended)
 
-각 관절이 독립적으로 HMD 정보에 attend:
+Each joint independently attends to HMD information:
 
 ```python
 class JointHMDCrossAttention(nn.Module):
     def __init__(self, joint_dim=64, num_heads=4):
         super().__init__()
 
-        # HMD를 3개 token으로 (head, right_hand, left_hand)
+        # HMD as 3 tokens (head, right_hand, left_hand)
         self.hmd_embed = nn.Sequential(
             nn.Linear(9, 64),
             nn.ReLU(),
@@ -606,42 +606,42 @@ class JointHMDCrossAttention(nn.Module):
         return joint_features + attn_out  # Residual
 ```
 
-**효과**: 손 관절 → 손 HMD, 몸통 → head HMD로 자연스러운 매핑
+**Effect**: Natural mapping of hand joints → hand HMD, torso → head HMD
 
 ---
 
 ## Hybrid Lifting: Baseline + Attention Refinement ⭐ NEW
 
-> 2026-01-27 추가
+> Added 2026-01-27
 
-### 동기
+### Motivation
 
-| 모델 | MPJPE | 특징 |
-|------|-------|------|
-| **Baseline** | **41.37mm** 🏆 | Conv Encoder + Linear, 안정적 |
-| ViT Lifting v3 | 45.34mm | Full Attention, 학습 불안정 |
+| Model | MPJPE | Characteristics |
+|-------|-------|-----------------|
+| **Baseline** | **41.37mm** 🏆 | Conv Encoder + Linear, stable |
+| ViT Lifting v3 | 45.34mm | Full Attention, unstable training |
 
-**목표**: Baseline의 안정성 + ViT의 관절 관계 모델링 결합
-
----
-
-### 방안 비교
-
-| 방안 | 변경점 | 리스크 |
-|------|--------|--------|
-| 1. Attention HMD Fusion | HMD 융합만 변경 | 최소 |
-| 2. Joint-wise Feature | Per-joint pooling | 중간 |
-| **3. Conv + Attention Refinement** | **Conv Encoder 유지 + Attention 보완** | **낮음** |
+**Goal**: Combine Baseline stability + ViT's inter-joint relationship modeling
 
 ---
 
-### 방안 3 상세 설계 (선택)
+### Option Comparison
+
+| Option | Change | Risk |
+|--------|--------|------|
+| 1. Attention HMD Fusion | Only change HMD fusion | Minimal |
+| 2. Joint-wise Feature | Per-joint pooling | Medium |
+| **3. Conv + Attention Refinement** | **Keep Conv Encoder + supplement with Attention** | **Low** |
+
+---
+
+### Option 3 Detailed Design (Selected)
 
 ```
 Heatmap [16, 47, 47]
          ↓
 ┌─────────────────────────────────────────┐
-│  Conv Encoder (Baseline 동일)           │
+│  Conv Encoder (same as Baseline)        │
 │  Conv: 16→64→128→256, GAP → 64-dim      │
 └─────────────────────────────────────────┘
          ↓
@@ -649,7 +649,7 @@ Heatmap [16, 47, 47]
          ↓
 ┌─────────────────────────────────────────┐
 │  Z Reshape: [B, 64] → [B, 16, 4]        │
-│  (관절당 4-dim latent)                  │
+│  (4-dim latent per joint)               │
 └─────────────────────────────────────────┘
          ↓
 ┌─────────────────────────────────────────┐
@@ -658,7 +658,7 @@ Heatmap [16, 47, 47]
 └─────────────────────────────────────────┘
          ↓
 ┌─────────────────────────────────────────┐
-│  Self-Attention (관절 간 관계)          │
+│  Self-Attention (inter-joint relations) │
 │  Query/Key/Value: [B, 16, D]            │
 │  Output: [B, 16, D]                     │
 └─────────────────────────────────────────┘
@@ -679,17 +679,17 @@ Heatmap [16, 47, 47]
 
 ---
 
-### 핵심 설계 원칙
+### Core Design Principles
 
-1. **Conv Encoder 재사용**: Baseline의 검증된 heatmap→latent 변환
-2. **Z 분해**: 64-dim을 16관절 × 4-dim으로 재해석
-3. **Self-Attention**: 관절 간 관계 (skeleton structure)
-4. **Cross-Attention HMD**: 관절별 HMD 정보 선택적 참조
-5. **LinearModel 제거**: Attention이 대체
+1. **Conv Encoder reuse**: Proven heatmap→latent transformation from Baseline
+2. **Z decomposition**: Reinterpret 64-dim as 16 joints x 4-dim
+3. **Self-Attention**: Inter-joint relationships (skeleton structure)
+4. **Cross-Attention HMD**: Selective reference to HMD information per joint
+5. **LinearModel removal**: Replaced by Attention
 
 ---
 
-### 구현 코드 (CustomEgoposeHybridLiftingHead)
+### Implementation Code (CustomEgoposeHybridLiftingHead)
 
 ```python
 class HybridLiftingModule(nn.Module):
@@ -699,7 +699,7 @@ class HybridLiftingModule(nn.Module):
                  num_heads=4, num_self_attn_layers=2, dropout=0.1):
         super().__init__()
 
-        # Z를 관절별로 분해: 64 = 16 * 4
+        # Decompose Z per joint: 64 = 16 * 4
         self.latent_per_joint = latent_dim // num_joints  # 4
 
         # Joint embedding: 4 → joint_dim
@@ -741,7 +741,7 @@ class HybridLiftingModule(nn.Module):
         joint_tokens = self.joint_embed(z_joints)  # [B, 16, D]
         joint_tokens = joint_tokens + self.pos_embed
 
-        # Self-Attention (관절 간 관계)
+        # Self-Attention (inter-joint relationships)
         for layer in self.self_attn_layers:
             joint_tokens = layer(joint_tokens)
 
@@ -762,33 +762,33 @@ class HybridLiftingModule(nn.Module):
 
 ---
 
-### Loss Functions (Baseline 동일)
+### Loss Functions (Same as Baseline)
 
-| Loss | Weight | 역할 |
+| Loss | Weight | Role |
 |------|--------|------|
 | `loss_kpt` (MSE) | 1000 | 2D heatmap supervision |
 | `loss_heatmap_recon` (MSE) | 250 | Heatmap reconstruction |
 | `loss_pose_l2norm` | 1.0 | 3D pose L2 distance |
-| `loss_cosine_similarity` | 0.1 | 방향 유사도 |
-| `loss_limb_length` | 0.25 | 팔다리 길이 일관성 |
+| `loss_cosine_similarity` | 0.1 | Directional similarity |
+| `loss_limb_length` | 0.25 | Limb length consistency |
 | `loss_hmd` (MSE) | 1.0 | HMD reconstruction |
 
 ---
 
-### 예상 효과
+### Expected Effects
 
-| 요소 | Baseline | Hybrid | 효과 |
-|------|----------|--------|------|
-| Heatmap→Z | Conv Encoder | **동일** | 안정성 유지 |
-| Z 활용 | Global (64) | Per-joint (16×4) | 관절별 정보 분리 |
-| 관절 관계 | Linear (implicit) | Self-Attn (explicit) | Skeleton 구조 학습 |
-| HMD 융합 | Add | Cross-Attn | 선택적 참조 |
+| Component | Baseline | Hybrid | Effect |
+|-----------|----------|--------|--------|
+| Heatmap→Z | Conv Encoder | **Same** | Stability maintained |
+| Z utilization | Global (64) | Per-joint (16x4) | Per-joint information separation |
+| Joint relations | Linear (implicit) | Self-Attn (explicit) | Skeleton structure learning |
+| HMD fusion | Add | Cross-Attn | Selective reference |
 
-**예상**: Baseline 수준 안정성 + 관절 관계 모델링 → 41mm 이하 목표
+**Expected**: Baseline-level stability + inter-joint relationship modeling → Target below 41mm
 
 ---
 
-## 참고 논문
+## Reference Papers
 
 1. **Deep Mutual Learning** (Zhang et al., 2017) - arXiv:1706.00384
 2. **Knowledge Distillation** (Hinton et al., 2015) - arXiv:1503.02531
@@ -798,6 +798,6 @@ class HybridLiftingModule(nn.Module):
 
 ---
 
-> **실험 결과**: `EXPERIMENT_RESULTS.md` 참조
+> **Experiment results**: See `EXPERIMENT_RESULTS.md`
 > - Single COCO Baseline: **41.37mm** 🏆
-> - 목표: 41mm 이하 달성
+> - Target: Achieve below 41mm

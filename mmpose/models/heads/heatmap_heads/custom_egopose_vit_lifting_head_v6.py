@@ -650,6 +650,8 @@ class CustomEgoposeViTLiftingHeadV6(BaseHead):
         loss_cosine_similarity: ConfigType = dict(type='cosine_similarity', loss_weight=0.1),
         loss_limb_length: ConfigType = dict(type='limb_length', loss_weight=0.25),
         loss_hmd: ConfigType = dict(type='MSELoss', loss_weight=1.0),
+        loss_bone_length: OptConfigType = None,
+        loss_symmetry: OptConfigType = None,
         decoder: OptConfigType = None,
         init_cfg: OptConfigType = None,
     ):
@@ -670,6 +672,8 @@ class CustomEgoposeViTLiftingHeadV6(BaseHead):
         self.loss_cosine_similarity_module = MODELS.build(loss_cosine_similarity)
         self.loss_limb_length_module = MODELS.build(loss_limb_length)
         self.loss_hmd_module = MODELS.build(loss_hmd)
+        self.loss_bone_length_module = MODELS.build(loss_bone_length) if loss_bone_length else None
+        self.loss_symmetry_module = MODELS.build(loss_symmetry) if loss_symmetry else None
 
         # ViT Lifting Network v6
         self.lifting_network = ViTLiftingNetworkV6(
@@ -888,6 +892,16 @@ class CustomEgoposeViTLiftingHeadV6(BaseHead):
         losses['loss_pose_l2norm'] = torch.mean(loss_pose_l2norm)
         losses['loss_cosine_similarity'] = torch.mean(loss_cosine_similarity)
         losses['loss_limb_length'] = torch.mean(loss_limb_length)
+
+        # Bone Length Constraint Loss
+        if self.loss_bone_length_module is not None:
+            loss_bone_length = self.loss_bone_length_module(pose_3d, gt_keypoint_3d)
+            losses['loss_bone_length'] = torch.mean(loss_bone_length)
+
+        # Symmetry Loss
+        if self.loss_symmetry_module is not None:
+            loss_symmetry = self.loss_symmetry_module(pose_3d)
+            losses['loss_symmetry'] = torch.mean(loss_symmetry)
 
         # HMD Loss
         loss_hmd = self.loss_hmd_module(hmd_recon.double(), HMD_info.double())

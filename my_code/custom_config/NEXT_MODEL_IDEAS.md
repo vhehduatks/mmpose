@@ -1,49 +1,49 @@
-# 다음 모델 아이디어 (2026-01-27)
+# Next Model Ideas (2026-01-27)
 
-## 문제 분석
+## Problem Analysis
 
-### 핵심 발견
+### Key Findings
 
-| 모델 | Full Body | Upper Body | Lower Body |
+| Model | Full Body | Upper Body | Lower Body |
 |------|-----------|------------|------------|
 | **Baseline** | **41.37mm** | 29.42mm | **53.31mm** |
 | **ViT v3** | 45.34mm | **23.49mm** ⭐ | 67.19mm |
 
-**ViT v3의 역설:**
-- Upper Body: Baseline보다 **-5.93mm 좋음** (최고!)
-- Lower Body: Baseline보다 **+13.88mm 나쁨**
-- Full Body 차이(+3.97mm)의 대부분이 Lower Body에서 발생
+**The Paradox of ViT v3:**
+- Upper Body: **-5.93mm better** than Baseline (best!)
+- Lower Body: **+13.88mm worse** than Baseline
+- Most of the Full Body difference (+3.97mm) comes from Lower Body
 
-### 원인 분석
+### Root Cause Analysis
 
 ```
-HMD 정보 구성:
-  ✓ Head position (3D)    → Upper Body에 유리
-  ✓ Right hand (3D)       → Upper Body에 유리
-  ✓ Left hand (3D)        → Upper Body에 유리
-  ✗ Lower body 정보 없음   → Lower Body에 불리
+HMD information composition:
+  ✓ Head position (3D)    → Beneficial for Upper Body
+  ✓ Right hand (3D)       → Beneficial for Upper Body
+  ✓ Left hand (3D)        → Beneficial for Upper Body
+  ✗ No Lower body info    → Disadvantageous for Lower Body
 
-Baseline의 강점:
-  - HeatmapEncoder가 전체 body의 2D 정보를 균등하게 Z에 encoding
-  - Z[64]가 모든 관절에 대한 balanced representation
-  - HMD는 보조 역할만 (Z + HMD concat)
+Baseline's strengths:
+  - HeatmapEncoder uniformly encodes 2D info of the entire body into Z
+  - Z[64] provides balanced representation for all joints
+  - HMD serves only as auxiliary (Z + HMD concat)
 
-ViT v3의 약점:
-  - HMD Cross-Attention이 상체에 편향된 depth reference 제공
-  - Joint Tokens가 HMD 기준으로 depth 학습
-  - Lower Body는 Self-Attention만으로 depth 추정 → HMD anchor 없이 불안정
+ViT v3's weaknesses:
+  - HMD Cross-Attention provides depth reference biased toward upper body
+  - Joint Tokens learn depth based on HMD reference
+  - Lower Body estimates depth only via Self-Attention → unstable without HMD anchor
 ```
 
 ---
 
-## Option 1: Upper-Lower Decoupled Network (권장) ⭐
+## Option 1: Upper-Lower Decoupled Network (Recommended) ⭐
 
-### 핵심 아이디어
-- Upper Body: ViT v3 스타일 (HMD 활용, 23.49mm 달성)
-- Lower Body: Baseline 스타일 (HMD 없이, Z vector 기반)
-- 각 부위에 최적화된 구조를 분리하여 사용
+### Core Idea
+- Upper Body: ViT v3 style (leveraging HMD, achieved 23.49mm)
+- Lower Body: Baseline style (without HMD, Z vector based)
+- Use optimized architecture separately for each body part
 
-### 구조
+### Architecture
 
 ```
                     Backbone feat [2048, 8, 8]
@@ -73,7 +73,7 @@ ViT v3의 약점:
                         3D Pose [16, 3]
 ```
 
-### 관절 분할
+### Joint Partition
 
 **Upper Body (8 joints):**
 - 0: Head
@@ -95,42 +95,42 @@ ViT v3의 약점:
 - 14: L_Foot
 - 15: Pelvis
 
-### 예상 결과
+### Expected Results
 
 ```
-Upper Body: 23.49mm (ViT v3 수준)
-Lower Body: 53.31mm (Baseline 수준)
+Upper Body: 23.49mm (ViT v3 level)
+Lower Body: 53.31mm (Baseline level)
 Full Body:  (23.49 * 8 + 53.31 * 8) / 16 = 38.40mm
 
-→ Baseline(41.37mm)보다 ~3mm 개선 가능!
+→ ~3mm improvement over Baseline (41.37mm)!
 ```
 
-### 장점
-- 각 부위에 최적화된 구조 사용
-- HMD 정보가 있는 Upper Body에만 HMD Cross-Attention 적용
-- Lower Body는 Baseline의 검증된 구조 재사용
+### Advantages
+- Uses optimized architecture for each body part
+- Applies HMD Cross-Attention only to Upper Body where HMD info is available
+- Reuses the proven Baseline architecture for Lower Body
 
-### 단점
-- 모델 복잡도 증가 (두 개의 branch)
-- Upper/Lower 경계 관절의 일관성 문제 가능
+### Disadvantages
+- Increased model complexity (two branches)
+- Potential consistency issues at Upper/Lower boundary joints
 
 ---
 
-## Option 2: Hierarchical Pose Estimation (v2 - Cross-Attention 기반)
+## Option 2: Hierarchical Pose Estimation (v2 - Cross-Attention Based)
 
-### 핵심 아이디어
-- Stage 1: Upper Body를 먼저 예측 (anchor)
-- Stage 2: Upper pose + 이미지를 조건으로 Lower Body 예측
-- **Cross-Attention으로 2D 위치 학습** (Self-Attention 중복 제거)
-- **Heatmap Recon Loss로 2D supervision** 보장
+### Core Idea
+- Stage 1: Predict Upper Body first (anchor)
+- Stage 2: Predict Lower Body conditioned on Upper pose + image
+- **Learn 2D positions via Cross-Attention** (eliminates Self-Attention redundancy)
+- **Ensure 2D supervision via Heatmap Recon Loss**
 
-### 구조
+### Architecture
 
 ```
                     Backbone feat [2048, 8, 8]
                               │
                               ▼
-                    Spatial Tokens [64, D]  ← 1번만 생성 (공유)
+                    Spatial Tokens [64, D]  ← Generated once (shared)
                               │
               ┌───────────────┴───────────────┐
               │                               │
@@ -157,7 +157,7 @@ Full Body:  (23.49 * 8 + 53.31 * 8) / 16 = 38.40mm
 │  3D Head → Upper [8,3]───────┼─┘           │                  │
 │           │                  │              ▼                  │
 │           ▼                  │   Lower Pose [8, 3]           │
-│  Pose Embed [8, D]───────────┼─→ (Fusion Layer로 전달)       │
+│  Pose Embed [8, D]───────────┼─→ (Passed to Fusion Layer)    │
 │                              │                                │
 └──────────────────────────────┘ └─────────────────────────────┘
                                               │
@@ -165,49 +165,49 @@ Full Body:  (23.49 * 8 + 53.31 * 8) / 16 = 38.40mm
                               Concat → Full Pose [16, 3]
 ```
 
-### Fusion Layer (Upper 정보 결합)
+### Fusion Layer (Combining Upper Info)
 
 ```python
-# Upper Joint Tokens [8, D] - 이미지 특징
-# Upper Pose Embedding [8, D] - 3D 좌표 정보
+# Upper Joint Tokens [8, D] - image features
+# Upper Pose Embedding [8, D] - 3D coordinate info
 fused = self.fusion_linear(
     torch.cat([upper_joint_tokens, upper_pose_embedding], dim=-1)
 )  # [8, 2D] → [8, D]
 ```
 
-### Loss 구성
+### Loss Composition
 
-| Loss | 대상 | 역할 |
+| Loss | Target | Role |
 |------|------|------|
-| `loss_upper_heatmap_recon` | Upper Heatmap [8] | **Upper 2D 위치 학습** |
-| `loss_lower_heatmap_recon` | Lower Heatmap [8] | **Lower 2D 위치 학습** |
-| `loss_pose_l2norm` | Full Pose [16, 3] | 3D 좌표 |
-| `loss_cosine_similarity` | Full Pose | 방향 |
-| `loss_limb_length` | Full Pose | 뼈 길이 |
-| `loss_hmd` | HMD reconstruction | HMD 일관성 |
+| `loss_upper_heatmap_recon` | Upper Heatmap [8] | **Upper 2D position learning** |
+| `loss_lower_heatmap_recon` | Lower Heatmap [8] | **Lower 2D position learning** |
+| `loss_pose_l2norm` | Full Pose [16, 3] | 3D coordinates |
+| `loss_cosine_similarity` | Full Pose | Direction |
+| `loss_limb_length` | Full Pose | Bone length |
+| `loss_hmd` | HMD reconstruction | HMD consistency |
 
-### 장점
-- **Spatial Tokens 공유**: 중복 연산 제거
-- **Cross-Attention으로 2D 학습**: Self-Attention [72×72] → Cross-Attention [8×64]
-- **Heatmap Recon Loss**: 2D supervision 보장
-- **Hierarchical 구조 유지**: Lower가 Upper 결과 참조
-- Lower Body가 두 가지 정보 모두 활용:
-  1. Spatial Tokens → 이미지 2D 위치
-  2. Fused Upper → Upper Body와의 3D 관계
+### Advantages
+- **Spatial Tokens sharing**: Eliminates redundant computation
+- **2D learning via Cross-Attention**: Self-Attention [72x72] → Cross-Attention [8x64]
+- **Heatmap Recon Loss**: Ensures 2D supervision
+- **Maintains Hierarchical structure**: Lower references Upper results
+- Lower Body leverages both types of information:
+  1. Spatial Tokens → Image 2D positions
+  2. Fused Upper → 3D relationship with Upper Body
 
-### 단점
-- Upper Body 에러가 Lower Body로 전파 가능
-- Stage 간 gradient 흐름 설계 필요 (detach 여부)
+### Disadvantages
+- Upper Body errors may propagate to Lower Body
+- Requires careful gradient flow design between stages (detach decision)
 
 ---
 
 ## Option 3: Symmetric Prior Enhancement
 
-### 핵심 아이디어
-- 좌/우 관절의 대칭성을 prior로 활용
-- Standing pose에서 좌우 depth가 유사해야 함
+### Core Idea
+- Leverage left/right joint symmetry as a prior
+- In standing pose, left/right depth should be similar
 
-### 구조
+### Architecture
 
 ```
 Joint Tokens [16, D]
@@ -249,25 +249,25 @@ def symmetric_depth_loss(pose_3d):
     return loss
 ```
 
-### 장점
-- 구현 간단
-- 기존 모델에 추가 가능
-- 좌우 일관성 향상
+### Advantages
+- Simple to implement
+- Can be added to existing models
+- Improves left-right consistency
 
-### 단점
-- 비대칭 포즈 (한 발 들기 등)에서 penalty
-- Action에 따라 dynamic weight 필요
+### Disadvantages
+- Penalizes asymmetric poses (e.g., standing on one leg)
+- Requires dynamic weight depending on action
 
 ---
 
 ## Option 4: Lower Body Pelvis Proxy
 
-### 핵심 아이디어
-- HMD가 없는 Lower Body에 pseudo-anchor 제공
-- Upper Body 결과로부터 Pelvis 위치를 추정
-- Pelvis를 Lower Body의 "HMD" 역할로 사용
+### Core Idea
+- Provide pseudo-anchor for Lower Body which lacks HMD
+- Estimate Pelvis position from Upper Body results
+- Use Pelvis as "HMD" role for Lower Body
 
-### 구조
+### Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -304,13 +304,13 @@ def symmetric_depth_loss(pose_3d):
                     Full pose [16, 3]
 ```
 
-### Pelvis 추정 방법
+### Pelvis Estimation Method
 
 ```python
 # Option A: Learnable query
 pelvis_query = nn.Parameter(torch.randn(1, 1, D))
 
-# Option B: Upper pose에서 추정
+# Option B: Estimate from Upper pose
 def estimate_pelvis(upper_pose):
     # Pelvis ≈ midpoint of shoulders + offset
     l_shoulder = upper_pose[:, 6]  # L_Shoulder
@@ -323,122 +323,122 @@ def estimate_pelvis(upper_pose):
     return pelvis
 ```
 
-### 장점
-- HMD 없이도 Lower Body에 depth anchor 제공
-- Pelvis가 자연스러운 body center 역할
+### Advantages
+- Provides depth anchor for Lower Body even without HMD
+- Pelvis serves as a natural body center
 
-### 단점
-- Pelvis 추정 오류가 Lower Body로 전파
-- 2-stage 학습 복잡도
+### Disadvantages
+- Pelvis estimation errors propagate to Lower Body
+- 2-stage training complexity
 
 ---
 
-## 구현 우선순위
+## Implementation Priority
 
-| 순위 | Option | 예상 효과 | 복잡도 | 리스크 | 상태 |
+| Rank | Option | Expected Effect | Complexity | Risk | Status |
 |------|--------|----------|--------|--------|------|
-| 1 | **Option 1: Decoupled** | ~38mm | 중간 | 낮음 | ✅ 구현 완료 |
-| 2 | **Option 2: Hierarchical** | ~39mm | 중간 | 중간 | ✅ 구현 완료 |
-| 3 | Option 3: Symmetric | +1~2mm | 낮음 | 낮음 | 대기 |
-| 4 | Option 4: Pelvis Proxy | ~40mm | 중간 | 중간 | 대기 |
-| 5 | **Option 5: ViT v6 (SPT+LSA)** | ~43mm | 낮음 | 낮음 | ✅ 구현 완료 |
+| 1 | **Option 1: Decoupled** | ~38mm | Medium | Low | ✅ Implementation complete |
+| 2 | **Option 2: Hierarchical** | ~39mm | Medium | Medium | ✅ Implementation complete |
+| 3 | Option 3: Symmetric | +1~2mm | Low | Low | Pending |
+| 4 | Option 4: Pelvis Proxy | ~40mm | Medium | Medium | Pending |
+| 5 | **Option 5: ViT v6 (SPT+LSA)** | ~43mm | Low | Low | ✅ Implementation complete |
 
 ---
 
-## Option 1 구현 완료 (2026-01-27)
+## Option 1 Implementation Complete (2026-01-27)
 
-### 구현 파일
+### Implementation Files
 
-| 파일 | 용도 |
+| File | Purpose |
 |------|------|
-| `custom_egopose_decoupled_head.py` | Head 구현체 |
+| `custom_egopose_decoupled_head.py` | Head implementation |
 | `HMD_xregopose_decoupled_small_config.py` | Smoke test config |
 | `HMD_xregopose_decoupled_full_config.py` | Full training config |
 
-### Smoke Test 결과 (2 epochs, small dataset)
+### Smoke Test Results (2 epochs, small dataset)
 
 | Epoch | Full Body | Upper Body | Lower Body |
 |-------|-----------|------------|------------|
 | 1 | 637.00mm | 173.13mm | 1100.86mm |
 | 2 | 531.01mm | 124.07mm | 937.95mm |
 
-✅ 모델이 정상적으로 학습됨
-✅ Upper/Lower body 각각 개선 확인
-✅ 모든 loss 컴포넌트 작동 확인
+✅ Model trains normally
+✅ Confirmed improvement in Upper/Lower body separately
+✅ All loss components verified working
 
-### 다음 단계
+### Next Steps
 
 1. Full training (10 epochs)
-2. 결과 분석
-3. 필요시 Option 3-4 구현
+2. Result analysis
+3. Implement Options 3-4 if needed
 
 ---
 
-## Option 2 구현 완료 (2026-01-27)
+## Option 2 Implementation Complete (2026-01-27)
 
-### 구현 파일
+### Implementation Files
 
-| 파일 | 용도 |
+| File | Purpose |
 |------|------|
-| `custom_egopose_hierarchical_head.py` | Head 구현체 |
+| `custom_egopose_hierarchical_head.py` | Head implementation |
 | `HMD_xregopose_hierarchical_small_config.py` | Smoke test config |
 | `HMD_xregopose_hierarchical_full_config.py` | Full training config |
 
-### Smoke Test 결과 (2 epochs, small dataset)
+### Smoke Test Results (2 epochs, small dataset)
 
 | Epoch | Full Body | Upper Body | Lower Body |
 |-------|-----------|------------|------------|
 | 1 | 264.39mm | 177.70mm | 351.09mm |
 | 2 | 194.68mm | 137.30mm | 252.06mm |
 
-✅ 모델이 정상적으로 학습됨
-✅ Hierarchical 구조 (Lower가 Upper 참조) 작동 확인
-✅ Cross-Attention 기반 2D 학습 + Heatmap Recon Loss 작동 확인
+✅ Model trains normally
+✅ Hierarchical structure (Lower references Upper) verified working
+✅ Cross-Attention based 2D learning + Heatmap Recon Loss verified working
 
 ---
 
 ---
 
-## Option 5: ViT Lifting v6 (Small Dataset Optimized) ⭐ 신규
+## Option 5: ViT Lifting v6 (Small Dataset Optimized) ⭐ New
 
-### 배경
+### Background
 
-**문제점**: EgoPose 데이터셋(210K)은 ViT가 효과적으로 학습하기엔 매우 작음
-- ViT 최소 요구량: 14M+ (ImageNet-21k)
-- EgoPose: 210K (요구량의 **1.5%**)
-- ViT v3의 validation spike와 학습 불안정의 근본 원인
+**Problem**: The EgoPose dataset (210K) is very small for ViT to learn effectively
+- ViT minimum requirement: 14M+ (ImageNet-21k)
+- EgoPose: 210K (**1.5%** of the requirement)
+- Root cause of ViT v3's validation spike and training instability
 
-**해결책**: Small Dataset 전용 ViT 기법 적용
-- **SPT (Shifted Patch Tokenization)**: Locality inductive bias 주입
+**Solution**: Apply ViT techniques designed for small datasets
+- **SPT (Shifted Patch Tokenization)**: Injects locality inductive bias
 - **LSA (Locality Self-Attention)**: Learnable temperature + Diagonal masking
-- **모델 축소**: Overfitting 방지
+- **Model reduction**: Prevents overfitting
 
-### 핵심 기법
+### Key Techniques
 
 #### 1. Shifted Patch Tokenization (SPT)
 
 ```python
-# 기존: 단순 projection
+# Existing: Simple projection
 spatial_tokens = self.proj(backbone_feat)  # [B, D, 8, 8]
 
-# SPT: 5방향 shift로 locality 강화
-x_left  = F.pad(x, (1, 0, 0, 0))[:, :, :, :W]   # 왼쪽 shift
-x_right = F.pad(x, (0, 1, 0, 0))[:, :, :, 1:]   # 오른쪽 shift
-x_up    = F.pad(x, (0, 0, 1, 0))[:, :, :H, :]   # 위 shift
-x_down  = F.pad(x, (0, 0, 0, 1))[:, :, 1:, :]   # 아래 shift
+# SPT: Locality enhancement via 5-directional shift
+x_left  = F.pad(x, (1, 0, 0, 0))[:, :, :, :W]   # Left shift
+x_right = F.pad(x, (0, 1, 0, 0))[:, :, :, 1:]   # Right shift
+x_up    = F.pad(x, (0, 0, 1, 0))[:, :, :H, :]   # Up shift
+x_down  = F.pad(x, (0, 0, 0, 1))[:, :, 1:, :]   # Down shift
 
 x_concat = torch.cat([x, x_left, x_right, x_up, x_down], dim=1)  # [B, 5C, H, W]
-spatial_tokens = self.proj(x_concat)  # Receptive field 5배 확장
+spatial_tokens = self.proj(x_concat)  # 5x expanded receptive field
 ```
 
-**효과**: 이웃 픽셀 정보를 token에 직접 주입 → CNN의 locality bias 모방
+**Effect**: Directly injects neighbor pixel info into tokens → mimics CNN's locality bias
 
 #### 2. Locality Self-Attention (LSA)
 
 ```python
 class LocalitySelfAttention:
     def __init__(self):
-        # 핵심 1: Learnable temperature (초기값 낮게 → sharp attention)
+        # Key 1: Learnable temperature (low initial value → sharp attention)
         self.temperature = nn.Parameter(torch.ones(1) * 0.5)
 
     def forward(self, x):
@@ -446,29 +446,29 @@ class LocalitySelfAttention:
         attn = (Q @ K.T) / sqrt(D)
         attn = attn / self.temperature.clamp(min=0.1)  # Sharp attention
 
-        # 핵심 2: Diagonal masking (self-relation 제거)
+        # Key 2: Diagonal masking (removes self-relation)
         diag_mask = torch.eye(N).bool()
         attn = attn.masked_fill(diag_mask, float('-inf'))
 
         return softmax(attn) @ V
 ```
 
-**효과**:
-- Learnable temperature: 초기에 sharp attention → 이웃에 집중
-- Diagonal masking: 자기 자신 무시 → 주변 정보만 활용
+**Effect**:
+- Learnable temperature: Sharp attention initially → focuses on neighbors
+- Diagonal masking: Ignores self → uses only surrounding information
 
-#### 3. 모델 축소
+#### 3. Model Reduction
 
-| 항목 | v3 (기존) | v6 (축소) | 감소율 |
+| Item | v3 (existing) | v6 (reduced) | Reduction |
 |------|----------|----------|--------|
 | embed_dim | 256 | 128 | 50% |
 | num_heads | 8 | 4 | 50% |
 | num_layers | 4 | 2 | 50% |
 | mlp_ratio | 4.0 | 2.0 | 50% |
 | dropout | 0.1 | 0.2 | +100% |
-| **총 params** | ~5M | ~1.2M | **76%↓** |
+| **Total params** | ~5M | ~1.2M | **76%↓** |
 
-### 구조
+### Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -476,7 +476,7 @@ class LocalitySelfAttention:
 │         ↓                                                   │
 │  ┌─────────────────────────────────────────┐                │
 │  │  SPT (Shifted Patch Tokenization)       │  ← NEW         │
-│  │  5방향 shift: [2048,8,8] → [10240,8,8]  │                │
+│  │  5-dir shift: [2048,8,8] → [10240,8,8] │                │
 │  │  → proj → [128, 8, 8]                   │                │
 │  └─────────────────────────────────────────┘                │
 │         ↓                                                   │
@@ -491,14 +491,14 @@ class LocalitySelfAttention:
 │  ┌─────────────────────────────────────────┐                │
 │  │  LSA (Locality Self-Attention) × 2      │  ← NEW         │
 │  │  - Learnable temperature (init=0.5)     │                │
-│  │  - Diagonal masking (self-relation 제거)│                │
-│  │  - mlp_ratio=2.0 (축소)                 │                │
+│  │  - Diagonal masking (removes self-relation)│             │
+│  │  - mlp_ratio=2.0 (reduced)              │                │
 │  └─────────────────────────────────────────┘                │
 │         ↓                                                   │
 │  Joint Tokens [16, 128]                                     │
 │         │                                                   │
 │         ├── Heatmap Decoder (Reconstruction)                │
-│         │   (2D 정보 강제 주입)                              │
+│         │   (Enforced 2D information injection)             │
 │         ↓                                                   │
 │  HMD Cross-Attention [16×3]                                 │
 │         ↓                                                   │
@@ -506,81 +506,81 @@ class LocalitySelfAttention:
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### v3 대비 변경 요약
+### Summary of Changes vs v3
 
-| 항목 | v3 | v6 | 효과 |
+| Item | v3 | v6 | Effect |
 |------|-----|-----|------|
 | Tokenization | Linear proj | **SPT** | Locality bias ↑ |
 | Self-Attention | Standard | **LSA** | Sharp local attention |
 | embed_dim | 256 | **128** | Overfitting ↓ |
-| num_layers | 4 | **2** | 파라미터 ↓ |
-| mlp_ratio | 4.0 | **2.0** | 파라미터 ↓ |
+| num_layers | 4 | **2** | Parameters ↓ |
+| mlp_ratio | 4.0 | **2.0** | Parameters ↓ |
 | dropout | 0.1 | **0.2** | Regularization ↑ |
 | DWConv | ❌ | **✅** | Local features |
 
-### 예상 효과
+### Expected Effect
 
 ```
-v3 문제점:
+v3 problems:
 - Epoch 2, 5 validation spike
-- 210K 데이터로 256-dim, 4-layer 학습 → overfitting
-- Global attention이 small dataset에서 불안정
+- Training 256-dim, 4-layer with 210K data → overfitting
+- Global attention is unstable on small dataset
 
-v6 기대:
-- SPT로 locality bias → 초기 학습 안정화
-- LSA로 sharp local attention → 이웃 관절 관계 학습
-- 모델 축소로 overfitting 방지
-- validation spike 감소 → 일관된 성능
+v6 expectations:
+- SPT provides locality bias → stabilizes early training
+- LSA provides sharp local attention → learns neighboring joint relationships
+- Model reduction prevents overfitting
+- Reduced validation spikes → consistent performance
 ```
 
-### 참고 논문
+### Reference Papers
 
 - [Vision Transformer for Small-Size Datasets (AAAI 2022)](https://arxiv.org/abs/2112.13492)
-- [Depth-Wise Convolutions in ViTs (Neural Networks 2024)](https://www.sciencedirect.com/science/article/pii/S0925231224017697)
+- [Depth-Wise Convolutions in ViTs (Neural Networks 2024)](https://www.sciencedirect.com/science/article/pii/S0925231024017697)
 
 ---
 
-## Option 5 구현 완료 (2026-01-27)
+## Option 5 Implementation Complete (2026-01-27)
 
-### 구현 파일
+### Implementation Files
 
-| 파일 | 용도 |
+| File | Purpose |
 |------|------|
-| `custom_egopose_vit_lifting_head_v6.py` | Head 구현체 (SPT + LSA + 축소 모델) |
+| `custom_egopose_vit_lifting_head_v6.py` | Head implementation (SPT + LSA + reduced model) |
 | `HMD_xregopose_vit_lifting_v6_small_config.py` | Smoke test config |
 | `HMD_xregopose_vit_lifting_v6_full_config.py` | Full training config |
 
-### Smoke Test 결과 (2 epochs, small dataset)
+### Smoke Test Results (2 epochs, small dataset)
 
-| Epoch | Full Body | Upper Body | Lower Body | 개선율 |
+| Epoch | Full Body | Upper Body | Lower Body | Improvement |
 |-------|-----------|------------|------------|--------|
 | 1 | 248.77mm | 185.22mm | 312.32mm | - |
 | 2 | 207.42mm | 157.40mm | 257.44mm | -16.6% |
 
-✅ 모델이 정상적으로 학습됨
-✅ SPT (Shifted Patch Tokenization) 작동 확인
-✅ LSA (Locality Self-Attention) 작동 확인
-✅ Depth-wise Conv Embedding 작동 확인
-✅ 축소된 모델 (embed_dim=128, num_layers=2) 작동 확인
+✅ Model trains normally
+✅ SPT (Shifted Patch Tokenization) verified working
+✅ LSA (Locality Self-Attention) verified working
+✅ Depth-wise Conv Embedding verified working
+✅ Reduced model (embed_dim=128, num_layers=2) verified working
 
-### v3 vs v6 Smoke Test 비교 (참고)
+### v3 vs v6 Smoke Test Comparison (Reference)
 
-| 항목 | v3 | v6 | 비고 |
+| Item | v3 | v6 | Note |
 |------|-----|-----|------|
-| embed_dim | 256 | 128 | 50% 축소 |
-| num_layers | 4 | 2 | 50% 축소 |
-| Params (추정) | ~5M | ~1.2M | 76% 감소 |
-| GPU Memory | ~7GB | ~6GB | ~14% 절감 |
+| embed_dim | 256 | 128 | 50% reduction |
+| num_layers | 4 | 2 | 50% reduction |
+| Params (estimated) | ~5M | ~1.2M | 76% reduction |
+| GPU Memory | ~7GB | ~6GB | ~14% savings |
 
-### 다음 단계
+### Next Steps
 
 1. Full training (10 epochs)
-2. v3과 비교 (validation spike 감소 확인)
-3. 결과가 좋으면 SPT/LSA 개별 ablation study
+2. Compare with v3 (verify reduction of validation spikes)
+3. If results are good, individual SPT/LSA ablation study
 
 ---
 
-## 참고: 관절 인덱스 (xRegopose)
+## Reference: Joint Indices (xRegopose)
 
 ```
 Upper Body (8):

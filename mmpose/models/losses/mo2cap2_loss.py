@@ -108,6 +108,126 @@ class limb_length(nn.Module):
 		return loss * self.loss_weight
 	
 	
+# Left-Right symmetric limb pairs for symmetry loss
+# Each tuple: ((parent_L, child_L), (parent_R, child_R))
+EGOPOSE_SYMMETRIC_LIMBS = [
+	((0, 2), (0, 5)),     # Spine2→LeftArm, Spine2→RightArm
+	((2, 3), (5, 6)),     # LeftArm→LeftForeArm, RightArm→RightForeArm
+	((3, 4), (6, 7)),     # LeftForeArm→LeftHand, RightForeArm→RightHand
+	((0, 8), (0, 12)),    # Spine2→LeftUpLeg, Spine2→RightUpLeg
+	((8, 9), (12, 13)),   # LeftUpLeg→LeftLeg, RightUpLeg→RightLeg
+	((9, 10), (13, 14)),  # LeftLeg→LeftFoot, RightLeg→RightFoot
+	((10, 11), (14, 15)), # LeftFoot→LeftToeBase, RightFoot→RightToeBase
+]
+
+
+@MODELS.register_module()
+class bone_length_loss(nn.Module):
+	"""Bone length constraint loss.
+
+	Enforces predicted bone lengths to match GT bone lengths.
+	Unlike limb_length (generic L1), this computes actual per-limb
+	Euclidean bone length and penalizes length mismatch.
+
+	This constrains lower body joints (hip→knee→ankle→foot) to
+	maintain realistic limb proportions, especially in the depth axis.
+
+	Args:
+		loss_weight (float): Weight of the loss. Default: 0.5
+		skeleton (list): List of (parent_idx, child_idx) tuples.
+	"""
+
+	def __init__(self, loss_weight=0.5, skeleton=None):
+		super().__init__()
+		self.loss_weight = loss_weight
+		self.skeleton = skeleton if skeleton is not None else EGOPOSE_SKELETON
+
+	def forward(self, output, target, target_weight=None):
+		batch_size = output.shape[0]
+		total_loss = torch.zeros(batch_size, device=output.device)
+
+		for parent_idx, child_idx in self.skeleton:
+			pred_len = torch.norm(
+				output[:, child_idx] - output[:, parent_idx], dim=-1
+			)
+			gt_len = torch.norm(
+				target[:, child_idx] - target[:, parent_idx], dim=-1
+			)
+			total_loss = total_loss + F.smooth_l1_loss(
+				pred_len, gt_len, reduction='none'
+			)
+
+		return total_loss * self.loss_weight
+
+
+@MODELS.register_module()
+class pose_l2norm_weighted(nn.Module):
+	"""Body-part weighted L2 norm loss.
+
+	Applies higher loss weight to lower body joints (indices 8-15)
+	to compensate for HMD signal absence in lower body.
+
+	Args:
+		loss_weight (float): Overall loss weight. Default: 1.0
+		lower_body_weight (float): Multiplier for lower body joints. Default: 1.5
+	"""
+
+	def __init__(self, loss_weight=1., lower_body_weight=1.5):
+		super().__init__()
+		self.loss_weight = loss_weight
+		self.lower_body_weight = lower_body_weight
+
+	def forward(self, output, target, target_weight=None):
+		# Per-joint L2 error: (B, 16)
+		per_joint = torch.sqrt(
+			torch.sum(torch.pow(output - target, 2), dim=2)
+		)
+		# Build joint weights on same device
+		joint_weights = torch.ones(
+			per_joint.shape[1], device=output.device
+		)
+		joint_weights[8:] = self.lower_body_weight
+		# Weighted sum
+		loss = (per_joint * joint_weights).sum(dim=1)
+		return loss * self.loss_weight
+
+
+@MODELS.register_module()
+class symmetry_loss(nn.Module):
+	"""Left-right bone length symmetry loss.
+
+	Enforces symmetric limbs (left arm/right arm, left leg/right leg)
+	to have equal bone lengths in predictions.
+
+	Args:
+		loss_weight (float): Weight of the loss. Default: 0.1
+		symmetric_limbs (list): List of ((pL, cL), (pR, cR)) tuples.
+	"""
+
+	def __init__(self, loss_weight=0.1, symmetric_limbs=None):
+		super().__init__()
+		self.loss_weight = loss_weight
+		self.symmetric_limbs = (
+			symmetric_limbs if symmetric_limbs is not None
+			else EGOPOSE_SYMMETRIC_LIMBS
+		)
+
+	def forward(self, output, target=None, target_weight=None):
+		batch_size = output.shape[0]
+		total_loss = torch.zeros(batch_size, device=output.device)
+
+		for (pl, cl), (pr, cr) in self.symmetric_limbs:
+			left_len = torch.norm(
+				output[:, cl] - output[:, pl], dim=-1
+			)
+			right_len = torch.norm(
+				output[:, cr] - output[:, pr], dim=-1
+			)
+			total_loss = total_loss + torch.abs(left_len - right_len)
+
+		return total_loss * self.loss_weight
+
+
 @MODELS.register_module()
 class heatmap_recon(nn.Module):
 

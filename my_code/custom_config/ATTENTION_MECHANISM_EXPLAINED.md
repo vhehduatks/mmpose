@@ -1,43 +1,43 @@
-# Cross-Attention 메커니즘 설명
+# Cross-Attention Mechanism Explanation
 
-## 1. 기본 Attention 개념
+## 1. Basic Attention Concepts
 
 ### Self-Attention vs Cross-Attention
 
 ```
 Self-Attention:
-    Q, K, V가 모두 같은 입력에서 생성
-    예: 문장 내 단어들 간의 관계 학습
+    Q, K, V are all generated from the same input
+    Example: Learning relationships between words in a sentence
 
 Cross-Attention:
-    Q는 한 쪽, K/V는 다른 쪽에서 생성
-    예: 번역 시 source 문장(K/V)을 참조하여 target 단어(Q) 생성
+    Q comes from one side, K/V come from the other side
+    Example: In translation, referencing the source sentence (K/V) to generate target words (Q)
 ```
 
-### Attention 수식
+### Attention Formula
 
 ```
 Attention(Q, K, V) = softmax(Q @ K^T / √d) @ V
 
-Q: Query  [B, N_q, D]  - 질문하는 쪽
-K: Key    [B, N_kv, D] - 검색 키
-V: Value  [B, N_kv, D] - 가져올 값
+Q: Query  [B, N_q, D]  - The querying side
+K: Key    [B, N_kv, D] - Search keys
+V: Value  [B, N_kv, D] - Values to retrieve
 ```
 
 ---
 
-## 2. Pose Estimation에서의 Cross-Attention
+## 2. Cross-Attention in Pose Estimation
 
-### 목적
+### Purpose
 
 ```
-"각 관절(Q)이 backbone feature(K/V)에서 depth 정보를 쿼리"
+"Each joint (Q) queries depth information from backbone features (K/V)"
 
-Q: 2D 관절 위치 → "이 위치의 depth는?"
-K/V: Backbone spatial features → "여기의 depth 정보는 이거야"
+Q: 2D joint positions → "What is the depth at this position?"
+K/V: Backbone spatial features → "The depth information here is this"
 ```
 
-### 구조
+### Structure
 
 ```
 Backbone feat [2048, 8, 8]
@@ -55,9 +55,9 @@ Cross-Attention:
 
 ---
 
-## 3. Attention 계산 과정 (상세)
+## 3. Attention Computation Process (Detailed)
 
-### Step 1: Query, Key, Value 준비
+### Step 1: Preparing Query, Key, Value
 
 ```python
 # Joint tokens (Query)
@@ -71,65 +71,65 @@ backbone_tokens = backbone_tokens.flatten(2).transpose(1, 2)  # [B, 64, 128]
 K = V = linear_proj(backbone_tokens)  # [B, 64, 64]
 ```
 
-### Step 2: Attention Score 계산
+### Step 2: Computing Attention Scores
 
 ```
 Q @ K^T = [B, 16, 64] @ [B, 64, 64]^T = [B, 16, 64]
 
-각 관절(16)이 각 spatial 위치(64)에 얼마나 attend할지 점수
+Score for how much each joint (16) should attend to each spatial position (64)
 
-예시 (Joint 0 = head):
-    scores[0] = [0.5, 0.3, 0.1, 0.8, ..., 0.2]  # 64개 점수
+Example (Joint 0 = head):
+    scores[0] = [0.5, 0.3, 0.1, 0.8, ..., 0.2]  # 64 scores
                  ↑                   ↑
-              위치 0              위치 3
-              (낮은 관련성)        (높은 관련성)
+              Position 0          Position 3
+              (low relevance)     (high relevance)
 ```
 
-### Step 3: Softmax 정규화
+### Step 3: Softmax Normalization
 
 ```
 attention_weights = softmax(scores / √d, dim=-1)
 
-예시 (Joint 0 = head):
-    weights[0] = [0.02, 0.01, 0.01, 0.15, ..., 0.03]  # 합 = 1.0
+Example (Joint 0 = head):
+    weights[0] = [0.02, 0.01, 0.01, 0.15, ..., 0.03]  # sum = 1.0
                                   ↑
-                            가장 높은 가중치
-                            (이 위치의 정보를 가장 많이 참조)
+                          Highest weight
+                          (References information from this position the most)
 ```
 
-### Step 4: Value 가중합
+### Step 4: Weighted Sum of Values
 
 ```
 output = attention_weights @ V
        = [B, 16, 64] @ [B, 64, 64]
        = [B, 16, 64]
 
-각 관절이 64개 위치의 value를 가중 평균
+Each joint computes a weighted average of values from 64 positions
 
-예시 (Joint 0 = head):
+Example (Joint 0 = head):
     output[0] = 0.02 * V[0] + 0.01 * V[1] + ... + 0.15 * V[3] + ...
                                                    ↑
-                                        가장 많이 참조한 위치
+                                        Most referenced position
 ```
 
 ---
 
 ## 4. Multi-Head Attention
 
-### 개념
+### Concept
 
 ```
-단일 attention은 하나의 관점만 학습
-Multi-head는 여러 관점에서 동시에 학습
+Single attention learns only one perspective
+Multi-head learns from multiple perspectives simultaneously
 
-예: 4 heads
-    Head 0: 수직 방향 관계 학습
-    Head 1: 수평 방향 관계 학습
-    Head 2: 대각선 관계 학습
-    Head 3: 전체 context 학습
+Example: 4 heads
+    Head 0: Learns vertical relationships
+    Head 1: Learns horizontal relationships
+    Head 2: Learns diagonal relationships
+    Head 3: Learns overall context
 ```
 
-### 구현
+### Implementation
 
 ```python
 # D=64, num_heads=4 → head_dim = 64/4 = 16
@@ -145,22 +145,22 @@ output: [B, N, 64]
 
 ---
 
-## 5. Global Attention Lifting 구조
+## 5. Global Attention Lifting Structure
 
-### 현재 구조 (Global Token 1개)
+### Current Structure (1 Global Token)
 
 ```
 K/V: [Backbone tokens + Global token]
      [B, 64, D]      +  [B, 1, D]   = [B, 65, D]
          ↑                  ↑
-   8×8 spatial        Heatmap 전체 압축
+   8×8 spatial        Entire heatmap compressed
    positions          (HeatmapEncoder Z)
 ```
 
-### Attention 시각화
+### Attention Visualization
 
 ```
-                    K/V: 65개 위치
+                    K/V: 65 positions
      ┌─────────────────────────────────────────┐
      │  Backbone Spatial (64)      │ Global(1)│
      │  ┌──┬──┬──┬──┬──┬──┬──┬──┐  │    ┌──┐  │
@@ -169,8 +169,8 @@ K/V: [Backbone tokens + Global token]
      │  │  │  │  │  │  │  │  │  │  │          │
      │  ├──┼──┼──┼──┼──┼──┼──┼──┤  │          │
 Q:   │  │  │  │  │  │  │  │  │  │  │          │
-16개 │  ├──┼──┼──┼──┼──┼──┼──┼──┤  │          │
-관절 │  │  │  │  │  │  │  │  │  │  │          │
+16   │  ├──┼──┼──┼──┼──┼──┼──┼──┤  │          │
+joints│  │  │  │  │  │  │  │  │  │  │          │
      │  └──┴──┴──┴──┴──┴──┴──┴──┘  │          │
      └─────────────────────────────────────────┘
 
@@ -180,35 +180,35 @@ Joint 1 (neck)     → attend to 65 positions → output[1]
 Joint 15 (ankle)   → attend to 65 positions → output[15]
 ```
 
-### 문제점
+### Problem
 
 ```
-65개 K/V 중 Global Token은 단 1개 (1.5%)
+Among 65 K/V, Global Token is only 1 (1.5%)
 
-16개 관절의 heatmap 정보가 1개 token에 압축
-→ 정보 손실
-→ Global token의 영향력 미미
+Heatmap information of 16 joints compressed into 1 token
+→ Information loss
+→ Negligible influence of global token
 ```
 
 ---
 
-## 6. 개선된 구조: Per-Joint Heatmap Tokens
+## 6. Improved Structure: Per-Joint Heatmap Tokens
 
-### 새 구조
+### New Structure
 
 ```
 K/V: [Backbone tokens + Heatmap tokens]
      [B, 64, D]      +  [B, 16, D]   = [B, 80, D]
          ↑                  ↑
-   8×8 spatial        각 관절별 heatmap
-   positions          (16개 관절 × 각각의 분포)
+   8×8 spatial        Per-joint heatmap
+   positions          (16 joints × each distribution)
 ```
 
-### Per-Joint Heatmap Token 생성
+### Per-Joint Heatmap Token Generation
 
 ```
 Heatmap [B, 16, 47, 47]
-    ↓ 각 관절별 처리
+    ↓ Per-joint processing
 Joint 0 heatmap [B, 1, 47, 47] → Conv+Pool → Token 0 [B, 1, D]
 Joint 1 heatmap [B, 1, 47, 47] → Conv+Pool → Token 1 [B, 1, D]
 ...
@@ -217,52 +217,52 @@ Joint 15 heatmap [B, 1, 47, 47] → Conv+Pool → Token 15 [B, 1, D]
 Heatmap Tokens [B, 16, D]
 ```
 
-### 개선된 Attention 시각화
+### Improved Attention Visualization
 
 ```
-                    K/V: 80개 위치
+                    K/V: 80 positions
      ┌──────────────────────────────────────────────────┐
      │  Backbone Spatial (64)      │ Heatmap (16)      │
      │  ┌──┬──┬──┬──┬──┬──┬──┬──┐  │ ┌──┬──┬──┬──┬──┐  │
      │  │  │  │  │  │  │  │  │  │  │ │H0│H1│H2│..│H15│ │
      │  ├──┼──┼──┼──┼──┼──┼──┼──┤  │ └──┴──┴──┴──┴──┘  │
      │  │  │  │  │  │  │  │  │  │  │       ↑           │
-     │  ├──┼──┼──┼──┼──┼──┼──┼──┤  │  각 관절별 token  │
+     │  ├──┼──┼──┼──┼──┼──┼──┼──┤  │  Per-joint token  │
 Q:   │  │  │  │  │  │  │  │  │  │  │                   │
-16개 │  ├──┼──┼──┼──┼──┼──┼──┼──┤  │                   │
-관절 │  │  │  │  │  │  │  │  │  │  │                   │
+16   │  ├──┼──┼──┼──┼──┼──┼──┼──┤  │                   │
+joints│  │  │  │  │  │  │  │  │  │  │                   │
      │  └──┴──┴──┴──┴──┴──┴──┴──┘  │                   │
      └──────────────────────────────────────────────────┘
 
 Joint 0 (head)  → attend to [spatial 64 + heatmap 16]
-                  특히 H0 (자신의 heatmap)에 높은 attention 기대
+                  High attention expected on H0 (its own heatmap)
 
 Joint 7 (wrist) → attend to [spatial 64 + heatmap 16]
-                  H7에 높은 attention + H6(elbow), H5(shoulder) 참조
+                  High attention on H7 + referencing H6(elbow), H5(shoulder)
 ```
 
-### 기대 효과
+### Expected Benefits
 
 ```
-1. 정보 보존: 16개 관절 heatmap 정보가 각각 유지
-2. 자기 참조: Joint i가 Heatmap Token i에서 자신의 분포 정보 획득
-3. 상호 참조: 가려진 관절이 보이는 관절의 heatmap 참조
-4. 더 큰 비중: 80개 중 16개 = 20% (기존 1.5%에서 증가)
+1. Information preservation: Heatmap information of 16 joints is individually maintained
+2. Self-reference: Joint i obtains its own distribution information from Heatmap Token i
+3. Cross-reference: Occluded joints reference the heatmaps of visible joints
+4. Greater proportion: 16 out of 80 = 20% (increased from 1.5%)
 ```
 
 ---
 
-## 7. 코드 예시
+## 7. Code Example
 
 ### Per-Joint Heatmap Token Encoder
 
 ```python
 class PerJointHeatmapEncoder(nn.Module):
-    """각 관절 heatmap을 개별 token으로 인코딩"""
+    """Encodes each joint heatmap into an individual token"""
 
     def __init__(self, num_joints=16, output_dim=64):
         super().__init__()
-        # 각 관절 heatmap [1, 47, 47] → [output_dim]
+        # Each joint heatmap [1, 47, 47] → [output_dim]
         self.encoder = nn.Sequential(
             nn.Conv2d(1, 32, kernel_size=4, stride=2, padding=1),  # [32, 23, 23]
             nn.ReLU(),
@@ -282,7 +282,7 @@ class PerJointHeatmapEncoder(nn.Module):
         """
         B, K, H, W = heatmaps.shape
 
-        # 각 관절별로 처리
+        # Process each joint individually
         tokens = []
         for i in range(K):
             joint_hm = heatmaps[:, i:i+1, :, :]  # [B, 1, 47, 47]
@@ -297,7 +297,7 @@ class PerJointHeatmapEncoder(nn.Module):
 
 ```python
 class HeatmapBackboneCrossAttention(nn.Module):
-    """K/V에 Backbone + Heatmap tokens 포함"""
+    """Includes Backbone + Heatmap tokens in K/V"""
 
     def forward(self, joint_tokens, backbone_feat, heatmap_tokens):
         """
@@ -327,27 +327,27 @@ class HeatmapBackboneCrossAttention(nn.Module):
 
 ---
 
-## 8. 비교 요약
+## 8. Comparison Summary
 
-| 구조 | K/V 크기 | Heatmap 정보 | 기대 효과 |
+| Structure | K/V Size | Heatmap Information | Expected Benefit |
 |------|----------|-------------|----------|
-| v1 (Baseline) | 64 | 없음 | - |
-| Global Token | 65 | 1개 압축 (손실) | 미미 |
-| **Per-Joint Tokens** | **80** | **16개 보존** | **향상 기대** |
+| v1 (Baseline) | 64 | None | - |
+| Global Token | 65 | 1 compressed (lossy) | Negligible |
+| **Per-Joint Tokens** | **80** | **16 preserved** | **Expected improvement** |
 
 ---
 
-## 9. 참고: Transformer 용어
+## 9. Reference: Transformer Terminology
 
 ```
-Encoder: 입력 → 표현 (Self-Attention)
-Decoder: 표현 → 출력 (Cross-Attention으로 Encoder 참조)
+Encoder: Input → Representation (Self-Attention)
+Decoder: Representation → Output (Cross-Attention referencing Encoder)
 
-BERT: Encoder only (양방향 Self-Attention)
-GPT:  Decoder only (단방향 Self-Attention)
-T5:   Encoder-Decoder (번역 등)
+BERT: Encoder only (Bidirectional Self-Attention)
+GPT:  Decoder only (Unidirectional Self-Attention)
+T5:   Encoder-Decoder (Translation, etc.)
 
-Pose Estimation에서:
-- Backbone = Encoder (이미지 → feature)
-- Lifting Network = Decoder (2D → 3D, Cross-Attention으로 Backbone 참조)
+In Pose Estimation:
+- Backbone = Encoder (Image → Feature)
+- Lifting Network = Decoder (2D → 3D, references Backbone via Cross-Attention)
 ```

@@ -1,29 +1,29 @@
-# Dual Backbone 개선 실험 계획
+# Dual Backbone Improvement Experiment Plan
 
-## 목표
+## Goal
 
-**Single COCO (41.37mm)보다 나은 성능을 Dual Backbone mutual learning으로 달성하기.**
+**Achieve better performance than Single COCO (41.37mm) through Dual Backbone mutual learning.**
 
-현재 문제: Dual COCO+MPII (43.26mm)가 Single COCO (41.37mm)보다 1.89mm 나쁨
-
----
-
-## 베이스라인 결과 (Updated: 2026-01-21)
-
-> **상세 결과**: `EXPERIMENT_RESULTS.md` 참조
-
-### 핵심 비교
-
-| Model | Full Body MPJPE | 차이 | 비고 |
-|-------|-----------------|------|------|
-| **Single COCO** | **41.37mm** | - | 🏆 현재 최고 (epoch 8) |
-| Dual COCO+MPII | 43.26mm | +1.89mm | Dual이 나쁨 (epoch 8) |
-| Dual Warmup v2 | 45.93mm | +4.56mm | warmup 효과 없음 |
-| Single Lifting | 45.92mm | +4.55mm | depth 부족 |
+Current problem: Dual COCO+MPII (43.26mm) is 1.89mm worse than Single COCO (41.37mm)
 
 ---
 
-## 현재 모델 구조
+## Baseline Results (Updated: 2026-01-21)
+
+> **Detailed results**: See `EXPERIMENT_RESULTS.md`
+
+### Key Comparison
+
+| Model | Full Body MPJPE | Difference | Notes |
+|-------|-----------------|------------|-------|
+| **Single COCO** | **41.37mm** | - | 🏆 Current best (epoch 8) |
+| Dual COCO+MPII | 43.26mm | +1.89mm | Dual is worse (epoch 8) |
+| Dual Warmup v2 | 45.93mm | +4.56mm | Warmup had no effect |
+| Single Lifting | 45.92mm | +4.55mm | Lack of depth |
+
+---
+
+## Current Model Architecture
 
 ### Single COCO (41.37mm)
 
@@ -44,9 +44,9 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Loss 구성**:
-| Loss | Weight | 설명 |
-|------|--------|------|
+**Loss configuration**:
+| Loss | Weight | Description |
+|------|--------|-------------|
 | loss_kpt | 1000 | Main heatmap MSE |
 | loss_heatmap_recon | 250 | Heatmap reconstruction |
 | loss_pose_l2norm | 1.0 | 3D pose L2 |
@@ -79,81 +79,81 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Loss 구성** (Single + 추가):
-| Loss | Weight | 설명 |
-|------|--------|------|
-| loss_backbone_latant | 1.0 | **MSE(feat1, feat2)** - backbone feature 일치 |
+**Loss configuration** (Single + additions):
+| Loss | Weight | Description |
+|------|--------|-------------|
+| loss_backbone_latant | 1.0 | **MSE(feat1, feat2)** - backbone feature alignment |
 | loss_backbone_heatmap | 1.0 | Sub backbone heatmap GT supervision |
-| (+ Single의 모든 loss) | | |
+| (+ all Single losses) | | |
 
 ---
 
-## 문제 분석
+## Problem Analysis
 
-**현상**: Dual (43.26mm) > Single (41.37mm) - Dual이 1.89mm 더 나쁨
+**Observation**: Dual (43.26mm) > Single (41.37mm) - Dual is 1.89mm worse
 
-### 문제 1: Mutual Learning 방식
+### Problem 1: Mutual Learning Approach
 
-1. `loss_backbone_latant = MSE(feat1, feat2)`: 두 backbone feature를 **무조건 동일하게** 강제
-2. COCO와 MPII의 서로 다른 feature 분포가 충돌
-3. 각 pretrained의 고유한 강점이 상쇄됨
-4. epoch 1부터 mutual learning 강제 → pretrained knowledge 손상
+1. `loss_backbone_latant = MSE(feat1, feat2)`: **Unconditionally forces** the two backbone features to be identical
+2. Different feature distributions of COCO and MPII collide
+3. Unique strengths of each pretrained model cancel out
+4. Mutual learning enforced from epoch 1 → pretrained knowledge damaged
 
-### 문제 2: Heatmap의 3D 정보 인코딩 한계 (구조적)
+### Problem 2: Limitations of 3D Information Encoding in Heatmaps (Structural)
 
 ```
-Backbone feat [2048, 8, 8]  ← depth/texture/context 정보 풍부
+Backbone feat [2048, 8, 8]  ← Rich depth/texture/context information
        ↓ (Deconv)
-Heatmap [16, 47, 47]        ← 2D 위치만 남음 (depth 손실!)
+Heatmap [16, 47, 47]        ← Only 2D positions remain (depth lost!)
        ↓ (Encoder)
-Z [64]                      ← 극단적 압축
+Z [64]                      ← Extreme compression
        ↓
-3D Pose                     ← depth ambiguity 발생
+3D Pose                     ← Depth ambiguity occurs
 ```
 
-**근거**:
-- Heatmap은 본질적으로 **2D 위치의 확률 분포** (x, y만 표현)
-- 3D depth 정보가 implicit하게만 존재 → lifting 시 ambiguity
-- Backbone feature의 depth cues가 heatmap 단계에서 손실됨
+**Basis**:
+- Heatmaps are fundamentally **probability distributions of 2D positions** (expressing only x, y)
+- 3D depth information exists only implicitly → ambiguity during lifting
+- Backbone feature's depth cues are lost at the heatmap stage
 
-**해결 방향**: Backbone feature를 별도 경로로 보존하여 depth 정보 활용
+**Solution direction**: Preserve depth information by keeping backbone features through a separate path
 
 ---
 
-## 실험 단계
+## Experiment Phases
 
-### Phase 1: Progressive Warmup (현재 구현 완료)
+### Phase 1: Progressive Warmup (Currently implemented)
 
-**목적**: Pretrained knowledge 보존하면서 mutual learning 도입
+**Purpose**: Introduce mutual learning while preserving pretrained knowledge
 
 **Config**: `HMD_xregopose_h5cache_coco_mpii_warmup_config.py`
 
-| 파라미터 | 값 | 설명 |
-|---------|-----|------|
-| mutual_warmup_epochs | 5 | mutual learning 없음 |
-| mutual_rampup_epochs | 10 | 0→1 선형 증가 |
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| mutual_warmup_epochs | 5 | No mutual learning |
+| mutual_rampup_epochs | 10 | Linear increase 0→1 |
 | max_epochs | 20 | 5+10+5 |
 
-**예상 효과**:
-- 초기 학습에서 COCO/MPII 각각의 강점 보존
-- 갑작스러운 gradient 충돌 방지
+**Expected effect**:
+- Preserves COCO/MPII individual strengths during early training
+- Prevents sudden gradient collision
 
-**성공 기준**: Dual COCO+MPII (원본) 대비 MPJPE 개선
+**Success criteria**: MPJPE improvement compared to Dual COCO+MPII (original)
 
 ---
 
 ### Phase 2: Ensemble Teacher
 
-**목적**: 두 backbone의 출력을 앙상블하여 pseudo-teacher 생성
+**Purpose**: Create a pseudo-teacher by ensembling outputs from both backbones
 
-**구현 위치**: `custom_egopose_baselinel1_head_multi_backbone_v3.py`
+**Implementation location**: `custom_egopose_baselinel1_head_multi_backbone_v3.py`
 
-**변경 사항**:
+**Changes**:
 ```python
-# 현재 (v2)
+# Current (v2)
 loss_backbone_latant = MSE(feat1, feat2) * warmup_weight
 
-# 개선 (v3)
+# Improved (v3)
 conf1 = heatmap1.max().mean()
 conf2 = heatmap2.max().mean()
 w1 = conf1 / (conf1 + conf2)
@@ -164,25 +164,25 @@ loss_ensemble = MSE(feat1, feat_ensemble) + MSE(feat2, feat_ensemble)
 loss_backbone_latant = loss_ensemble * warmup_weight
 ```
 
-**예상 효과**:
-- Confidence 높은 backbone에 더 큰 가중치
-- 두 pretrained의 강점 결합
+**Expected effect**:
+- Higher weight for the backbone with higher confidence
+- Combining strengths of both pretrained models
 
-**실험 조합**:
-| 실험 | Warmup | Ensemble | 비고 |
-|------|--------|----------|------|
+**Experiment combinations**:
+| Experiment | Warmup | Ensemble | Notes |
+|------------|--------|----------|-------|
 | 2-A | ✓ | ✓ | Phase 1 + Ensemble |
-| 2-B | ✗ | ✓ | Ensemble만 |
+| 2-B | ✗ | ✓ | Ensemble only |
 
 ---
 
 ### Phase 3: Heatmap KL Divergence
 
-**목적**: Deep Mutual Learning 논문 방식 적용
+**Purpose**: Apply the Deep Mutual Learning paper approach
 
-**구현 위치**: `custom_egopose_baselinel1_head_multi_backbone_v4.py`
+**Implementation location**: `custom_egopose_baselinel1_head_multi_backbone_v4.py`
 
-**변경 사항**:
+**Changes**:
 ```python
 def heatmap_kl_divergence_loss(heatmap1, heatmap2, temperature=4.0):
     h1_flat = heatmap1.view(B, K, -1) / temperature
@@ -197,93 +197,93 @@ def heatmap_kl_divergence_loss(heatmap1, heatmap2, temperature=4.0):
     return (kl_1_2 + kl_2_1) / 2 * (temperature ** 2)
 ```
 
-**하이퍼파라미터**:
-| 파라미터 | 후보값 | 설명 |
-|---------|--------|------|
-| temperature | 2, 4, 8 | Soft target 정도 |
-| loss_weight | 0.1, 0.5, 1.0 | KL loss 가중치 |
+**Hyperparameters**:
+| Parameter | Candidate values | Description |
+|-----------|-----------------|-------------|
+| temperature | 2, 4, 8 | Degree of soft targets |
+| loss_weight | 0.1, 0.5, 1.0 | KL loss weight |
 
-**실험 조합**:
-| 실험 | Warmup | Ensemble | KL Div | 비고 |
-|------|--------|----------|--------|------|
+**Experiment combinations**:
+| Experiment | Warmup | Ensemble | KL Div | Notes |
+|------------|--------|----------|--------|-------|
 | 3-A | ✓ | ✗ | ✓ | Warmup + KL |
-| 3-B | ✓ | ✓ | ✓ | 전체 조합 |
+| 3-B | ✓ | ✓ | ✓ | Full combination |
 
 ---
 
-### Phase 4: One-way KD (옵션)
+### Phase 4: One-way KD (Optional)
 
-**목적**: Inference에서 main backbone만 사용할 경우
+**Purpose**: For when only the main backbone is used during inference
 
-**변경 사항**:
+**Changes**:
 ```python
-# Sub → Main 방향으로만 KD
+# KD only in Sub → Main direction
 loss_kd = MSE(feat_main, feat_sub.detach())
-# Sub는 GT에서만 학습 (gradient 차단)
+# Sub learns only from GT (gradient blocked)
 ```
 
-**사용 시나리오**:
-- 추론 시 sub backbone 제거하여 속도 2배
-- Main backbone 성능 최대화
+**Use scenarios**:
+- Remove sub backbone during inference for 2x speed
+- Maximize main backbone performance
 
 ---
 
-### Phase 5: 구조적 개선 (장기)
+### Phase 5: Structural Improvements (Long-term)
 
-#### 5-A: HeatmapDecoder 최적화
+#### 5-A: HeatmapDecoder Optimization
 
-**문제**: `linear3`가 37.77M 파라미터 (Head 61.4M 중 65%)
+**Problem**: `linear3` has 37.77M parameters (65% of Head's 61.4M)
 
-**해결**: Conv 기반 decoder로 교체
-- 40M → ~1.5M (96% 감소)
-- 메모리: 22GB → 16GB
+**Solution**: Replace with Conv-based decoder
+- 40M → ~1.5M (96% reduction)
+- Memory: 22GB → 16GB
 
-#### 5-B: 2D→3D Lifting (구현 완료 ✅)
+#### 5-B: 2D→3D Lifting (Implementation complete ✅)
 
-**변경**:
+**Change**:
 ```
-현재: Heatmap → Encoder → Z[64] → Decoder → 3D
-개선: Heatmap → soft_argmax → 2D[16,2] + conf[16] → Lifting → 3D
+Current: Heatmap → Encoder → Z[64] → Decoder → 3D
+Improved: Heatmap → soft_argmax → 2D[16,2] + conf[16] → Lifting → 3D
 ```
 
-**장점**:
-- HeatmapDecoder 완전 제거 (40M → 4M)
-- Martinez baseline (검증된 방식)
-- 해석 가능한 중간 표현
-- Heatmap MSE + Coord MSE 동시 학습
+**Advantages**:
+- Complete removal of HeatmapDecoder (40M → 4M)
+- Martinez baseline (proven approach)
+- Interpretable intermediate representation
+- Simultaneous Heatmap MSE + Coord MSE training
 
-**구현 파일**:
+**Implementation files**:
 - Head: `custom_egopose_lifting_head.py`
 - Config: `HMD_xregopose_single_lifting_config.py`
 
-**비교 대상 (중요!)**:
+**Comparison target (important!)**:
 
-| 항목 | Single COCO (기존 베스트) | Single Lifting (신규) |
+| Item | Single COCO (current best) | Single Lifting (new) |
 |------|--------------------------|----------------------|
 | Config | `HMD_xregopose_single_coco_full_config.py` | `HMD_xregopose_single_lifting_config.py` |
 | Head | `CustomxRegoposeBaselinel1` | `CustomEgoposeLiftingHead` |
-| Backbone | ResNet-101 COCO | ResNet-101 COCO (동일) |
+| Backbone | ResNet-101 COCO | ResNet-101 COCO (same) |
 | 2D→3D | Encoder→Z[64]→Decoder | soft_argmax→Lifting |
 | Head Params | ~61M | ~13M |
-| MPJPE | **41.37mm** | ? (실험 필요) |
+| MPJPE | **41.37mm** | ? (experiment needed) |
 
-> **주의**: Lifting은 Dual이 아닌 **Single backbone**과 비교해야 함!
-> Dual (43.26mm)과 비교하면 구조 차이가 너무 커서 의미 없음.
+> **Note**: Lifting should be compared with **Single backbone**, not Dual!
+> Comparing with Dual (43.26mm) is meaningless due to too large structural differences.
 
 ---
 
-### Phase 6: Backbone Feature Fusion (핵심 구조 개선)
+### Phase 6: Backbone Feature Fusion (Key Structural Improvement)
 
-**문제 인식**: Heatmap은 2D 위치 정보에 최적화되어 있어 3D depth 정보 인코딩이 어려움
+**Problem recognition**: Heatmaps are optimized for 2D position information, making 3D depth information encoding difficult
 
-**학술적 근거**:
-- [Depth Ambiguity Survey](https://www.mdpi.com/2076-3417/12/20/10591): "하나의 2D pose → 여러 3D pose 매핑 가능"
-- [EgoTAP](https://arxiv.org/html/2402.18330): "CNN encoder가 heatmap 정보 제대로 보존 못함"
-- [Lifting by Image](https://arxiv.org/abs/2312.15636): "image의 semantic/texture 정보가 lifting에 기여"
+**Academic basis**:
+- [Depth Ambiguity Survey](https://www.mdpi.com/2076-3417/12/20/10591): "A single 2D pose can map to multiple 3D poses"
+- [EgoTAP](https://arxiv.org/html/2402.18330): "CNN encoder fails to properly preserve heatmap information"
+- [Lifting by Image](https://arxiv.org/abs/2312.15636): "Image's semantic/texture information contributes to lifting"
 
-#### 6-A: Backbone + Heatmap Latent Concat (추천 - 먼저 시도)
+#### 6-A: Backbone + Heatmap Latent Concat (Recommended - try first)
 
-**구조**:
+**Architecture**:
 ```
 Backbone feat [2048, 8, 8]
        │
@@ -292,7 +292,7 @@ Backbone feat [2048, 8, 8]
        ↓ (Deconv)             │
 Heatmap [16, 47, 47]          │
        ↓ (Encoder)            │
-Z_heatmap [64] ← 2D 위치      │
+Z_heatmap [64] ← 2D position  │
        │                      │
        └──── Concat ──────────┘
               ↓
@@ -301,20 +301,20 @@ Z_heatmap [64] ← 2D 위치      │
          Pose Decoder → 3D Pose
 ```
 
-**역할 분리**:
-| Component | 역할 |
+**Role separation**:
+| Component | Role |
 |-----------|------|
-| Z_heatmap | 정확한 2D 관절 위치 (x, y) |
-| Z_backbone | 깊이/텍스처/컨텍스트 (depth cues) |
-| Z_hmd | 머리/손 3D 위치 (absolute reference) |
+| Z_heatmap | Precise 2D joint positions (x, y) |
+| Z_backbone | Depth/texture/context (depth cues) |
+| Z_hmd | Head/hand 3D positions (absolute reference) |
 
-**구현 위치**: `custom_egopose_baselinel1_head_multi_backbone_v5.py` (또는 v3에 통합)
+**Implementation location**: `custom_egopose_baselinel1_head_multi_backbone_v5.py` (or integrated into v3)
 
 **Config**: `HMD_xregopose_h5cache_coco_mpii_backbone_fusion_config.py`
 
 #### 6-B: 2D Coords + Backbone Feature
 
-**구조**:
+**Architecture**:
 ```
 Heatmap → soft-argmax → 2D coords [16, 2] + conf [16]
                               │
@@ -327,31 +327,31 @@ Backbone feat → GAP → FC → Context [256]
            Lifting Network → 3D Pose
 ```
 
-**장점**: 2D 좌표가 명시적, backbone이 depth 해결에 직접 기여
+**Advantages**: 2D coordinates are explicit, backbone directly contributes to depth resolution
 
 ---
 
-### 실험 조합 요약
+### Experiment Combination Summary
 
-| Phase | 개선 방향 | 구현 상태 | 비교 대상 |
-|-------|----------|----------|----------|
-| 1 | Progressive Warmup | ✅ 완료 | vs Dual COCO+MPII (43.26mm) |
-| 2 | Ensemble Teacher | ❌ 미구현 | vs Dual |
-| 3 | KL Divergence | ❌ 미구현 | vs Dual |
-| 4 | One-way KD | ❌ 미구현 | vs Dual |
-| **5-A** | HeatmapDecoder 최적화 | ❌ 미구현 | - |
-| **5-B** | **2D→3D Lifting** | **✅ 완료 (190mm - 실패)** | **vs Single COCO (41.37mm)** |
-| **5-C** | **Lifting + Backbone Fusion** | **✅ 완료** | **vs 5-B** |
-| **5-D** | **Attention Lifting** | **❌ 미구현** | **vs 5-C** |
-| 6 | Backbone Feature Fusion (기존 구조) | ❌ 미구현 | vs Single/Dual |
+| Phase | Improvement Direction | Implementation Status | Comparison Target |
+|-------|-----------------------|-----------------------|-------------------|
+| 1 | Progressive Warmup | ✅ Complete | vs Dual COCO+MPII (43.26mm) |
+| 2 | Ensemble Teacher | ❌ Not implemented | vs Dual |
+| 3 | KL Divergence | ❌ Not implemented | vs Dual |
+| 4 | One-way KD | ❌ Not implemented | vs Dual |
+| **5-A** | HeatmapDecoder Optimization | ❌ Not implemented | - |
+| **5-B** | **2D→3D Lifting** | **✅ Complete (190mm - failed)** | **vs Single COCO (41.37mm)** |
+| **5-C** | **Lifting + Backbone Fusion** | **✅ Complete** | **vs 5-B** |
+| **5-D** | **Attention Lifting** | **❌ Not implemented** | **vs 5-C** |
+| 6 | Backbone Feature Fusion (existing architecture) | ❌ Not implemented | vs Single/Dual |
 
 ---
 
-### Phase 5-C: Lifting + Backbone Feature Fusion (✅ 구현 완료)
+### Phase 5-C: Lifting + Backbone Feature Fusion (✅ Implementation complete)
 
-**목적**: Lifting Head에 Backbone feature를 추가하여 depth cues 활용
+**Purpose**: Add backbone features to the Lifting Head to utilize depth cues
 
-**구조**:
+**Architecture**:
 ```
 Backbone feat [2048, 8, 8]
        │
@@ -360,7 +360,7 @@ Backbone feat [2048, 8, 8]
 Heatmap [16, 47, 47]          Z_backbone [256]
        ↓ (soft_argmax)             │
 2D [32] + conf [16]                │ (depth cues!)
-       │  ← gradient 차단           │  ← gradient 흐름
+       │  ← gradient blocked       │  ← gradient flows
        └────── Concat ─────────────┘
                   ↓
        [32 + 16 + 256 + 9] = 313
@@ -368,24 +368,24 @@ Heatmap [16, 47, 47]          Z_backbone [256]
          Lifting Network → 3D
 ```
 
-**핵심 설계**:
-- `coords_2d.detach()`: Heatmap은 2D 위치만 학습 (3D loss 차단)
-- `z_backbone`: Backbone은 depth cues 학습 (3D loss 흐름)
-- 역할 분리 (Role Separation)
+**Core design**:
+- `coords_2d.detach()`: Heatmap learns only 2D positions (3D loss blocked)
+- `z_backbone`: Backbone learns depth cues (3D loss flows)
+- Role Separation
 
-**구현 파일**:
+**Implementation files**:
 - Head: `custom_egopose_lifting_backbone_fusion_head.py` ✅
 - Config: `HMD_xregopose_lifting_backbone_fusion_config.py` ✅
 
-**비교 대상**: Phase 5-B Lifting (190mm) → 개선 기대
+**Comparison target**: Phase 5-B Lifting (190mm) → improvement expected
 
 ---
 
-### Phase 5-D: Attention 기반 Lifting (계획)
+### Phase 5-D: Attention-based Lifting (Planned)
 
-**목적**: Cross-Attention으로 각 관절이 backbone에서 필요한 depth 정보를 선택적으로 쿼리
+**Purpose**: Using Cross-Attention so each joint selectively queries the necessary depth information from the backbone
 
-**구조**:
+**Architecture**:
 ```
 2D coords [16, 2] → Joint queries [16, D]
                           ↓
@@ -398,37 +398,37 @@ Backbone [2048,8,8] → Spatial tokens [64, D]
                      + HMD → 3D Pose
 ```
 
-**핵심 설계**:
+**Core design**:
 ```python
-# Gradient 흐름 설계
-coords_2d = soft_argmax(heatmaps).detach()  # 2D: gradient 차단
+# Gradient flow design
+coords_2d = soft_argmax(heatmaps).detach()  # 2D: gradient blocked
 joint_q = embed(coords_2d)                   # Query
 
-backbone_kv = backbone_proj(backbone_feat)   # K/V: gradient 흐름!
+backbone_kv = backbone_proj(backbone_feat)   # K/V: gradient flows!
 
 depth_joints = cross_attention(joint_q, backbone_kv, backbone_kv)
 pose_3d = output(depth_joints)
 ```
 
-**장점**:
-1. 각 관절이 **필요한 spatial 위치에서 depth 쿼리**
-2. `attn_weights`로 **어느 위치 참조했는지 해석 가능**
-3. **역할 분리**: 2D coords=위치(Query), Backbone=depth(Key/Value)
+**Advantages**:
+1. Each joint **queries depth from the needed spatial location**
+2. **Interpretable via `attn_weights`** showing which positions were referenced
+3. **Role separation**: 2D coords=position (Query), Backbone=depth (Key/Value)
 
-**구현 파일** (예정):
+**Implementation files** (planned):
 - Head: `custom_egopose_attention_lifting_head.py`
 - Config: `HMD_xregopose_attention_lifting_config.py`
 
-**비교 대상**: Phase 5-C Backbone Fusion 결과
+**Comparison target**: Phase 5-C Backbone Fusion results
 
-**추천 실험 순서**:
-1. Phase 1 (Warmup) - 이미 구현, 실험 진행
-2. **Phase 6-A (Backbone Fusion)** - 핵심 구조 개선, 병렬 진행 가능
-3. Phase 1 + 6-A 조합
-4. 결과에 따라 Phase 2, 3 선택적 적용
+**Recommended experiment order**:
+1. Phase 1 (Warmup) - already implemented, experiment in progress
+2. **Phase 6-A (Backbone Fusion)** - key structural improvement, can run in parallel
+3. Phase 1 + 6-A combination
+4. Selectively apply Phase 2, 3 based on results
 
 
-## 참고 논문
+## Reference Papers
 
 1. **Deep Mutual Learning** (Zhang et al., 2017) - arXiv:1706.00384
 2. **Knowledge Distillation** (Hinton et al., 2015) - arXiv:1503.02531
@@ -436,23 +436,23 @@ pose_3d = output(depth_joints)
 
 ---
 
-## 현재 진행 상황
+## Current Progress
 
-- [x] Phase 1: Progressive Warmup 구현 (Dual backbone용)
-  - [x] Head v2 생성: `custom_egopose_baselinel1_head_multi_backbone_v2.py`
-  - [x] MutualLearningWarmupHook 생성
-  - [x] Config 생성: `HMD_xregopose_h5cache_coco_mpii_warmup_config.py`
-- [x] **Phase 5-B: 2D→3D Lifting 구현 (Single backbone용)**
-  - [x] **Head 생성: `custom_egopose_lifting_head.py`**
-  - [x] **Config 생성: `HMD_xregopose_single_lifting_config.py`**
-  - [x] **실험 결과: 190mm (실패 - depth 정보 부족)**
-- [ ] Phase 1 실험 실행 (비교: Dual 43.26mm)
-- [x] **Phase 5-C: Lifting + Backbone Fusion 구현**
-  - [x] Head 생성: `custom_egopose_lifting_backbone_fusion_head.py`
-  - [x] Config 생성: `HMD_xregopose_lifting_backbone_fusion_config.py`
-  - [x] Smoke test 완료 (2026-01-21): 훈련 파이프라인 정상 동작 확인
-  - [ ] Full dataset 훈련 (목표: < 41.37mm)
-- [ ] **Phase 5-D: Attention Lifting 구현**
-  - [ ] Head 생성: `custom_egopose_attention_lifting_head.py`
-  - [ ] Config 생성: `HMD_xregopose_attention_lifting_config.py`
-- [ ] Phase 2, 3 구현 (필요시)
+- [x] Phase 1: Progressive Warmup implementation (for Dual backbone)
+  - [x] Head v2 created: `custom_egopose_baselinel1_head_multi_backbone_v2.py`
+  - [x] MutualLearningWarmupHook created
+  - [x] Config created: `HMD_xregopose_h5cache_coco_mpii_warmup_config.py`
+- [x] **Phase 5-B: 2D→3D Lifting implementation (for Single backbone)**
+  - [x] **Head created: `custom_egopose_lifting_head.py`**
+  - [x] **Config created: `HMD_xregopose_single_lifting_config.py`**
+  - [x] **Experiment result: 190mm (failed - insufficient depth information)**
+- [ ] Phase 1 experiment execution (comparison: Dual 43.26mm)
+- [x] **Phase 5-C: Lifting + Backbone Fusion implementation**
+  - [x] Head created: `custom_egopose_lifting_backbone_fusion_head.py`
+  - [x] Config created: `HMD_xregopose_lifting_backbone_fusion_config.py`
+  - [x] Smoke test completed (2026-01-21): training pipeline confirmed working
+  - [ ] Full dataset training (target: < 41.37mm)
+- [ ] **Phase 5-D: Attention Lifting implementation**
+  - [ ] Head creation: `custom_egopose_attention_lifting_head.py`
+  - [ ] Config creation: `HMD_xregopose_attention_lifting_config.py`
+- [ ] Phase 2, 3 implementation (if needed)

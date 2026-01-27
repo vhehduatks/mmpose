@@ -28,6 +28,8 @@ from .custom_egopose_hybrid_lifting_head import CustomEgoposeHybridLiftingHead
 from .custom_egopose_decoupled_head import CustomEgoposeDecoupledHead
 from .custom_egopose_hierarchical_head import CustomEgoposeHierarchicalHead
 from .custom_egopose_vit_lifting_head_v6 import CustomEgoposeViTLiftingHeadV6
+from .custom_egopose_attention_z_encoder_head import CustomEgoposeAttentionZEncoderHead
+from .custom_egopose_cascaded_refinement_head import CustomEgoposeCascadedRefinementHead
 
 __all__ = [
     'HeatmapHead', 'CPMHead', 'MSPNHead', 'ViPNASHead',
@@ -46,5 +48,7 @@ __all__ = [
 	'CustomEgoposeHybridLiftingHead',
 	'CustomEgoposeDecoupledHead',
 	'CustomEgoposeHierarchicalHead',
-	'CustomEgoposeViTLiftingHeadV6'
+	'CustomEgoposeViTLiftingHeadV6',
+	'CustomEgoposeAttentionZEncoderHead',
+	'CustomEgoposeCascadedRefinementHead'
 ]

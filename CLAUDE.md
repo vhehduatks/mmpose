@@ -102,41 +102,41 @@ All custom files follow `custom_*.py` naming and extend base classes:
 ### Key Custom Features
 - **Dual Backbone**: `Custom_TopdownPoseEstimator` accepts `backbone` + `backbone2`
 - **HMD Info**: Custom heads process HMD (head/hand) 9-dim position data
-- **Confidence-Weighted Fusion**: `ConfidenceWeightedHMDHead` - heatmap confidence로 HMD/visual 가중치 동적 조절
+- **Confidence-Weighted Fusion**: `ConfidenceWeightedHMDHead` - dynamically adjusts HMD/visual weights using heatmap confidence
 - **H5 Caching**: `H5CachedEgoposeDataset` for fast loading (replaces JSON parsing)
-  - Annotation-only cache: 빠른 메타데이터 로딩
-  - **Image-embedded cache**: 256x256 이미지 포함 (NTFS 병목 해결)
+  - Annotation-only cache: fast metadata loading
+  - **Image-embedded cache**: includes 256x256 images (resolves NTFS bottleneck)
 - **Seg+Depth**: `*_seg_depth` variants predict segmentation and depth maps
 - **3D Visualizer**: `CustomPose3dLocalVisualizer_xregopose_v2` for simplified 3D pose visualization
 
 ### HMD Info Structure (9-dim)
 ```python
 hmd_info = [
-    right_hand_local,   # (3,) 오른손 로컬 좌표 (머리 기준)
-    left_hand_local,    # (3,) 왼손 로컬 좌표
-    hand_distance,      # (1,) 양손 간 거리
-    right_distance,     # (1,) 머리-오른손 거리
-    left_distance       # (1,) 머리-왼손 거리
+    right_hand_local,   # (3,) right hand local coordinates (relative to head)
+    left_hand_local,    # (3,) left hand local coordinates
+    hand_distance,      # (1,) distance between both hands
+    right_distance,     # (1,) head-to-right-hand distance
+    left_distance       # (1,) head-to-left-hand distance
 ]
 ```
 
 ### Custom Configs
 Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for details):
 
-| Config | Head Type | 특징 | 결과 |
-|--------|-----------|------|------|
+| Config | Head Type | Features | Results |
+|--------|-----------|----------|---------|
 | `HMD_xregopose_single_coco_full_config.py` | `CustomxRegoposeBaselinel1` | **Single COCO baseline** | **41.37mm 🏆** |
 | `HMD_xregopose_h5cache_coco_mpii_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | Dual COCO+MPII | 43.26mm |
 | `HMD_xregopose_h5cache_coco_mpii_warmup_10ep_config.py` | `CustomxRegoposeBaselinel1_multi_backbone_v2` | Dual + Progressive Warmup | 45.93mm |
 | `HMD_xregopose_single_lifting_config.py` | `CustomEgoposeLiftingHead` | Soft-argmax 2D→3D Lifting | 45.92mm |
 | `HMD_xregopose_lifting_backbone_fusion_config.py` | `CustomEgoposeLiftingBackboneFusionHead` | Lifting + Backbone Fusion | 105.18mm ❌ |
-| `HMD_xregopose_spatial_lifting_full_config.py` | `CustomEgoposeSpatialLiftingHead` | Grid Sampling Spatial Depth | 실험 대기 |
+| `HMD_xregopose_spatial_lifting_full_config.py` | `CustomEgoposeSpatialLiftingHead` | Grid Sampling Spatial Depth | pending experiment |
 | `HMD_xregopose_efficient_decoder_full_config.py` | `CustomxRegoposeBaselinel1` | EfficientHeatmapDecoder (40M→1.35M) | 45.06mm |
 | `HMD_xregopose_attention_lifting_full_config.py` | `CustomEgoposeAttentionLiftingHead` | Attention Lifting (Cross-Attn) | 45.43mm |
 | `HMD_xregopose_vit_lifting_full_config.py` | `CustomEgoposeViTLiftingHead` | ViT-Style Lifting v1-v3 | 45.34mm |
-| `HMD_xregopose_decoupled_full_config.py` | `CustomEgoposeDecoupledHead` | **Upper-Lower Decoupled (신규)** | 실험 대기 |
+| `HMD_xregopose_decoupled_full_config.py` | `CustomEgoposeDecoupledHead` | **Upper-Lower Decoupled (new)** | pending experiment |
 
-### 실험 결과 요약 (2026-01-27)
+### Experiment Results Summary (2026-01-27)
 
 | Model | Full Body MPJPE | Upper Body | Lower Body | vs Baseline |
 |-------|-----------------|------------|------------|-------------|
@@ -147,26 +147,26 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | Dual COCO+MPII | 43.26mm | - | - | +1.89mm |
 | Single Lifting | 45.92mm | - | - | +4.55mm |
 
-**핵심 발견**: ViT v3는 Upper Body 23.49mm (최고!), Lower Body 67.19mm (최악)
-→ **Upper-Lower Decoupled** 모델로 두 장점 결합 시도 중
+**Key finding**: ViT v3 achieves Upper Body 23.49mm (best!), but Lower Body 67.19mm (worst)
+→ **Upper-Lower Decoupled** model attempting to combine the strengths of both
 
-**목표**: 41mm 이하 달성
+**Goal**: achieve below 41mm
 
-**다음 실험**: Upper-Lower Decoupled Head (ViT v3 Upper + Baseline Lower)
-- 예상 결과: ~38.40mm (Upper 23.49mm + Lower 53.31mm 결합)
+**Next experiment**: Upper-Lower Decoupled Head (ViT v3 Upper + Baseline Lower)
+- Expected results: ~38.40mm (combining Upper 23.49mm + Lower 53.31mm)
 
-### 문서 구조
+### Document Structure
 
-| 파일 | 용도 |
-|------|------|
-| `EXPERIMENT_RESULTS.md` | **실험 결과 및 분석** (epoch별 상세, 종합 분석) |
-| `DUAL_BACKBONE_EXPERIMENT_PLAN.md` | 실험 계획 및 Phase별 구현 상태 |
-| `IMPROVEMENT_IDEAS.md` | 개선 아이디어 (EfficientDecoder, Attention Lifting 등) |
-| `SPATIAL_DEPTH_EXTRACTION_IDEAS.md` | 공간 정보 보존 Depth 추출 방법 (Grid Sampling 등) |
-| `VIT_STYLE_LIFTING_IDEA.md` | ViT-Style Lifting 아이디어 (Learnable Queries, Self-Attention) |
-| `NEXT_MODEL_IDEAS.md` | **다음 모델 아이디어** (Upper-Lower Decoupled 등 4가지 옵션) |
-| `PROBLEM.md` | 코드 수정 필요 사항 (Metric squeeze 버그 등) |
-| `README.md` | Config 설명 및 Smoke Test 규칙 |
+| File | Purpose |
+|------|---------|
+| `EXPERIMENT_RESULTS.md` | **Experiment results and analysis** (per-epoch details, comprehensive analysis) |
+| `DUAL_BACKBONE_EXPERIMENT_PLAN.md` | Experiment plan and per-phase implementation status |
+| `IMPROVEMENT_IDEAS.md` | Improvement ideas (EfficientDecoder, Attention Lifting, etc.) |
+| `SPATIAL_DEPTH_EXTRACTION_IDEAS.md` | Spatial information preserving depth extraction methods (Grid Sampling, etc.) |
+| `VIT_STYLE_LIFTING_IDEA.md` | ViT-Style Lifting ideas (Learnable Queries, Self-Attention) |
+| `NEXT_MODEL_IDEAS.md` | **Next model ideas** (Upper-Lower Decoupled and 4 other options) |
+| `PROBLEM.md` | Code modification requirements (Metric squeeze bug, etc.) |
+| `README.md` | Config descriptions and Smoke Test rules |
 
 ## Key Files Reference
 
@@ -178,99 +178,99 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | Default runtime | `configs/_base_/default_runtime.py` |
 | H5 cache builder (annotation) | `tools/dataset_converters/build_egopose_h5cache.py` |
 | H5 cache builder (with images) | `tools/dataset_converters/build_egopose_h5cache_with_images.py` |
-| **실험 결과** | `my_code/custom_config/EXPERIMENT_RESULTS.md` |
-| **실험 계획** | `my_code/custom_config/DUAL_BACKBONE_EXPERIMENT_PLAN.md` |
-| **개선 아이디어** | `my_code/custom_config/IMPROVEMENT_IDEAS.md` |
-| **Spatial Depth 방법** | `my_code/custom_config/SPATIAL_DEPTH_EXTRACTION_IDEAS.md` |
-| **코드 수정 사항** | `my_code/custom_config/PROBLEM.md` |
+| **Experiment results** | `my_code/custom_config/EXPERIMENT_RESULTS.md` |
+| **Experiment plan** | `my_code/custom_config/DUAL_BACKBONE_EXPERIMENT_PLAN.md` |
+| **Improvement ideas** | `my_code/custom_config/IMPROVEMENT_IDEAS.md` |
+| **Spatial Depth methods** | `my_code/custom_config/SPATIAL_DEPTH_EXTRACTION_IDEAS.md` |
+| **Code modification notes** | `my_code/custom_config/PROBLEM.md` |
 | Config README | `my_code/custom_config/README.md` |
 
-### Head 파일
+### Head Files
 
-| Head | File | 용도 |
-|------|------|------|
+| Head | File | Purpose |
+|------|------|---------|
 | `CustomxRegoposeBaselinel1` | `custom_egopose_baselinel1_head.py` | Single backbone baseline (🏆 41.37mm) |
 | `CustomxRegoposeBaselinel1_multi_backbone` | `custom_egopose_baselinel1_head_multi_backbone.py` | Dual backbone |
 | `CustomxRegoposeBaselinel1_multi_backbone_v2` | `custom_egopose_baselinel1_head_multi_backbone_v2.py` | Dual + Warmup |
 | `CustomEgoposeLiftingHead` | `custom_egopose_lifting_head.py` | Soft-argmax 2D→3D Lifting |
 | `CustomEgoposeLiftingBackboneFusionHead` | `custom_egopose_lifting_backbone_fusion_head.py` | Lifting + Backbone Fusion |
-| `CustomEgoposeSpatialLiftingHead` | `custom_egopose_spatial_lifting_head.py` | Grid Sampling 기반 Spatial Depth |
+| `CustomEgoposeSpatialLiftingHead` | `custom_egopose_spatial_lifting_head.py` | Grid Sampling based Spatial Depth |
 | `CustomEgoposeAttentionLiftingHead` | `custom_egopose_attention_lifting_head.py` | Attention Lifting (Cross-Attn) |
 | `CustomEgoposeViTLiftingHead` | `custom_egopose_vit_lifting_head.py` | ViT-Style Lifting v1-v3 |
-| `CustomEgoposeDecoupledHead` | `custom_egopose_decoupled_head.py` | **Upper-Lower Decoupled (신규)** |
+| `CustomEgoposeDecoupledHead` | `custom_egopose_decoupled_head.py` | **Upper-Lower Decoupled (new)** |
 
-### Smoke Test 규칙
+### Smoke Test Rules
 
-**목적**: 새 구현체의 훈련 파이프라인이 정상 동작하는지 빠르게 확인
+**Purpose**: quickly verify that the training pipeline of a new implementation runs correctly
 
-**Config 설정**:
-- `max_epochs = 1~2` (짧은 훈련)
-- `checkpoint = None` (가중치 저장 안함)
-- Config 파일명에 `_small` suffix 사용
+**Config settings**:
+- `max_epochs = 1~2` (short training)
+- `checkpoint = None` (no weight saving)
+- Use `_small` suffix in config filename
 
-**Dataset 경로**:
+**Dataset paths**:
 - Small: `train_small_1k.h5` / `val_small_500.h5`
 - Full: `train_cache_with_images.h5` / `test_cache_with_images.h5`
 
-### 주요 구조적 문제 및 해결 방향
+### Key Structural Issues and Solutions
 
-| 문제 | 원인 | 해결 방향 |
-|------|------|----------|
-| HeatmapDecoder 40M params | `linear3: 2048→18432` | EfficientHeatmapDecoder (Conv 기반, 1.35M) |
-| GAP 공간 정보 손실 | Global Average Pooling | Grid Sampling으로 관절별 feature 추출 |
-| Depth Ambiguity | Heatmap은 2D 확률 분포 | Backbone feature로 depth cues 보존 |
-| Metric squeeze 버그 | `squeeze()` 전체 차원 제거 | `squeeze(dim=1)` 특정 차원만 제거 |
+| Issue | Cause | Solution Direction |
+|-------|-------|--------------------|
+| HeatmapDecoder 40M params | `linear3: 2048→18432` | EfficientHeatmapDecoder (Conv-based, 1.35M) |
+| GAP spatial information loss | Global Average Pooling | Per-joint feature extraction via Grid Sampling |
+| Depth Ambiguity | Heatmap is a 2D probability distribution | Preserve depth cues via backbone features |
+| Metric squeeze bug | `squeeze()` removes all dimensions | `squeeze(dim=1)` removes only specific dimension |
 
 ## Multi-Server Environment
 
-이 프로젝트는 **3090 서버**(코드 수정/push)와 **4090 서버**(훈련/pull)에서 동시 운영 중.
+This project runs simultaneously on the **3090 server** (code editing/push) and the **4090 server** (training/pull).
 
-### 서버 구성
+### Server Configuration
 
-| 항목 | 3090 서버 | 4090 서버 |
-|------|-----------|-----------|
+| Item | 3090 Server | 4090 Server |
+|------|-------------|-------------|
 | GPU | 2x RTX 3090 | 2x RTX 4090 |
-| 역할 | 코드 수정, git push | 훈련 실행, git pull |
-| Dataset | H5 image-embedded cache | Annotation-only H5 + 디스크 이미지 |
-| CLAUDE.md | 원본 (git 반영) | `--assume-unchanged` (로컬 전용) |
+| Role | Code editing, git push | Training execution, git pull |
+| Dataset | H5 image-embedded cache | Annotation-only H5 + disk images |
+| CLAUDE.md | Original (tracked by git) | `--assume-unchanged` (local only) |
 
-### 코드 작성 필수 규칙
+### Mandatory Code Writing Rules
 
-**`.view()` 사용 금지 → 반드시 `.reshape()` 사용**
+**`.view()` is prohibited → must use `.reshape()` instead**
 
-4090 DDP 분산훈련에서 `.view()`가 non-contiguous tensor RuntimeError 발생.
-3090에서는 발생하지 않지만 4090 호환을 위해 모든 새 코드에서 `.reshape()` 사용 필수.
+`.view()` causes non-contiguous tensor RuntimeError in 4090 DDP distributed training.
+It does not occur on 3090, but `.reshape()` must be used in all new code for 4090 compatibility.
 
 ```python
-# BAD - 4090 DDP에서 RuntimeError 발생
+# BAD - RuntimeError in 4090 DDP
 hmd_tokens = self.hmd_embed(hmd_info).view(B, 3, -1)
 pose_3d = pose_3d.view(-1, 16, 3)
 
-# GOOD - 양쪽 서버 모두 안전
+# GOOD - safe on both servers
 hmd_tokens = self.hmd_embed(hmd_info).reshape(B, 3, -1)
 pose_3d = pose_3d.reshape(-1, 16, 3)
 ```
 
-### 4090 데이터 파이프라인 차이
+### 4090 Data Pipeline Differences
 
-4090에서 H5 embedded images + DDP + multiprocessing 조합 시 SIGSEGV 발생.
-annotation-only H5 + 전처리된 디스크 이미지로 우회.
+SIGSEGV occurs on 4090 when combining H5 embedded images + DDP + multiprocessing.
+Workaround uses annotation-only H5 + preprocessed disk images.
 
-| 항목 | 3090 (H5 image cache) | 4090 (디스크 이미지) |
+| Item | 3090 (H5 image cache) | 4090 (disk images) |
 |------|----------------------|---------------------|
 | Pipeline | `LoadImageFromH5Cache` | `LoadImage` |
 | `use_cached_images` | `True` | `False` |
-| `img_path_replace` | 없음 | `{'/Dataset/': '/Dataset_256/'}` |
+| `img_path_replace` | None | `{'/Dataset/': '/Dataset_256/'}` |
 | VisualizationHook | `H5CacheVisualizationHook` | `PoseVisualizationHook` |
 
-### Config 작성 가이드 (Cross-Server 호환)
+### Config Writing Guide (Cross-Server Compatible)
 
-새 config 작성 시, 서버별 분기를 넣으면 양쪽에서 동일 config 사용 가능:
+When writing a new config, adding per-server branching allows the same config to be used on both servers:
 ```python
 import platform, socket
 
 _hostname = socket.gethostname()
-_is_4090_server = (_hostname == '4090서버호스트명')  # 실제 호스트명으로 교체
+_is_4090_server = (_hostname == '4090_server_hostname')  # Replace with actual hostname
 
 if _is_4090_server:
     _pipeline_load = dict(type='LoadImage')
@@ -284,31 +284,31 @@ else:
     _vis_hook_type = 'H5CacheVisualizationHook'
 ```
 
-### 4090 로컬 전용 파일 (git 미반영)
+### 4090 Local-Only Files (not tracked by git)
 
-| 파일 | 용도 |
-|------|------|
-| `4090_TRAINING_GUIDE.md` | 4090 훈련 가이드 |
-| `ENVIRONMENT_SETUP_TROUBLESHOOTING.md` | 환경 설치 트러블슈팅 |
-| `tools/dataset_converters/preprocess_egopose_images.py` | 이미지 전처리 스크립트 |
-| `my_code/custom_config/HMD_xregopose_dist_test_config.py` | 분산훈련 테스트 config |
+| File | Purpose |
+|------|---------|
+| `4090_TRAINING_GUIDE.md` | 4090 training guide |
+| `ENVIRONMENT_SETUP_TROUBLESHOOTING.md` | Environment setup troubleshooting |
+| `tools/dataset_converters/preprocess_egopose_images.py` | Image preprocessing script |
+| `my_code/custom_config/HMD_xregopose_dist_test_config.py` | Distributed training test config |
 
-### 4090 로컬 수정 파일 (git 미반영)
+### 4090 Locally Modified Files (not tracked by git)
 
-| 파일 | 수정 내용 |
-|------|----------|
-| `custom_egopose_dataset.py` | Windows 경로 하드코딩 → 상대경로 |
-| `custom_egopose_dataset_h5cache.py` | `img_path_replace` 파라미터 추가 |
-| `mmpose/datasets/transforms/__init__.py` | `LoadImageFromH5Cache` import 추가 |
-| `HMD_xregopose_vit_lifting_full_config.py` | 4090용 데이터 경로/파이프라인 |
-| `tools/train.py` | 미확인 수정 |
+| File | Modification Details |
+|------|----------------------|
+| `custom_egopose_dataset.py` | Windows hardcoded paths → relative paths |
+| `custom_egopose_dataset_h5cache.py` | Added `img_path_replace` parameter |
+| `mmpose/datasets/transforms/__init__.py` | Added `LoadImageFromH5Cache` import |
+| `HMD_xregopose_vit_lifting_full_config.py` | 4090 data paths/pipeline |
+| `tools/train.py` | Unconfirmed modifications |
 
-### CLAUDE.md 관리
+### CLAUDE.md Management
 
-- **원본 수정**: 3090 서버에서만 수행 (git 반영)
-- **4090**: `git update-index --assume-unchanged CLAUDE.md` 설정됨
-- 4090 CLAUDE.md 상단에 로컬 서버 환경 정보 추가되어 있음
-- 4090에서 최신 CLAUDE.md 동기화 필요 시:
+- **Original editing**: performed only on the 3090 server (tracked by git)
+- **4090**: `git update-index --assume-unchanged CLAUDE.md` is configured
+- Local server environment info is added at the top of 4090's CLAUDE.md
+- When syncing the latest CLAUDE.md on 4090:
   ```bash
   git update-index --no-assume-unchanged CLAUDE.md
   git pull

@@ -1,47 +1,48 @@
 
 
-## 제안: Attention 기반 Lifting Network
 
-### 현재 구조의 한계
+## Proposal: Attention-based Lifting Network
+
+### Limitations of the Current Structure
 
 ```python
-# 현재: 단순 concat → FC
+# Current: Simple concat → FC
 x = concat([coords_2d, confidence, z_backbone, hmd])  # [B, 313]
 pose_3d = FC(x)  # [B, 48]
 ```
 
-**문제점**:
-- 모든 입력을 단순 concat → 관계 모델링 부재
-- 어떤 관절이 어떤 depth 정보를 참조해야 하는지 불명확
-- 관절 간 구조적 관계 (대칭, 부모-자식) 무시
+**Problems**:
+- Simple concat of all inputs → No relationship modeling
+- Unclear which joints should reference which depth information
+- Ignores structural relationships between joints (symmetry, parent-child)
 
-### 방안 1: Joint Self-Attention
+### Option 1: Joint Self-Attention
 
 ```
 2D coords [B, 16, 2] → Linear → Joint tokens [B, 16, D]
                                       ↓
                               Self-Attention
-                              (관절 간 관계 학습)
+                              (Learn inter-joint relationships)
                                       ↓
                               [B, 16, D]
                                       ↓
                                   3D Pose
 ```
 
-**효과**:
-- 왼팔 ↔ 오른팔 대칭 관계 학습
-- 부모-자식 관절 관계 (어깨→팔꿈치→손목)
-- 가려진 관절이 보이는 관절 참조
+**Benefits**:
+- Learn left arm ↔ right arm symmetry relationships
+- Parent-child joint relationships (shoulder→elbow→wrist)
+- Occluded joints can reference visible joints
 
 ---
 
-### 방안 2: Cross-Attention (2D → Backbone) ⭐ 추천
+### Option 2: Cross-Attention (2D → Backbone) ⭐ Recommended
 
-**핵심 아이디어**: 각 관절의 2D 위치가 Backbone feature에서 해당 depth 정보를 쿼리
+**Core Idea**: Each joint's 2D position queries corresponding depth information from backbone features
 
 ```
-Query: 2D joint tokens [B, 16, D]    ← "이 2D 위치의 depth는?"
-Key/Value: Backbone tokens [B, 64, D] ← "spatial depth 정보"
+Query: 2D joint tokens [B, 16, D]    ← "What is the depth at this 2D position?"
+Key/Value: Backbone tokens [B, 64, D] ← "Spatial depth information"
                     ↓
             Cross-Attention
                     ↓
@@ -50,7 +51,7 @@ Key/Value: Backbone tokens [B, 64, D] ← "spatial depth 정보"
                 3D Pose
 ```
 
-**구현 예시**:
+**Implementation Example**:
 ```python
 class CrossAttentionLifting(nn.Module):
     def __init__(self, joint_dim=64, backbone_dim=256, num_heads=4):
@@ -87,30 +88,30 @@ class CrossAttentionLifting(nn.Module):
         backbone_tokens = backbone_tokens.flatten(2).transpose(1, 2)  # [B, 64, 256]
         backbone_kv = self.kv_proj(backbone_tokens)  # [B, 64, 64]
 
-        # Cross attention: 각 관절이 backbone에서 depth 정보 쿼리
+        # Cross attention: Each joint queries depth information from backbone
         depth_features, attn_weights = self.cross_attn(
-            query=joint_q,      # [B, 16, 64] - 각 관절
-            key=backbone_kv,    # [B, 64, 64] - spatial positions
+            query=joint_q,      # [B, 16, 64] - Each joint
+            key=backbone_kv,    # [B, 64, 64] - Spatial positions
             value=backbone_kv
         )
         # depth_features: [B, 16, 64] - depth-aware joint features
-        # attn_weights: [B, 16, 64] - 어느 위치 참조했는지 시각화 가능!
+        # attn_weights: [B, 16, 64] - Can visualize which positions were referenced!
 
         # Combine with confidence and HMD
-        # ... (추가 처리)
+        # ... (additional processing)
 
         pose_3d = self.output_proj(depth_features)  # [B, 16, 3]
         return pose_3d, attn_weights
 ```
 
-**장점**:
-1. **선택적 depth 쿼리**: 각 관절이 필요한 spatial 위치에서 depth 정보 가져옴
-2. **해석 가능**: `attn_weights`로 "어느 위치에서 depth를 가져왔는지" 시각화
-3. **역할 분리와 일치**: 2D=Query(위치), Backbone=Key/Value(depth)
+**Advantages**:
+1. **Selective depth querying**: Each joint retrieves depth information from the spatial positions it needs
+2. **Interpretable**: `attn_weights` can visualize "from which positions depth was retrieved"
+3. **Matches role separation**: 2D=Query(position), Backbone=Key/Value(depth)
 
 ---
 
-### 방안 3: Joint-HMD Cross-Attention
+### Option 3: Joint-HMD Cross-Attention
 
 ```
 Query: Joint tokens [B, 16, D]
@@ -118,17 +119,17 @@ Key/Value: HMD tokens [B, 3, D]  (head, right_hand, left_hand)
                 ↓
         Cross-Attention
                 ↓
-    "손 관절 → 손 HMD 참조"
-    "몸통 관절 → head HMD 참조"
+    "Hand joints → reference hand HMD"
+    "Torso joints → reference head HMD"
 ```
 
-**구현**:
+**Implementation**:
 ```python
 class JointHMDCrossAttention(nn.Module):
     def __init__(self, joint_dim=64, num_heads=4):
         super().__init__()
 
-        # HMD를 3개 token으로 (head, right_hand, left_hand)
+        # HMD as 3 tokens (head, right_hand, left_hand)
         self.hmd_embed = nn.Sequential(
             nn.Linear(9, joint_dim * 3),  # → [B, 3, D]
         )
@@ -155,11 +156,11 @@ class JointHMDCrossAttention(nn.Module):
         return joint_features + enhanced  # Residual
 ```
 
-**효과**: 손 관절 → 손 HMD, 몸통 → head HMD로 자연스러운 매핑
+**Effect**: Natural mapping of hand joints → hand HMD, torso → head HMD
 
 ---
 
-### 전체 Attention Lifting 구조 (추천)
+### Full Attention Lifting Architecture (Recommended)
 
 ```
                     Backbone feat [2048, 8, 8]
@@ -182,18 +183,18 @@ class JointHMDCrossAttention(nn.Module):
                            + HMD Cross-Attention
                            ↓
                     Self-Attention
-                   (관절 간 관계)
+                   (Inter-joint relationships)
                            ↓
                     Output proj
                            ↓
                     3D Pose [16, 3]
 ```
 
-### Gradient 흐름 설계
+### Gradient Flow Design
 
 ```python
 def forward(self, heatmaps, backbone_feat, hmd_info):
-    # 2D coords (gradient 차단 - 2D 역할만)
+    # 2D coords (gradient blocked - 2D role only)
     coords_2d, confidence = soft_argmax_2d(heatmaps)
     coords_2d = coords_2d.detach()
     confidence = confidence.detach()
@@ -201,39 +202,39 @@ def forward(self, heatmaps, backbone_feat, hmd_info):
     # Joint queries
     joint_q = self.joint_embed(coords_2d)  # [B, 16, D]
 
-    # Backbone key/value (gradient 흐름 - 3D 학습)
+    # Backbone key/value (gradient flows - 3D learning)
     backbone_kv = self.backbone_to_tokens(backbone_feat)  # [B, 64, D]
 
-    # Cross attention: 2D 위치 기반 depth 쿼리
+    # Cross attention: Depth query based on 2D positions
     depth_joints, attn = self.cross_attn(joint_q, backbone_kv, backbone_kv)
 
     # HMD fusion
     hmd_enhanced = self.hmd_cross_attn(depth_joints, hmd_info)
 
-    # Self attention (관절 간 관계)
+    # Self attention (inter-joint relationships)
     refined = self.self_attn(hmd_enhanced)
 
     # Output
     pose_3d = self.output_proj(refined)
 
-    return pose_3d, attn  # attn으로 해석 가능
+    return pose_3d, attn  # attn enables interpretability
 ```
 
-### 방안 비교
+### Option Comparison
 
-| 방식 | 관절 관계 | Depth 쿼리 | 해석 가능 | 파라미터 |
+| Approach | Joint Relationships | Depth Query | Interpretable | Parameters |
 |------|----------|-----------|----------|---------|
-| FC (현재) | ✗ | ✗ | ✗ | ~4M |
+| FC (current) | ✗ | ✗ | ✗ | ~4M |
 | Self-Attention | ✓ | ✗ | △ | ~5M |
 | **Cross-Attention** | △ | **✓** | **✓** | ~6M |
 | Full (Self+Cross+HMD) | ✓ | ✓ | ✓ | ~8M |
 
-### 구현 우선순위
+### Implementation Priority
 
-1. **Cross-Attention (2D → Backbone)** - 핵심, 먼저 구현
-2. HMD Cross-Attention - 추가 개선
-3. Self-Attention - 필요시
+1. **Cross-Attention (2D → Backbone)** - Core, implement first
+2. HMD Cross-Attention - Additional improvement
+3. Self-Attention - If needed
 
-**예상 파일**: `custom_egopose_attention_lifting_head.py`
+**Expected file**: `custom_egopose_attention_lifting_head.py`
 
 ---
