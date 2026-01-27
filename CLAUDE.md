@@ -221,6 +221,100 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | Depth Ambiguity | Heatmap은 2D 확률 분포 | Backbone feature로 depth cues 보존 |
 | Metric squeeze 버그 | `squeeze()` 전체 차원 제거 | `squeeze(dim=1)` 특정 차원만 제거 |
 
+## Multi-Server Environment
+
+이 프로젝트는 **3090 서버**(코드 수정/push)와 **4090 서버**(훈련/pull)에서 동시 운영 중.
+
+### 서버 구성
+
+| 항목 | 3090 서버 | 4090 서버 |
+|------|-----------|-----------|
+| GPU | 2x RTX 3090 | 2x RTX 4090 |
+| 역할 | 코드 수정, git push | 훈련 실행, git pull |
+| Dataset | H5 image-embedded cache | Annotation-only H5 + 디스크 이미지 |
+| CLAUDE.md | 원본 (git 반영) | `--assume-unchanged` (로컬 전용) |
+
+### 코드 작성 필수 규칙
+
+**`.view()` 사용 금지 → 반드시 `.reshape()` 사용**
+
+4090 DDP 분산훈련에서 `.view()`가 non-contiguous tensor RuntimeError 발생.
+3090에서는 발생하지 않지만 4090 호환을 위해 모든 새 코드에서 `.reshape()` 사용 필수.
+
+```python
+# BAD - 4090 DDP에서 RuntimeError 발생
+hmd_tokens = self.hmd_embed(hmd_info).view(B, 3, -1)
+pose_3d = pose_3d.view(-1, 16, 3)
+
+# GOOD - 양쪽 서버 모두 안전
+hmd_tokens = self.hmd_embed(hmd_info).reshape(B, 3, -1)
+pose_3d = pose_3d.reshape(-1, 16, 3)
+```
+
+### 4090 데이터 파이프라인 차이
+
+4090에서 H5 embedded images + DDP + multiprocessing 조합 시 SIGSEGV 발생.
+annotation-only H5 + 전처리된 디스크 이미지로 우회.
+
+| 항목 | 3090 (H5 image cache) | 4090 (디스크 이미지) |
+|------|----------------------|---------------------|
+| Pipeline | `LoadImageFromH5Cache` | `LoadImage` |
+| `use_cached_images` | `True` | `False` |
+| `img_path_replace` | 없음 | `{'/Dataset/': '/Dataset_256/'}` |
+| VisualizationHook | `H5CacheVisualizationHook` | `PoseVisualizationHook` |
+
+### Config 작성 가이드 (Cross-Server 호환)
+
+새 config 작성 시, 서버별 분기를 넣으면 양쪽에서 동일 config 사용 가능:
+```python
+import platform, socket
+
+_hostname = socket.gethostname()
+_is_4090_server = (_hostname == '4090서버호스트명')  # 실제 호스트명으로 교체
+
+if _is_4090_server:
+    _pipeline_load = dict(type='LoadImage')
+    _use_cached_images = False
+    _img_path_replace = {'/Dataset/': '/Dataset_256/'}
+    _vis_hook_type = 'PoseVisualizationHook'
+else:
+    _pipeline_load = dict(type='LoadImageFromH5Cache')
+    _use_cached_images = True
+    _img_path_replace = None
+    _vis_hook_type = 'H5CacheVisualizationHook'
+```
+
+### 4090 로컬 전용 파일 (git 미반영)
+
+| 파일 | 용도 |
+|------|------|
+| `4090_TRAINING_GUIDE.md` | 4090 훈련 가이드 |
+| `ENVIRONMENT_SETUP_TROUBLESHOOTING.md` | 환경 설치 트러블슈팅 |
+| `tools/dataset_converters/preprocess_egopose_images.py` | 이미지 전처리 스크립트 |
+| `my_code/custom_config/HMD_xregopose_dist_test_config.py` | 분산훈련 테스트 config |
+
+### 4090 로컬 수정 파일 (git 미반영)
+
+| 파일 | 수정 내용 |
+|------|----------|
+| `custom_egopose_dataset.py` | Windows 경로 하드코딩 → 상대경로 |
+| `custom_egopose_dataset_h5cache.py` | `img_path_replace` 파라미터 추가 |
+| `mmpose/datasets/transforms/__init__.py` | `LoadImageFromH5Cache` import 추가 |
+| `HMD_xregopose_vit_lifting_full_config.py` | 4090용 데이터 경로/파이프라인 |
+| `tools/train.py` | 미확인 수정 |
+
+### CLAUDE.md 관리
+
+- **원본 수정**: 3090 서버에서만 수행 (git 반영)
+- **4090**: `git update-index --assume-unchanged CLAUDE.md` 설정됨
+- 4090 CLAUDE.md 상단에 로컬 서버 환경 정보 추가되어 있음
+- 4090에서 최신 CLAUDE.md 동기화 필요 시:
+  ```bash
+  git update-index --no-assume-unchanged CLAUDE.md
+  git pull
+  git update-index --assume-unchanged CLAUDE.md
+  ```
+
 ## External Documentation
 
 ### MMEngine (Core Framework)
