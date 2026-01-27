@@ -5,6 +5,8 @@ import tempfile
 from collections import OrderedDict, defaultdict
 from typing import Dict, Optional, Sequence
 
+import re
+
 import numpy as np
 from mmengine.evaluator import BaseMetric
 from mmengine.fileio import dump, get_local_path, load
@@ -185,67 +187,87 @@ class CustomxRegoposeMetric(BaseMetric):
 
 
 
-#TODO : 이거 egostan evaluate compute_metrics 사용해서 배치당 에러 dict에 저장 (process에서 pred,gt 정리해서 result에 저장후 이걸 compute_metrics에서 계산함)
 	def compute_metrics(self, results: list) -> Dict[str, float]:
 
 		logger: MMLogger = MMLogger.get_current_instance()
-		self.eval_body = mo2cap2_evaluate.EvalBody(mode='baseline')
-		self.eval_upper = mo2cap2_evaluate.EvalUpperBody(mode='baseline')
-		self.eval_lower = mo2cap2_evaluate.EvalLowerBody(mode='baseline')
-		self.eval_per_joint = mo2cap2_evaluate.EvalPerJoint(mode='baseline')
+
 		# split prediction and gt list
 		preds, gts = zip(*results)
-		
-		## 3d baseline
-		pred_batch_3d_keypoints = []
-		gt_batch_keypoint_3d = []
-		# if self.use_action:
+
+		pred_list = []
+		gt_list = []
 		batch_actions = []
 
-		for pred_, gt_ in zip(preds,gts):
+		for pred_, gt_ in zip(preds, gts):
 			kpt3d = pred_['keypoint3d']
-			# Handle both numpy arrays and torch tensors
 			if isinstance(kpt3d, np.ndarray):
 				kpt3d = torch.from_numpy(kpt3d)
-			pred_batch_3d_keypoints.append(kpt3d)
+			pred_list.append(kpt3d)
 
 			gt_kpt3d = gt_['keypoint3d']
 			if isinstance(gt_kpt3d, np.ndarray):
 				gt_kpt3d = torch.from_numpy(gt_kpt3d)
-			gt_batch_keypoint_3d.append(gt_kpt3d)
+			gt_list.append(gt_kpt3d)
 
 			if self.use_action:
 				batch_actions.append(gt_['action'])
 
 		# squeeze(dim=1)로 instance 차원만 제거 (N=1일 때 batch 차원 보존)
-		pred_batch_3d_keypoints = torch.stack(pred_batch_3d_keypoints).squeeze(dim=1)
-		gt_batch_keypoint_3d = torch.stack(gt_batch_keypoint_3d).squeeze(dim=1)
+		pred_all = torch.stack(pred_list).squeeze(dim=1)  # (N, 16, 3)
+		gt_all = torch.stack(gt_list).squeeze(dim=1)      # (N, 16, 3)
 
-		##
+		# ===== Vectorized MPJPE (baseline mode) =====
+		# Per-joint L2 error: (N, 16)
+		per_joint_error = torch.sqrt(
+			((pred_all - gt_all) ** 2).sum(dim=-1)
+		) * 1000.0
+		per_joint_error_np = per_joint_error.numpy()
 
-		##mo2cap2 baseline
-		self.eval_body.eval(pred_batch_3d_keypoints, gt_batch_keypoint_3d, batch_actions, use_action_ = self.use_action)
-		self.eval_upper.eval(pred_batch_3d_keypoints, gt_batch_keypoint_3d, batch_actions, use_action_ = self.use_action)
-		self.eval_lower.eval(pred_batch_3d_keypoints, gt_batch_keypoint_3d, batch_actions, use_action_ = self.use_action)
-		self.eval_per_joint.eval(pred_batch_3d_keypoints, gt_batch_keypoint_3d)
+		# Joint indices (baseline mode)
+		UPPER = [0, 1, 2, 3, 4, 5, 6, 7]
+		LOWER = [8, 9, 10, 11, 12, 13, 14, 15]
 
-		test_mpjpe = self.eval_body.get_results()
-		test_mpjpe_upper = self.eval_upper.get_results()
-		test_mpjpe_lower = self.eval_lower.get_results()
-		test_mpjpe_per_joint = self.eval_per_joint.get_results()
+		# Per-sample MPJPE for each body part: (N,)
+		full_body_errors = per_joint_error_np.mean(axis=1)
+		upper_body_errors = per_joint_error_np[:, UPPER].mean(axis=1)
+		lower_body_errors = per_joint_error_np[:, LOWER].mean(axis=1)
 
+		# Action name mapping (same logic as BaseEval._map_action_name)
+		_action_map = mo2cap2_evaluate.config.load_config().actions
 
-		'''
-		coco/Full Body: {
-		'All': {'mpjpe': 206.74012547793745, 'std_mpjpe': 2.3492799070270713, 'num_samples': 34},
-		'walking': {'mpjpe': 206.74012547793745, 'std_mpjpe': 2.3492799070270713, 'num_samples': 34}
-		}
-		coco/Upper Body: {'All': {'mpjpe': 98.853390965369, 'std_mpjpe': 1.8284284966864535, 'num_samples': 34}, 'walking': {'mpjpe': 98.853390965369, 'std_mpjpe': 1.8284284966864535, 'num_samples': 34}}  coco/Lower Body: {'All': {'mpjpe': 301.1410181764348, 'std_mpjpe': 4.4306975170390555, 'num_samples': 34}, 'walking': {'mpjpe': 301.1410181764348, 'std_mpjpe': 4.4306975170390555, 'num_samples': 34}} 
-		coco/Per Joint: 
-		[ 89.73435511  55.46927861  56.26292247  93.79446133 121.92435555
-		146.15558961 128.6327741  145.93864229 268.94727702 381.7553911
-		398.04040747 153.16333653 276.8626541  384.93890462 399.48153228]
-		'''
+		def _map_action(name):
+			suffix = re.findall(r'_mixamo_com.*', name)
+			if suffix:
+				name = name.replace(suffix[0], '')
+			return _action_map.get(name, 'All')
+
+		def _build_results_dict(errors_np):
+			"""Build per-action results dict matching original format."""
+			res = {
+				'All': {
+					'mpjpe': float(np.mean(errors_np)),
+					'std_mpjpe': float(np.std(errors_np)),
+					'num_samples': len(errors_np),
+				}
+			}
+			if self.use_action and batch_actions:
+				groups = defaultdict(list)
+				for i, act in enumerate(batch_actions):
+					mapped = _map_action(act)
+					groups[mapped].append(errors_np[i])
+				for act_name, act_errors in groups.items():
+					act_arr = np.array(act_errors)
+					res[act_name] = {
+						'mpjpe': float(np.mean(act_arr)),
+						'std_mpjpe': float(np.std(act_arr)),
+						'num_samples': len(act_arr),
+					}
+			return res
+
+		test_mpjpe = _build_results_dict(full_body_errors)
+		test_mpjpe_upper = _build_results_dict(upper_body_errors)
+		test_mpjpe_lower = _build_results_dict(lower_body_errors)
+		test_mpjpe_per_joint = per_joint_error_np.mean(axis=0)  # (16,)
 
 		mo2cap2_results = {
 			"Full Body": test_mpjpe,
@@ -253,25 +275,18 @@ class CustomxRegoposeMetric(BaseMetric):
 			"Lower Body": test_mpjpe_lower,
 			"Per Joint": test_mpjpe_per_joint
 		}
-		# TODO : 전체결과는 저장하고 mpjpe 는 wandb로
-		# mo2cap2_evaluate.create_results_csv(mo2cap2_results)
-		##
-		wandb_results = OrderedDict()
-		for k,v in mo2cap2_results.items():
-			loss_name = k
-			if k == 'Per Joint': continue
-			for k_,v_ in v.items():
-				loss_name += f'_{k_}_mpjpe'
-				wandb_results.update({loss_name:v_['mpjpe']})
 
-		# evaluation results
+		wandb_results = OrderedDict()
+		for k, v in mo2cap2_results.items():
+			loss_name = k
+			if k == 'Per Joint':
+				continue
+			for k_, v_ in v.items():
+				loss_name += f'_{k_}_mpjpe'
+				wandb_results.update({loss_name: v_['mpjpe']})
+
 		eval_results = OrderedDict()
 		logger.info(f'Evaluating {self.__class__.__name__}...')
-		# info_str = self._do_python_keypoint_eval(outfile_prefix)
-		# name_value = OrderedDict(info_str)
-		# eval_results.update(name_value)
 		eval_results.update(wandb_results)
 
-		# if tmp_dir is not None:
-		# 	tmp_dir.cleanup()
 		return eval_results

@@ -24,6 +24,10 @@ from .custom_egopose_global_attention_lifting_head import CustomEgoposeGlobalAtt
 from .custom_egopose_heatmap_attention_lifting_head import CustomEgoposeHeatmapAttentionLiftingHead
 from .custom_egopose_vit_lifting_head import CustomEgoposeViTLiftingHead
 from .custom_egopose_vit_lifting_head_v5 import CustomEgoposeViTLiftingHeadV5
+from .custom_egopose_hybrid_lifting_head import CustomEgoposeHybridLiftingHead
+from .custom_egopose_decoupled_head import CustomEgoposeDecoupledHead
+from .custom_egopose_hierarchical_head import CustomEgoposeHierarchicalHead
+from .custom_egopose_vit_lifting_head_v6 import CustomEgoposeViTLiftingHeadV6
 
 __all__ = [
     'HeatmapHead', 'CPMHead', 'MSPNHead', 'ViPNASHead',
@@ -38,5 +42,9 @@ __all__ = [
 	'CustomEgoposeGlobalAttentionLiftingHead',
 	'CustomEgoposeHeatmapAttentionLiftingHead',
 	'CustomEgoposeViTLiftingHead',
-	'CustomEgoposeViTLiftingHeadV5'
+	'CustomEgoposeViTLiftingHeadV5',
+	'CustomEgoposeHybridLiftingHead',
+	'CustomEgoposeDecoupledHead',
+	'CustomEgoposeHierarchicalHead',
+	'CustomEgoposeViTLiftingHeadV6'
 ]

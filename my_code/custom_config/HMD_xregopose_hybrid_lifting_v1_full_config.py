@@ -1,20 +1,28 @@
 """
-Attention-based Lifting Head v6 - CosineRestartLR (Warm Restarts)
-- LR 0.001 (same as v3/v4)
-- CosineRestartLR (with restarts, oscillating LR)
-- Gradient clipping (max_norm=1.0)
+Hybrid Lifting Head v1 - Full Training
 
-Previous results:
-- v1 (LR=0.0005, MultiStepLR): 45.43mm at epoch 7
-- v3 (LR=0.001, MultiStepLR): 46.68mm at epoch 1, then diverged
-- v4 (LR=0.001, CosineAnnealing): 47.95mm at epoch 6
-- v5 (LR=0.002, CosineAnnealing): 49.75mm at epoch 8 (LR too high)
+Baseline Conv Encoder + Attention Refinement
+- Conv Encoder: Heatmap → Z [64] (Baseline 동일)
+- Z reshape: [64] → [16, 4] (관절당 4-dim)
+- Self-Attention: 관절 간 관계 모델링 (2 layers)
+- Cross-Attention: HMD 정보 선택적 융합
 
-v6 Hypothesis:
-- CosineRestartLR allows LR to reset periodically
-- Warm restarts may help escape local minima
-- periods=[3,3,3,1]: restart at epoch 3, 6, 9
-- Expected LR pattern: 0.001 → decay → 0.001 → decay → ...
+목표: Baseline(41.37mm) 수준의 안정성 + 관절 관계 모델링으로 성능 향상
+
+Architecture:
+    Heatmap [16, 47, 47]
+         ↓
+    Conv Encoder (Baseline) → Z [64]
+         ↓
+    Z reshape → [16, 4]
+         ↓
+    Joint Embedding → [16, 64]
+         ↓
+    Self-Attention × 2 (관절 간 관계)
+         ↓
+    HMD Cross-Attention (선택적 HMD 참조)
+         ↓
+    Output Head → [16, 3] (3D pose)
 """
 
 import platform
@@ -33,7 +41,7 @@ else:
     cache_file_val = '/mnt/dataset_vol/h5cache/test_cache_with_images.h5'
 
 # =============================================================================
-# Training Config - CosineAnnealingWarmRestarts
+# Training Config
 # =============================================================================
 auto_scale_lr = dict(base_batch_size=256)
 backend_args = dict(backend='local')
@@ -46,24 +54,21 @@ train_cfg = dict(
 val_cfg = dict()
 test_cfg = None
 
-# Optimizer: LR=0.002 + Gradient Clipping
+# Optimizer (Baseline 동일)
 optim_wrapper = dict(
-    optimizer=dict(lr=0.001, type='AdamW', weight_decay=0.01),
+    optimizer=dict(lr=0.0005, type='AdamW', weight_decay=0.01),
     clip_grad=dict(max_norm=1.0, norm_type=2),
 )
 
-# LR Schedule: CosineAnnealingWarmRestarts
-# T_0=3: first cycle is 3 epochs
-# T_mult=1: subsequent cycles have same length
-# eta_min=1e-5: minimum LR
-# Expected pattern: epochs 0-2 (cycle 1), 3-5 (cycle 2), 6-8 (cycle 3), 9 (cycle 4 start)
+# LR Schedule (Baseline 동일)
 param_scheduler = [
     dict(
-        type='CosineRestartLR',
-        periods=[3, 3, 3, 1],  # 3+3+3+1 = 10 epochs
-        restart_weights=[1, 1, 1, 1],
-        eta_min=1e-5,
-        by_epoch=True,
+        type='MultiStepLR',
+        begin=0,
+        end=10,
+        milestones=[4, 7],
+        gamma=0.5,
+        by_epoch=True
     ),
 ]
 
@@ -128,7 +133,7 @@ log_processor = dict(
 )
 
 # =============================================================================
-# Model - Attention-based Lifting Head
+# Model - Hybrid Lifting v1 (Conv Encoder + Attention Refinement)
 # =============================================================================
 model = dict(
     type='TopdownPoseEstimator',
@@ -147,17 +152,16 @@ model = dict(
         type='PoseDataPreprocessor'
     ),
     head=dict(
-        type='CustomEgoposeAttentionLiftingHead',
+        type='CustomEgoposeHybridLiftingHead',
         in_channels=2048,
         out_channels=16,
         decoder=codec,
-        # Attention params
+        # Hybrid Lifting params
         joint_dim=64,
         num_heads=4,
         num_self_attn_layers=2,
         dropout=0.1,
-        detach_2d_coords=True,
-        # Losses
+        # Losses (Baseline 동일)
         loss=dict(
             loss_weight=1000,
             type='KeypointMSELoss',
@@ -282,7 +286,7 @@ val_evaluator = dict(
 vis_backends = [
     dict(type='LocalVisBackend'),
     dict(
-        init_kwargs=dict(project='mmpose_xregopose_attention_lifting_v6'),
+        init_kwargs=dict(project='mmpose_xregopose_hybrid_lifting_v1'),
         type='WandbVisBackend'
     ),
 ]
@@ -293,4 +297,4 @@ visualizer = dict(
     vis_backends=vis_backends
 )
 
-work_dir = 'work_dirs/HMD_xregopose_attention_lifting_v6_full'
+work_dir = 'work_dirs/HMD_xregopose_hybrid_lifting_v1_full'

@@ -132,22 +132,28 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | `HMD_xregopose_lifting_backbone_fusion_config.py` | `CustomEgoposeLiftingBackboneFusionHead` | Lifting + Backbone Fusion | 105.18mm ❌ |
 | `HMD_xregopose_spatial_lifting_full_config.py` | `CustomEgoposeSpatialLiftingHead` | Grid Sampling Spatial Depth | 실험 대기 |
 | `HMD_xregopose_efficient_decoder_full_config.py` | `CustomxRegoposeBaselinel1` | EfficientHeatmapDecoder (40M→1.35M) | 45.06mm |
-| `HMD_xregopose_attention_lifting_full_config.py` | `CustomEgoposeAttentionLiftingHead` | **Attention Lifting (신규)** | 실험 대기 |
+| `HMD_xregopose_attention_lifting_full_config.py` | `CustomEgoposeAttentionLiftingHead` | Attention Lifting (Cross-Attn) | 45.43mm |
+| `HMD_xregopose_vit_lifting_full_config.py` | `CustomEgoposeViTLiftingHead` | ViT-Style Lifting v1-v3 | 45.34mm |
+| `HMD_xregopose_decoupled_full_config.py` | `CustomEgoposeDecoupledHead` | **Upper-Lower Decoupled (신규)** | 실험 대기 |
 
-### 실험 결과 요약 (2026-01-22)
+### 실험 결과 요약 (2026-01-27)
 
-| Model | Full Body MPJPE | vs Baseline |
-|-------|-----------------|-------------|
-| **Single COCO (Baseline)** | **41.37mm** 🏆 | - |
-| Dual COCO+MPII | 43.26mm | +1.89mm ❌ |
-| EfficientHeatmapDecoder | 45.06mm | +3.69mm ❌ (96% param 절감) |
-| Dual Warmup v2 | 45.93mm | +4.56mm ❌ |
-| Single Lifting | 45.92mm | +4.55mm ❌ |
-| Lifting + Backbone Fusion | 105.18mm | +63.81mm ❌ |
+| Model | Full Body MPJPE | Upper Body | Lower Body | vs Baseline |
+|-------|-----------------|------------|------------|-------------|
+| **Single COCO (Baseline)** | **41.37mm** 🏆 | 29.42mm | 53.31mm | - |
+| ViT Lifting v3 | 45.34mm | **23.49mm** ⭐ | 67.19mm | +3.97mm |
+| Attention Lifting | 45.43mm | - | - | +4.06mm |
+| EfficientHeatmapDecoder | 45.06mm | - | - | +3.69mm |
+| Dual COCO+MPII | 43.26mm | - | - | +1.89mm |
+| Single Lifting | 45.92mm | - | - | +4.55mm |
+
+**핵심 발견**: ViT v3는 Upper Body 23.49mm (최고!), Lower Body 67.19mm (최악)
+→ **Upper-Lower Decoupled** 모델로 두 장점 결합 시도 중
 
 **목표**: 41mm 이하 달성
 
-**다음 실험**: Attention Lifting (Cross-Attention depth query + HMD attention)
+**다음 실험**: Upper-Lower Decoupled Head (ViT v3 Upper + Baseline Lower)
+- 예상 결과: ~38.40mm (Upper 23.49mm + Lower 53.31mm 결합)
 
 ### 문서 구조
 
@@ -157,6 +163,8 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | `DUAL_BACKBONE_EXPERIMENT_PLAN.md` | 실험 계획 및 Phase별 구현 상태 |
 | `IMPROVEMENT_IDEAS.md` | 개선 아이디어 (EfficientDecoder, Attention Lifting 등) |
 | `SPATIAL_DEPTH_EXTRACTION_IDEAS.md` | 공간 정보 보존 Depth 추출 방법 (Grid Sampling 등) |
+| `VIT_STYLE_LIFTING_IDEA.md` | ViT-Style Lifting 아이디어 (Learnable Queries, Self-Attention) |
+| `NEXT_MODEL_IDEAS.md` | **다음 모델 아이디어** (Upper-Lower Decoupled 등 4가지 옵션) |
 | `PROBLEM.md` | 코드 수정 필요 사항 (Metric squeeze 버그 등) |
 | `README.md` | Config 설명 및 Smoke Test 규칙 |
 
@@ -187,7 +195,9 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 | `CustomEgoposeLiftingHead` | `custom_egopose_lifting_head.py` | Soft-argmax 2D→3D Lifting |
 | `CustomEgoposeLiftingBackboneFusionHead` | `custom_egopose_lifting_backbone_fusion_head.py` | Lifting + Backbone Fusion |
 | `CustomEgoposeSpatialLiftingHead` | `custom_egopose_spatial_lifting_head.py` | Grid Sampling 기반 Spatial Depth |
-| `CustomEgoposeAttentionLiftingHead` | `custom_egopose_attention_lifting_head.py` | **Attention Lifting (신규)** |
+| `CustomEgoposeAttentionLiftingHead` | `custom_egopose_attention_lifting_head.py` | Attention Lifting (Cross-Attn) |
+| `CustomEgoposeViTLiftingHead` | `custom_egopose_vit_lifting_head.py` | ViT-Style Lifting v1-v3 |
+| `CustomEgoposeDecoupledHead` | `custom_egopose_decoupled_head.py` | **Upper-Lower Decoupled (신규)** |
 
 ### Smoke Test 규칙
 

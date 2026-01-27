@@ -1,20 +1,37 @@
 """
-Attention-based Lifting Head v6 - CosineRestartLR (Warm Restarts)
-- LR 0.001 (same as v3/v4)
-- CosineRestartLR (with restarts, oscillating LR)
-- Gradient clipping (max_norm=1.0)
+ViT Lifting v6 - Small Dataset Optimized (Smoke Test Config)
 
-Previous results:
-- v1 (LR=0.0005, MultiStepLR): 45.43mm at epoch 7
-- v3 (LR=0.001, MultiStepLR): 46.68mm at epoch 1, then diverged
-- v4 (LR=0.001, CosineAnnealing): 47.95mm at epoch 6
-- v5 (LR=0.002, CosineAnnealing): 49.75mm at epoch 8 (LR too high)
+Key features:
+    - SPT (Shifted Patch Tokenization): Locality inductive bias
+    - LSA (Locality Self-Attention): Learnable temperature + diagonal masking
+    - Reduced model: embed_dim=128, num_layers=2, mlp_ratio=2.0
+    - Higher dropout: 0.2 for regularization
 
-v6 Hypothesis:
-- CosineRestartLR allows LR to reset periodically
-- Warm restarts may help escape local minima
-- periods=[3,3,3,1]: restart at epoch 3, 6, 9
-- Expected LR pattern: 0.001 → decay → 0.001 → decay → ...
+Architecture:
+    Backbone feat [2048, 8, 8]
+           ↓
+    ┌─────────────────────────────────┐
+    │  SPT (Shifted Patch Tokenization) │
+    │  5-way shift → locality bias    │
+    └─────────────────────────────────┘
+           ↓
+    ┌─────────────────────────────────┐
+    │  Depth-wise Conv Embedding      │
+    └─────────────────────────────────┘
+           ↓
+    Spatial Tokens [64, 128] + Joint Queries [16, 128]
+           ↓
+    ┌─────────────────────────────────┐
+    │  LSA (Locality Self-Attention) × 2 │
+    │  Learnable temp + diagonal mask │
+    └─────────────────────────────────┘
+           ↓
+    Joint Tokens [16, 128]
+           ├── Heatmap Decoder (Reconstruction)
+           ↓
+    HMD Cross-Attention
+           ↓
+    3D Pose [16, 3]
 """
 
 import platform
@@ -22,63 +39,67 @@ import platform
 IS_WINDOWS = platform.system() == 'Windows'
 
 if IS_WINDOWS:
-    data_root = r'F:\egodataset_cache\h5cache'
-    pretrained_coco = r'F:\egodataset_cache\pose_coco\coco_pose_resnet_101_256x192.pth.tar'
-    cache_file_train = r'F:\egodataset_cache\h5cache\train_cache_with_images.h5'
-    cache_file_val = r'F:\egodataset_cache\h5cache\test_cache_with_images.h5'
+    data_root = r'F:\\egodataset_cache\\h5cache'
+    pretrained_coco = r'F:\\egodataset_cache\\pose_coco\\coco_pose_resnet_101_256x192.pth.tar'
+    cache_file_train = r'F:\\egodataset_cache\\h5cache\\train_small_1k.h5'
+    cache_file_val = r'F:\\egodataset_cache\\h5cache\\val_small_500.h5'
 else:
     data_root = '/mnt/dataset_vol/h5cache'
     pretrained_coco = '/mnt/dataset_vol/pretrained/coco_pose_resnet_101_256x192.pth.tar'
-    cache_file_train = '/mnt/dataset_vol/h5cache/train_cache_with_images.h5'
-    cache_file_val = '/mnt/dataset_vol/h5cache/test_cache_with_images.h5'
+    cache_file_train = '/mnt/dataset_vol/h5cache/train_small_1k.h5'
+    cache_file_val = '/mnt/dataset_vol/h5cache/val_small_500.h5'
 
 # =============================================================================
-# Training Config - CosineAnnealingWarmRestarts
+# Training Config - Smoke Test
 # =============================================================================
 auto_scale_lr = dict(base_batch_size=256)
 backend_args = dict(backend='local')
 
 train_cfg = dict(
     type='EpochBasedTrainLoop',
-    max_epochs=10,
+    max_epochs=2,
     val_interval=1,
 )
 val_cfg = dict()
 test_cfg = None
 
-# Optimizer: LR=0.002 + Gradient Clipping
+# =============================================================================
+# Optimizer
+# =============================================================================
 optim_wrapper = dict(
-    optimizer=dict(lr=0.001, type='AdamW', weight_decay=0.01),
+    optimizer=dict(lr=0.0005, type='AdamW', weight_decay=0.01),
     clip_grad=dict(max_norm=1.0, norm_type=2),
 )
 
-# LR Schedule: CosineAnnealingWarmRestarts
-# T_0=3: first cycle is 3 epochs
-# T_mult=1: subsequent cycles have same length
-# eta_min=1e-5: minimum LR
-# Expected pattern: epochs 0-2 (cycle 1), 3-5 (cycle 2), 6-8 (cycle 3), 9 (cycle 4 start)
+# =============================================================================
+# LR Schedule
+# =============================================================================
 param_scheduler = [
     dict(
-        type='CosineRestartLR',
-        periods=[3, 3, 3, 1],  # 3+3+3+1 = 10 epochs
-        restart_weights=[1, 1, 1, 1],
-        eta_min=1e-5,
+        type='LinearLR',
+        start_factor=0.5,
+        by_epoch=False,
+        begin=0,
+        end=100,
+    ),
+    dict(
+        type='CosineAnnealingLR',
+        T_max=2,
+        eta_min=1e-6,
         by_epoch=True,
+        begin=0,
+        end=2,
     ),
 ]
 
+# =============================================================================
+# Hooks
+# =============================================================================
 default_hooks = dict(
-    checkpoint=dict(
-        interval=1,
-        max_keep_ckpts=3,
-        rule='less',
-        save_best='xregopose/Full Body_All_mpjpe',
-        type='CheckpointHook',
-        by_epoch=True
-    ),
+    checkpoint=None,
     visualization=dict(
         enable=True,
-        interval=100,
+        interval=50,
         kpt_thr=0.3,
         type='H5CacheVisualizationHook'
     )
@@ -128,7 +149,7 @@ log_processor = dict(
 )
 
 # =============================================================================
-# Model - Attention-based Lifting Head
+# Model - ViT Lifting v6 (Small Dataset Optimized)
 # =============================================================================
 model = dict(
     type='TopdownPoseEstimator',
@@ -147,30 +168,33 @@ model = dict(
         type='PoseDataPreprocessor'
     ),
     head=dict(
-        type='CustomEgoposeAttentionLiftingHead',
+        type='CustomEgoposeViTLiftingHeadV6',
         in_channels=2048,
         out_channels=16,
         decoder=codec,
-        # Attention params
-        joint_dim=64,
-        num_heads=4,
-        num_self_attn_layers=2,
-        dropout=0.1,
-        detach_2d_coords=True,
+        # v6 small model params (reduced for small dataset)
+        embed_dim=128,          # Reduced from 256
+        num_heads=4,            # Reduced from 8
+        num_layers=2,           # Reduced from 4
+        mlp_ratio=2.0,          # Reduced from 4.0
+        dropout=0.2,            # Increased from 0.1
+        heatmap_size=47,
+        init_temperature=0.5,   # LSA learnable temperature init
+        # v6 specific flags
+        use_spt=True,           # Shifted Patch Tokenization
+        use_dwconv=True,        # Depth-wise Conv Embedding
+        use_lsa=True,           # Locality Self-Attention
+        use_hmd=True,
+        use_heatmap_recon=True,
         # Losses
-        loss=dict(
-            loss_weight=1000,
+        loss_heatmap_recon=dict(
+            loss_weight=500,
             type='KeypointMSELoss',
             use_target_weight=False
         ),
         loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'),
         loss_cosine_similarity=dict(loss_weight=0.1, type='cosine_similarity'),
         loss_limb_length=dict(loss_weight=0.25, type='limb_length'),
-        loss_heatmap_recon=dict(
-            loss_weight=250,
-            type='KeypointMSELoss',
-            use_target_weight=False
-        ),
         loss_hmd=dict(type='MSELoss', loss_weight=1.0),
     ),
     test_cfg=dict(
@@ -241,11 +265,11 @@ dataset_val = dict(
 if IS_WINDOWS:
     _num_workers = 0
     _persistent_workers = False
-    _batch_size = 32
+    _batch_size = 16
 else:
-    _num_workers = 6
+    _num_workers = 4
     _persistent_workers = True
-    _batch_size = 48
+    _batch_size = 32
 
 train_dataloader = dict(
     batch_size=_batch_size,
@@ -277,14 +301,10 @@ val_evaluator = dict(
 )
 
 # =============================================================================
-# Visualization - Enable wandb
+# Visualization
 # =============================================================================
 vis_backends = [
     dict(type='LocalVisBackend'),
-    dict(
-        init_kwargs=dict(project='mmpose_xregopose_attention_lifting_v6'),
-        type='WandbVisBackend'
-    ),
 ]
 
 visualizer = dict(
@@ -293,4 +313,4 @@ visualizer = dict(
     vis_backends=vis_backends
 )
 
-work_dir = 'work_dirs/HMD_xregopose_attention_lifting_v6_full'
+work_dir = 'work_dirs/HMD_xregopose_vit_lifting_v6_small'

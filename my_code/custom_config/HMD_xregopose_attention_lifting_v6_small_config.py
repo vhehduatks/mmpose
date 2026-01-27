@@ -36,14 +36,14 @@ test_cfg = None
 
 # Optimizer: LR=0.002 + Gradient Clipping
 optim_wrapper = dict(
-    optimizer=dict(lr=0.002, type='AdamW', weight_decay=0.01),
+    optimizer=dict(lr=0.001, type='AdamW', weight_decay=0.01),
     clip_grad=dict(max_norm=1.0, norm_type=2),
 )
 
 # LR Schedule: CosineAnnealingRestartLR (simplified for 1 epoch)
 param_scheduler = [
     dict(
-        type='CosineAnnealingRestartLR',
+        type='CosineRestartLR',
         periods=[1],
         restart_weights=[1],
         eta_min=1e-5,

@@ -610,6 +610,184 @@ class JointHMDCrossAttention(nn.Module):
 
 ---
 
+## Hybrid Lifting: Baseline + Attention Refinement ⭐ NEW
+
+> 2026-01-27 추가
+
+### 동기
+
+| 모델 | MPJPE | 특징 |
+|------|-------|------|
+| **Baseline** | **41.37mm** 🏆 | Conv Encoder + Linear, 안정적 |
+| ViT Lifting v3 | 45.34mm | Full Attention, 학습 불안정 |
+
+**목표**: Baseline의 안정성 + ViT의 관절 관계 모델링 결합
+
+---
+
+### 방안 비교
+
+| 방안 | 변경점 | 리스크 |
+|------|--------|--------|
+| 1. Attention HMD Fusion | HMD 융합만 변경 | 최소 |
+| 2. Joint-wise Feature | Per-joint pooling | 중간 |
+| **3. Conv + Attention Refinement** | **Conv Encoder 유지 + Attention 보완** | **낮음** |
+
+---
+
+### 방안 3 상세 설계 (선택)
+
+```
+Heatmap [16, 47, 47]
+         ↓
+┌─────────────────────────────────────────┐
+│  Conv Encoder (Baseline 동일)           │
+│  Conv: 16→64→128→256, GAP → 64-dim      │
+└─────────────────────────────────────────┘
+         ↓
+      Z [B, 64]
+         ↓
+┌─────────────────────────────────────────┐
+│  Z Reshape: [B, 64] → [B, 16, 4]        │
+│  (관절당 4-dim latent)                  │
+└─────────────────────────────────────────┘
+         ↓
+┌─────────────────────────────────────────┐
+│  Joint Embedding: [B, 16, 4] → [B, 16, D] │
+│  Linear(4 → joint_dim)                  │
+└─────────────────────────────────────────┘
+         ↓
+┌─────────────────────────────────────────┐
+│  Self-Attention (관절 간 관계)          │
+│  Query/Key/Value: [B, 16, D]            │
+│  Output: [B, 16, D]                     │
+└─────────────────────────────────────────┘
+         ↓
+┌─────────────────────────────────────────┐
+│  HMD Cross-Attention                    │
+│  Query: Joint tokens [B, 16, D]         │
+│  Key/Value: HMD tokens [B, 3, D]        │
+│  (head, right_hand, left_hand)          │
+└─────────────────────────────────────────┘
+         ↓
+┌─────────────────────────────────────────┐
+│  Output Head                            │
+│  Linear(D → 3) per joint                │
+│  Output: [B, 16, 3]                     │
+└─────────────────────────────────────────┘
+```
+
+---
+
+### 핵심 설계 원칙
+
+1. **Conv Encoder 재사용**: Baseline의 검증된 heatmap→latent 변환
+2. **Z 분해**: 64-dim을 16관절 × 4-dim으로 재해석
+3. **Self-Attention**: 관절 간 관계 (skeleton structure)
+4. **Cross-Attention HMD**: 관절별 HMD 정보 선택적 참조
+5. **LinearModel 제거**: Attention이 대체
+
+---
+
+### 구현 코드 (CustomEgoposeHybridLiftingHead)
+
+```python
+class HybridLiftingModule(nn.Module):
+    """Baseline Conv Encoder + Attention Refinement"""
+
+    def __init__(self, num_joints=16, latent_dim=64, joint_dim=64,
+                 num_heads=4, num_self_attn_layers=2, dropout=0.1):
+        super().__init__()
+
+        # Z를 관절별로 분해: 64 = 16 * 4
+        self.latent_per_joint = latent_dim // num_joints  # 4
+
+        # Joint embedding: 4 → joint_dim
+        self.joint_embed = nn.Linear(self.latent_per_joint, joint_dim)
+
+        # Positional encoding for 16 joints
+        self.pos_embed = nn.Parameter(torch.randn(1, num_joints, joint_dim) * 0.02)
+
+        # Self-Attention layers
+        self.self_attn_layers = nn.ModuleList([
+            nn.TransformerEncoderLayer(
+                d_model=joint_dim, nhead=num_heads,
+                dim_feedforward=joint_dim*4, dropout=dropout, batch_first=True
+            ) for _ in range(num_self_attn_layers)
+        ])
+
+        # HMD embedding: 9 → 3 tokens
+        self.hmd_embed = nn.Sequential(
+            nn.Linear(9, 64),
+            nn.ReLU(),
+            nn.Linear(64, 3 * joint_dim)
+        )
+
+        # Cross-Attention: joints query HMD
+        self.cross_attn = nn.MultiheadAttention(
+            embed_dim=joint_dim, num_heads=num_heads,
+            dropout=dropout, batch_first=True
+        )
+        self.cross_norm = nn.LayerNorm(joint_dim)
+
+        # Output projection
+        self.output_proj = nn.Linear(joint_dim, 3)
+
+    def forward(self, z, hmd_info):
+        B = z.size(0)
+
+        # Z → joint tokens: [B, 64] → [B, 16, 4] → [B, 16, D]
+        z_joints = z.view(B, -1, self.latent_per_joint)  # [B, 16, 4]
+        joint_tokens = self.joint_embed(z_joints)  # [B, 16, D]
+        joint_tokens = joint_tokens + self.pos_embed
+
+        # Self-Attention (관절 간 관계)
+        for layer in self.self_attn_layers:
+            joint_tokens = layer(joint_tokens)
+
+        # HMD tokens: [B, 9] → [B, 3, D]
+        hmd_tokens = self.hmd_embed(hmd_info).view(B, 3, -1)
+
+        # Cross-Attention (joints ← HMD)
+        cross_out, _ = self.cross_attn(
+            query=joint_tokens, key=hmd_tokens, value=hmd_tokens
+        )
+        joint_tokens = self.cross_norm(joint_tokens + cross_out)
+
+        # Output: [B, 16, 3]
+        pose_3d = self.output_proj(joint_tokens)
+
+        return pose_3d
+```
+
+---
+
+### Loss Functions (Baseline 동일)
+
+| Loss | Weight | 역할 |
+|------|--------|------|
+| `loss_kpt` (MSE) | 1000 | 2D heatmap supervision |
+| `loss_heatmap_recon` (MSE) | 250 | Heatmap reconstruction |
+| `loss_pose_l2norm` | 1.0 | 3D pose L2 distance |
+| `loss_cosine_similarity` | 0.1 | 방향 유사도 |
+| `loss_limb_length` | 0.25 | 팔다리 길이 일관성 |
+| `loss_hmd` (MSE) | 1.0 | HMD reconstruction |
+
+---
+
+### 예상 효과
+
+| 요소 | Baseline | Hybrid | 효과 |
+|------|----------|--------|------|
+| Heatmap→Z | Conv Encoder | **동일** | 안정성 유지 |
+| Z 활용 | Global (64) | Per-joint (16×4) | 관절별 정보 분리 |
+| 관절 관계 | Linear (implicit) | Self-Attn (explicit) | Skeleton 구조 학습 |
+| HMD 융합 | Add | Cross-Attn | 선택적 참조 |
+
+**예상**: Baseline 수준 안정성 + 관절 관계 모델링 → 41mm 이하 목표
+
+---
+
 ## 참고 논문
 
 1. **Deep Mutual Learning** (Zhang et al., 2017) - arXiv:1706.00384

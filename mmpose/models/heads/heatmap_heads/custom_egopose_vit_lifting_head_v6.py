@@ -1,61 +1,45 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 """
-ViT-Style Attention Lifting Head (v1/v2/v3)
+ViT-Style Lifting Head v6 (Small Dataset Optimized)
 
-Supports three versions controlled by config:
-- v1: use_separate_deconv=True  → Separate Deconv path (heatmap independent)
-- v2: use_heatmap_recon=False   → No heatmap (Self-Attention only)
-- v3: use_heatmap_recon=True    → Reconstruction regularization (recommended)
+Key innovations for small dataset (EgoPose ~210K):
+- SPT (Shifted Patch Tokenization): Locality inductive bias injection
+- LSA (Locality Self-Attention): Learnable temperature + diagonal masking
+- Reduced model size: embed_dim=128, num_layers=2, mlp_ratio=2.0
+- Depth-wise Conv embedding: Local feature enhancement
 
-v1 Key Feature: Heatmap and Lifting are INDEPENDENT paths
-v3 Key Feature: Heatmap reconstruction INJECTS 2D info into joint tokens
+References:
+- Vision Transformer for Small-Size Datasets (AAAI 2022)
+- Depth-Wise Convolutions in ViTs (Neural Networks 2024)
 
 Architecture:
     ┌─────────────────────────────────────────────────────────────┐
     │  Backbone feat [2048, 8, 8]                                 │
     │         ↓                                                   │
-    │  Spatial Tokens [64, D] + Learnable Joint Queries [16, D]  │
+    │  ┌─────────────────────────────────────────┐                │
+    │  │  SPT (Shifted Patch Tokenization)       │                │
+    │  │  5-way shift → locality bias            │                │
+    │  └─────────────────────────────────────────┘                │
     │         ↓                                                   │
     │  ┌─────────────────────────────────────────┐                │
-    │  │     Self-Attention (4 layers)           │                │
-    │  │     Spatial ↔ Joint bidirectional       │                │
+    │  │  Depth-wise Conv Embedding              │                │
+    │  │  Local feature enhancement              │                │
+    │  └─────────────────────────────────────────┘                │
+    │         ↓                                                   │
+    │  Spatial Tokens [64, D] + Joint Queries [16, D]            │
+    │         ↓                                                   │
+    │  ┌─────────────────────────────────────────┐                │
+    │  │  LSA (Locality Self-Attention) × 2      │                │
+    │  │  Learnable temp + diagonal mask         │                │
     │  └─────────────────────────────────────────┘                │
     │         ↓                                                   │
     │  Joint Tokens [16, D]                                       │
-    │         │                                                   │
-    │         ├───────────────────────┐                           │
-    │         │                       ↓                           │
-    │         │              ┌────────────────────┐               │
-    │         │              │  Heatmap Decoder   │               │
-    │         │              │  (Reconstruction)  │               │
-    │         │              └────────────────────┘               │
-    │         │                       ↓                           │
-    │         │              Recon Heatmap [16,47,47]             │
-    │         │              (loss injects 2D info)               │
+    │         ├── Heatmap Decoder (Reconstruction)                │
     │         ↓                                                   │
-    │  ┌─────────────────────────────────────────┐                │
-    │  │     HMD Cross-Attention                 │                │
-    │  │     (adds 3D depth reference)           │                │
-    │  └─────────────────────────────────────────┘                │
+    │  HMD Cross-Attention                                        │
     │         ↓                                                   │
-    │  ┌────────────────┐                                         │
-    │  │  3D Pose Head  │                                         │
-    │  │  Linear(D, 3)  │                                         │
-    │  └────────────────┘                                         │
-    │         ↓                                                   │
-    │    3D Pose [16, 3]                                          │
+    │  3D Pose [16, 3]                                            │
     └─────────────────────────────────────────────────────────────┘
-
-Information Flow:
-    1. Self-Attention: Spatial ↔ Joint bidirectional interaction
-    2. Heatmap Reconstruction: Forces 2D joint localization into tokens
-    3. HMD Cross-Attention: Adds 3D depth reference from HMD
-    4. 3D Pose Head: Final 3D pose from enriched tokens
-
-References:
-- ViTPose (NeurIPS 2022): Simple Vision Transformer Baselines
-- TokenPose (ICCV 2021): Learning Keypoint Tokens
-- xRegopose: Encoder-Decoder with reconstruction loss
 """
 
 from typing import Optional, Sequence, Tuple, Union, List
@@ -82,6 +66,88 @@ import math
 OptIntSeq = Optional[Sequence[int]]
 
 
+class ShiftedPatchTokenization(nn.Module):
+    """
+    Shifted Patch Tokenization (SPT) for locality inductive bias.
+
+    Shifts input feature maps in 4 directions and concatenates with original,
+    effectively enlarging the receptive field and injecting locality bias.
+
+    Input: [B, C, H, W]
+    Output: [B, embed_dim, H, W]
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        embed_dim: int,
+        shift_size: int = 1
+    ):
+        super().__init__()
+        self.shift_size = shift_size
+
+        # 5 directions (original + 4 shifts) concatenated
+        self.proj = nn.Sequential(
+            nn.Conv2d(in_channels * 5, embed_dim, kernel_size=1, bias=False),
+            nn.BatchNorm2d(embed_dim),
+            nn.GELU()
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x: [B, C, H, W] backbone features
+
+        Returns:
+            tokens: [B, embed_dim, H, W] shifted patch tokens
+        """
+        B, C, H, W = x.shape
+        s = self.shift_size
+
+        # 4-way shift with padding
+        x_left = F.pad(x, (s, 0, 0, 0))[:, :, :, :W]      # shift left
+        x_right = F.pad(x, (0, s, 0, 0))[:, :, :, s:]     # shift right
+        x_up = F.pad(x, (0, 0, s, 0))[:, :, :H, :]        # shift up
+        x_down = F.pad(x, (0, 0, 0, s))[:, :, s:, :]      # shift down
+
+        # Concatenate all 5 directions: [B, 5C, H, W]
+        x_concat = torch.cat([x, x_left, x_right, x_up, x_down], dim=1)
+
+        # Project to embed_dim: [B, embed_dim, H, W]
+        return self.proj(x_concat)
+
+
+class DepthWiseConvEmbedding(nn.Module):
+    """
+    Depth-wise Convolution Token Embedding.
+
+    Adds CNN's local inductive bias to the tokenization process.
+    """
+
+    def __init__(self, embed_dim: int, kernel_size: int = 3):
+        super().__init__()
+
+        # Depth-wise conv for local feature extraction
+        self.dwconv = nn.Conv2d(
+            embed_dim, embed_dim,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+            groups=embed_dim,
+            bias=False
+        )
+        self.norm = nn.BatchNorm2d(embed_dim)
+        self.act = nn.GELU()
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Args:
+            x: [B, embed_dim, H, W]
+        Returns:
+            x: [B, embed_dim, H, W] with local features enhanced
+        """
+        return self.act(self.norm(self.dwconv(x))) + x  # Residual
+
+
 class PositionalEncoding2D(nn.Module):
     """2D Sinusoidal Positional Encoding for spatial tokens."""
 
@@ -89,7 +155,6 @@ class PositionalEncoding2D(nn.Module):
         super().__init__()
         self.embed_dim = embed_dim
 
-        # Create 2D positional encoding
         pe = torch.zeros(h * w, embed_dim)
 
         y_pos = torch.arange(h).unsqueeze(1).repeat(1, w).flatten()
@@ -103,32 +168,111 @@ class PositionalEncoding2D(nn.Module):
         pe[:, 2::4] = torch.sin(y_pos.unsqueeze(1) * div_term)
         pe[:, 3::4] = torch.cos(y_pos.unsqueeze(1) * div_term)
 
-        self.register_buffer('pe', pe.unsqueeze(0))  # [1, H*W, D]
+        self.register_buffer('pe', pe.unsqueeze(0))
 
     def forward(self, x: Tensor) -> Tensor:
-        """Add positional encoding to spatial tokens."""
         return x + self.pe[:, :x.size(1), :]
 
 
-class TransformerEncoderLayer(nn.Module):
-    """Standard Transformer Encoder Layer with Pre-LayerNorm."""
+class LocalitySelfAttention(nn.Module):
+    """
+    Locality Self-Attention (LSA) for small datasets.
+
+    Key innovations:
+    1. Learnable temperature: Controls attention sharpness
+    2. Diagonal masking: Removes self-relation, forces attention to neighbors
+
+    Reference: Vision Transformer for Small-Size Datasets (AAAI 2022)
+    """
 
     def __init__(
         self,
-        embed_dim: int = 256,
-        num_heads: int = 8,
-        mlp_ratio: float = 4.0,
+        embed_dim: int = 128,
+        num_heads: int = 4,
         dropout: float = 0.1,
-        attention_dropout: float = 0.1
+        init_temperature: float = 0.5
+    ):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        # Q, K, V projections
+        self.qkv = nn.Linear(embed_dim, embed_dim * 3, bias=False)
+        self.proj = nn.Linear(embed_dim, embed_dim)
+
+        # Key innovation 1: Learnable temperature (init to sharp attention)
+        self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1) * init_temperature)
+
+        self.attn_drop = nn.Dropout(dropout)
+        self.proj_drop = nn.Dropout(dropout)
+
+    def forward(self, x: Tensor, use_diagonal_mask: bool = True) -> Tensor:
+        """
+        Args:
+            x: [B, N, D] input tokens
+            use_diagonal_mask: Whether to mask diagonal (self-attention)
+
+        Returns:
+            x: [B, N, D] output tokens
+        """
+        B, N, D = x.shape
+
+        # QKV projection: [B, N, 3D] → 3 × [B, num_heads, N, head_dim]
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)  # [3, B, num_heads, N, head_dim]
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # Attention scores: [B, num_heads, N, N]
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+
+        # Key innovation 1: Learnable temperature (sharper attention)
+        attn = attn / self.temperature.clamp(min=0.1)
+
+        # Key innovation 2: Diagonal masking (remove self-relation)
+        if use_diagonal_mask:
+            diag_mask = torch.eye(N, device=x.device, dtype=torch.bool)
+            diag_mask = diag_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, N, N]
+            attn = attn.masked_fill(diag_mask, float('-inf'))
+
+        attn = F.softmax(attn, dim=-1)
+        attn = self.attn_drop(attn)
+
+        # Apply attention: [B, num_heads, N, head_dim]
+        out = attn @ v
+
+        # Reshape and project: [B, N, D]
+        out = out.transpose(1, 2).reshape(B, N, D)
+        out = self.proj(out)
+        out = self.proj_drop(out)
+
+        return out
+
+
+class LSAEncoderLayer(nn.Module):
+    """
+    Transformer Encoder Layer with Locality Self-Attention.
+
+    Uses Pre-LayerNorm for stability.
+    """
+
+    def __init__(
+        self,
+        embed_dim: int = 128,
+        num_heads: int = 4,
+        mlp_ratio: float = 2.0,
+        dropout: float = 0.2,
+        init_temperature: float = 0.5
     ):
         super().__init__()
 
         self.norm1 = nn.LayerNorm(embed_dim)
-        self.attn = nn.MultiheadAttention(
+        self.attn = LocalitySelfAttention(
             embed_dim=embed_dim,
             num_heads=num_heads,
-            dropout=attention_dropout,
-            batch_first=True
+            dropout=dropout,
+            init_temperature=init_temperature
         )
         self.dropout1 = nn.Dropout(dropout)
 
@@ -143,9 +287,9 @@ class TransformerEncoderLayer(nn.Module):
         )
 
     def forward(self, x: Tensor) -> Tensor:
-        # Pre-LayerNorm Self-Attention
+        # Pre-LayerNorm LSA
         x_norm = self.norm1(x)
-        attn_out, _ = self.attn(x_norm, x_norm, x_norm)
+        attn_out = self.attn(x_norm)
         x = x + self.dropout1(attn_out)
 
         # Pre-LayerNorm MLP
@@ -154,120 +298,83 @@ class TransformerEncoderLayer(nn.Module):
         return x
 
 
-class PerJointHeatmapDecoder(nn.Module):
+class PerJointHeatmapDecoderSmall(nn.Module):
     """
-    Per-Joint Heatmap Decoder for reconstruction regularization.
-
-    Takes each joint token [D] and decodes it to a single-channel heatmap [H, W].
-    This forces the joint tokens to contain 2D spatial localization information.
-
-    Architecture (per joint):
-        Joint Token [D] → MLP → Spatial Feature [D', 1, 1]
-                              → Upsample → Heatmap [1, H, W]
-
-    Total output: [B, num_joints, H, W]
+    Smaller Heatmap Decoder for v6 (reduced params).
     """
 
     def __init__(
         self,
-        embed_dim: int = 256,
+        embed_dim: int = 128,
         num_joints: int = 16,
         heatmap_size: int = 47,
-        hidden_dim: int = 256
+        hidden_dim: int = 128  # Reduced from 256
     ):
         super().__init__()
         self.embed_dim = embed_dim
         self.num_joints = num_joints
         self.heatmap_size = heatmap_size
 
-        # Shared MLP for all joints: [D] → [hidden_dim]
+        # Smaller MLP
         self.fc = nn.Sequential(
             nn.Linear(embed_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU(),
         )
 
-        # Progressive upsampling: 1x1 → 3x3 → 6x6 → 12x12 → 24x24 → 47x47
+        # Lighter upsampling
         self.upsample = nn.Sequential(
-            # 1x1 → 3x3
-            nn.ConvTranspose2d(hidden_dim, 128, kernel_size=3, stride=1, padding=0),
-            nn.BatchNorm2d(128),
-            nn.GELU(),
-
-            # 3x3 → 6x6
-            nn.ConvTranspose2d(128, 128, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(128),
-            nn.GELU(),
-
-            # 6x6 → 12x12
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+            nn.ConvTranspose2d(hidden_dim, 64, kernel_size=3, stride=1, padding=0),
             nn.BatchNorm2d(64),
             nn.GELU(),
 
-            # 12x12 → 24x24
-            nn.ConvTranspose2d(64, 64, kernel_size=4, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.GELU(),
-
-            # 24x24 → 47x47 (bilinear + conv)
-            nn.Upsample(size=(heatmap_size, heatmap_size), mode='bilinear', align_corners=False),
-            nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
+            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
             nn.BatchNorm2d(32),
             nn.GELU(),
-            nn.Conv2d(32, 1, kernel_size=1, stride=1, padding=0),
+
+            nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(16),
+            nn.GELU(),
+
+            nn.ConvTranspose2d(16, 8, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(8),
+            nn.GELU(),
+
+            nn.Upsample(size=(heatmap_size, heatmap_size), mode='bilinear', align_corners=False),
+            nn.Conv2d(8, 1, kernel_size=1, stride=1, padding=0),
         )
 
     def forward(self, joint_tokens: Tensor) -> Tensor:
-        """
-        Args:
-            joint_tokens: [B, num_joints, D]
+        B, N, D = joint_tokens.shape
 
-        Returns:
-            heatmaps: [B, num_joints, H, W]
-        """
-        B, N, D = joint_tokens.shape  # B, 16, 256
-
-        # Process all joints together (use reshape for non-contiguous tensors)
-        tokens_flat = joint_tokens.reshape(B * N, D)  # [B*16, D]
-        features = self.fc(tokens_flat)  # [B*16, hidden_dim]
-
-        # Reshape for conv: [B*16, hidden_dim, 1, 1]
+        tokens_flat = joint_tokens.reshape(B * N, D)
+        features = self.fc(tokens_flat)
         features = features.reshape(B * N, -1, 1, 1)
 
-        # Upsample to heatmap: [B*16, 1, H, W]
         heatmaps = self.upsample(features)
-
-        # Reshape: [B, 16, H, W]
         heatmaps = heatmaps.reshape(B, N, self.heatmap_size, self.heatmap_size)
 
         return heatmaps
 
 
-class HMDCrossAttention(nn.Module):
+class HMDCrossAttentionSmall(nn.Module):
     """
-    Cross-attention: Joint tokens query HMD tokens for 3D reference.
-
-    Q: Joint tokens [B, 16, D]
-    K/V: HMD tokens [B, 3, D] - (head, right_hand, left_hand)
+    Smaller HMD Cross-Attention for v6.
     """
 
     def __init__(
         self,
-        embed_dim: int = 256,
+        embed_dim: int = 128,
         hmd_dim: int = 9,
-        num_heads: int = 4,
-        dropout: float = 0.1
+        num_heads: int = 2,
+        dropout: float = 0.2
     ):
         super().__init__()
 
-        # HMD → 3 tokens
         self.hmd_embed = nn.Sequential(
-            nn.Linear(hmd_dim, embed_dim * 2),
+            nn.Linear(hmd_dim, embed_dim),
             nn.ReLU(),
-            nn.Linear(embed_dim * 2, embed_dim * 3)  # 3 tokens
+            nn.Linear(embed_dim, embed_dim * 3)
         )
 
         self.norm = nn.LayerNorm(embed_dim)
@@ -280,19 +387,10 @@ class HMDCrossAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, joint_tokens: Tensor, hmd_info: Tensor) -> Tensor:
-        """
-        Args:
-            joint_tokens: [B, 16, D]
-            hmd_info: [B, 9]
-        Returns:
-            refined_joints: [B, 16, D]
-        """
         B = joint_tokens.size(0)
 
-        # HMD → 3 tokens [B, 3, D]
         hmd_tokens = self.hmd_embed(hmd_info).reshape(B, 3, -1)
 
-        # Cross attention (Pre-LayerNorm)
         joint_norm = self.norm(joint_tokens)
         attn_out, _ = self.cross_attn(
             query=joint_norm,
@@ -303,109 +401,133 @@ class HMDCrossAttention(nn.Module):
         return joint_tokens + self.dropout(attn_out)
 
 
-class ViTLiftingNetwork(nn.Module):
+class ViTLiftingNetworkV6(nn.Module):
     """
-    ViT-Style Lifting Network (v2 - Reconstruction Regularized).
+    ViT-Style Lifting Network v6 (Small Dataset Optimized).
 
-    Uses learnable joint queries and self-attention, with heatmap
-    reconstruction to inject 2D joint information into joint tokens.
-
-    Pipeline:
-    1. Backbone feat → Spatial tokens
-    2. Concat [Spatial; Joint queries]
-    3. Self-Attention (bidirectional)
-    4. Extract joint tokens
-    5. Heatmap Reconstruction (forces 2D info into tokens)
-    6. HMD Cross-Attention (adds 3D depth reference)
-    7. 3D Pose Head
+    Key features:
+    - SPT (Shifted Patch Tokenization)
+    - Depth-wise Conv embedding
+    - LSA (Locality Self-Attention)
+    - Reduced model size
     """
 
     def __init__(
         self,
         num_joints: int = 16,
-        embed_dim: int = 256,
+        embed_dim: int = 128,          # Reduced from 256
         backbone_channels: int = 2048,
-        spatial_size: int = 8,  # 8x8 spatial grid
+        spatial_size: int = 8,
         heatmap_size: int = 47,
         hmd_dim: int = 9,
-        num_heads: int = 8,
-        num_layers: int = 4,
-        mlp_ratio: float = 4.0,
-        dropout: float = 0.1,
+        num_heads: int = 4,            # Reduced from 8
+        num_layers: int = 2,           # Reduced from 4
+        mlp_ratio: float = 2.0,        # Reduced from 4.0
+        dropout: float = 0.2,          # Increased from 0.1
+        init_temperature: float = 0.5,
         use_hmd: bool = True,
-        use_heatmap_recon: bool = True
+        use_heatmap_recon: bool = True,
+        use_spt: bool = True,
+        use_dwconv: bool = True,
+        use_lsa: bool = True
     ):
         super().__init__()
         self.num_joints = num_joints
         self.embed_dim = embed_dim
-        self.spatial_tokens_count = spatial_size * spatial_size  # 64
+        self.spatial_tokens_count = spatial_size * spatial_size
         self.use_hmd = use_hmd
         self.use_heatmap_recon = use_heatmap_recon
+        self.use_spt = use_spt
+        self.use_dwconv = use_dwconv
+        self.use_lsa = use_lsa
 
-        # 1. Backbone feature → Spatial tokens
-        self.spatial_proj = nn.Sequential(
-            nn.Conv2d(backbone_channels, embed_dim, kernel_size=1),
-            nn.BatchNorm2d(embed_dim),
-            nn.ReLU()
-        )
+        # 1. Tokenization: SPT or standard projection
+        if use_spt:
+            self.spatial_proj = ShiftedPatchTokenization(
+                in_channels=backbone_channels,
+                embed_dim=embed_dim,
+                shift_size=1
+            )
+        else:
+            self.spatial_proj = nn.Sequential(
+                nn.Conv2d(backbone_channels, embed_dim, kernel_size=1),
+                nn.BatchNorm2d(embed_dim),
+                nn.GELU()
+            )
 
-        # 2. Positional encoding for spatial tokens
+        # 2. Depth-wise Conv embedding (optional)
+        if use_dwconv:
+            self.dwconv_embed = DepthWiseConvEmbedding(embed_dim, kernel_size=3)
+
+        # 3. Positional encoding
         self.spatial_pos_enc = PositionalEncoding2D(embed_dim, spatial_size, spatial_size)
 
-        # 3. Learnable Joint Queries (key innovation!)
+        # 4. Learnable Joint Queries
         self.joint_queries = nn.Parameter(
             torch.randn(1, num_joints, embed_dim) * 0.02
         )
 
-        # 4. Learnable type embedding (spatial vs joint)
+        # 5. Type embeddings
         self.spatial_type_embed = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.joint_type_embed = nn.Parameter(torch.zeros(1, 1, embed_dim))
 
-        # 5. Transformer Encoder (Self-Attention)
-        self.transformer_layers = nn.ModuleList([
-            TransformerEncoderLayer(
-                embed_dim=embed_dim,
-                num_heads=num_heads,
-                mlp_ratio=mlp_ratio,
-                dropout=dropout
-            )
-            for _ in range(num_layers)
-        ])
+        # 6. Transformer Encoder (LSA or standard)
+        if use_lsa:
+            self.transformer_layers = nn.ModuleList([
+                LSAEncoderLayer(
+                    embed_dim=embed_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    dropout=dropout,
+                    init_temperature=init_temperature
+                )
+                for _ in range(num_layers)
+            ])
+        else:
+            # Standard transformer (fallback)
+            from .custom_egopose_vit_lifting_head import TransformerEncoderLayer
+            self.transformer_layers = nn.ModuleList([
+                TransformerEncoderLayer(
+                    embed_dim=embed_dim,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    dropout=dropout
+                )
+                for _ in range(num_layers)
+            ])
 
         self.norm = nn.LayerNorm(embed_dim)
 
-        # 6. Heatmap Reconstruction Decoder (forces 2D info into joint tokens)
+        # 7. Heatmap Reconstruction Decoder (smaller)
         if use_heatmap_recon:
-            self.heatmap_decoder = PerJointHeatmapDecoder(
+            self.heatmap_decoder = PerJointHeatmapDecoderSmall(
                 embed_dim=embed_dim,
                 num_joints=num_joints,
                 heatmap_size=heatmap_size,
-                hidden_dim=256
+                hidden_dim=128
             )
 
-        # 7. HMD Cross-Attention (adds 3D depth reference)
+        # 8. HMD Cross-Attention (smaller)
         if use_hmd:
-            self.hmd_cross_attn = HMDCrossAttention(
+            self.hmd_cross_attn = HMDCrossAttentionSmall(
                 embed_dim=embed_dim,
                 hmd_dim=hmd_dim,
                 num_heads=num_heads // 2,
                 dropout=dropout
             )
 
-        # 8. 3D Pose Head (direct 3D prediction)
+        # 9. 3D Pose Head (smaller)
         self.head_3d = nn.Sequential(
             nn.Linear(embed_dim, embed_dim),
             nn.LayerNorm(embed_dim),
             nn.GELU(),
-            nn.Linear(embed_dim, embed_dim // 2),
-            nn.GELU(),
-            nn.Linear(embed_dim // 2, 3)
+            nn.Dropout(dropout),
+            nn.Linear(embed_dim, 3)
         )
 
         self._init_weights()
 
     def _init_weights(self):
-        # Initialize joint queries
         nn.init.normal_(self.joint_queries, std=0.02)
         nn.init.zeros_(self.spatial_type_embed)
         nn.init.zeros_(self.joint_type_embed)
@@ -417,126 +539,119 @@ class ViTLiftingNetwork(nn.Module):
     ) -> Tuple[Tensor, Optional[Tensor], dict]:
         """
         Args:
-            backbone_feat: [B, 2048, 8, 8] backbone features
-            hmd_info: [B, 9] HMD information (optional)
+            backbone_feat: [B, 2048, 8, 8]
+            hmd_info: [B, 9]
 
         Returns:
-            pose_3d: [B, 16, 3] predicted 3D pose
-            recon_heatmaps: [B, 16, 47, 47] reconstructed heatmaps (or None)
-            info: dict with intermediate outputs
+            pose_3d: [B, 16, 3]
+            recon_heatmaps: [B, 16, 47, 47] or None
+            info: dict
         """
         B = backbone_feat.size(0)
 
-        # 1. Backbone → Spatial tokens [B, 64, D]
-        spatial_feat = self.spatial_proj(backbone_feat)  # [B, D, 8, 8]
-        spatial_tokens = spatial_feat.flatten(2).transpose(1, 2)  # [B, 64, D]
+        # 1. SPT Tokenization: [B, D, 8, 8]
+        spatial_feat = self.spatial_proj(backbone_feat)
+
+        # 2. Depth-wise Conv (optional)
+        if self.use_dwconv:
+            spatial_feat = self.dwconv_embed(spatial_feat)
+
+        # Flatten to tokens: [B, 64, D]
+        spatial_tokens = spatial_feat.flatten(2).transpose(1, 2)
 
         # Add positional encoding
         spatial_tokens = self.spatial_pos_enc(spatial_tokens)
-
-        # Add type embedding
         spatial_tokens = spatial_tokens + self.spatial_type_embed
 
-        # 2. Expand joint queries for batch [B, 16, D]
+        # 3. Joint queries: [B, 16, D]
         joint_tokens = self.joint_queries.expand(B, -1, -1).clone()
         joint_tokens = joint_tokens + self.joint_type_embed
 
-        # 3. Concatenate [spatial; joint] = [B, 80, D]
+        # 4. Concatenate: [B, 80, D]
         tokens = torch.cat([spatial_tokens, joint_tokens], dim=1)
 
-        # 4. Self-Attention layers
+        # 5. LSA layers
         for layer in self.transformer_layers:
             tokens = layer(tokens)
 
         tokens = self.norm(tokens)
 
-        # 5. Extract joint tokens (last 16)
-        joint_tokens = tokens[:, -self.num_joints:, :]  # [B, 16, D]
+        # 6. Extract joint tokens
+        joint_tokens = tokens[:, -self.num_joints:, :]
 
-        # 6. Heatmap Reconstruction (BEFORE HMD, forces 2D info)
+        # 7. Heatmap Reconstruction
         recon_heatmaps = None
         if self.use_heatmap_recon:
-            recon_heatmaps = self.heatmap_decoder(joint_tokens)  # [B, 16, 47, 47]
+            recon_heatmaps = self.heatmap_decoder(joint_tokens)
 
-        # 7. HMD Cross-Attention (adds 3D depth reference)
+        # 8. HMD Cross-Attention
         if self.use_hmd and hmd_info is not None:
             joint_tokens = self.hmd_cross_attn(joint_tokens, hmd_info)
 
-        # 8. 3D Pose prediction
-        pose_3d = self.head_3d(joint_tokens)  # [B, 16, 3]
+        # 9. 3D Pose
+        pose_3d = self.head_3d(joint_tokens)
 
         info = {
             'spatial_tokens': spatial_tokens,
-            'joint_tokens_before_hmd': tokens[:, -self.num_joints:, :],
-            'joint_tokens_after_hmd': joint_tokens
+            'joint_tokens': joint_tokens
         }
 
         return pose_3d, recon_heatmaps, info
 
 
 @MODELS.register_module()
-class CustomEgoposeViTLiftingHead(BaseHead):
+class CustomEgoposeViTLiftingHeadV6(BaseHead):
     """
-    ViT-Style Lifting Head (v1/v2/v3).
+    ViT-Style Lifting Head v6 (Small Dataset Optimized).
 
-    Three versions controlled by config:
-    - v1: use_separate_deconv=True  → Separate Deconv path (heatmap independent from lifting)
-    - v2: use_heatmap_recon=False   → No heatmap (Self-Attention only)
-    - v3: use_heatmap_recon=True    → Reconstruction regularization (recommended)
-
-    Key Features:
-    - Learnable Joint Queries: No soft_argmax bottleneck
-    - Self-Attention: Bidirectional spatial ↔ joint interaction
-    - HMD Cross-Attention: Adds 3D depth reference
-    - Direct 3D Prediction: Single head for (x, y, z)
+    Key features for small datasets:
+    - SPT (Shifted Patch Tokenization): Locality inductive bias
+    - LSA (Locality Self-Attention): Learnable temperature + diagonal masking
+    - Reduced model: embed_dim=128, num_layers=2, mlp_ratio=2.0
+    - Higher dropout: 0.2 for regularization
 
     Args:
-        in_channels: Input channels from backbone (2048 for ResNet-101)
+        in_channels: Input channels from backbone (2048)
         out_channels: Number of keypoints (16)
-        embed_dim: Transformer embedding dimension (default: 256)
-        num_heads: Number of attention heads (default: 8)
-        num_layers: Number of transformer layers (default: 4)
-        mlp_ratio: MLP hidden dimension ratio (default: 4.0)
-        dropout: Dropout rate (default: 0.1)
-        use_hmd: Whether to use HMD cross-attention (default: True)
-        use_heatmap_recon: Whether to use heatmap reconstruction (v3, default: True)
-        use_separate_deconv: Whether to use separate deconv path (v1, default: False)
+        embed_dim: Transformer embedding dim (default: 128, reduced)
+        num_heads: Attention heads (default: 4, reduced)
+        num_layers: Transformer layers (default: 2, reduced)
+        mlp_ratio: MLP ratio (default: 2.0, reduced)
+        dropout: Dropout rate (default: 0.2, increased)
+        init_temperature: LSA temperature init (default: 0.5)
+        use_spt: Use Shifted Patch Tokenization (default: True)
+        use_dwconv: Use Depth-wise Conv embedding (default: True)
+        use_lsa: Use Locality Self-Attention (default: True)
     """
 
-    _version = 3
+    _version = 6
 
     def __init__(
         self,
         in_channels: Union[int, Sequence[int]],
         out_channels: int,
-        # ViT Lifting params
-        embed_dim: int = 256,
-        num_heads: int = 8,
-        num_layers: int = 4,
-        mlp_ratio: float = 4.0,
-        dropout: float = 0.1,
+        # v6 small model params
+        embed_dim: int = 128,
+        num_heads: int = 4,
+        num_layers: int = 2,
+        mlp_ratio: float = 2.0,
+        dropout: float = 0.2,
         heatmap_size: int = 47,
+        init_temperature: float = 0.5,
+        # v6 specific flags
+        use_spt: bool = True,
+        use_dwconv: bool = True,
+        use_lsa: bool = True,
         use_hmd: bool = True,
         use_heatmap_recon: bool = True,
-        use_separate_deconv: bool = False,  # v1: separate deconv path
-        # Deconv params (for v1)
-        deconv_out_channels: OptIntSeq = (256, 256, 256),
-        deconv_kernel_sizes: OptIntSeq = (4, 4, 4),
         # Loss configs
         loss_heatmap_recon: ConfigType = dict(type='KeypointMSELoss', loss_weight=500),
-        loss_heatmap: ConfigType = dict(type='KeypointMSELoss', loss_weight=1000),  # for v1
         loss_pose_l2norm: ConfigType = dict(type='pose_l2norm', loss_weight=1.0),
         loss_cosine_similarity: ConfigType = dict(type='cosine_similarity', loss_weight=0.1),
         loss_limb_length: ConfigType = dict(type='limb_length', loss_weight=0.25),
         loss_hmd: ConfigType = dict(type='MSELoss', loss_weight=1.0),
         decoder: OptConfigType = None,
         init_cfg: OptConfigType = None,
-        # Legacy params (ignored, for config compatibility)
-        loss: OptConfigType = None,
-        loss_2d: OptConfigType = None,
-        use_heatmap_loss: bool = True,
-        deconv_stride_sizes: OptIntSeq = None,
-        final_layer: dict = None,
     ):
         if init_cfg is None:
             init_cfg = self.default_init_cfg
@@ -548,33 +663,16 @@ class CustomEgoposeViTLiftingHead(BaseHead):
         self.embed_dim = embed_dim
         self.heatmap_size = heatmap_size
         self.use_heatmap_recon = use_heatmap_recon
-        self.use_separate_deconv = use_separate_deconv
 
         # Build losses
         self.loss_heatmap_recon_module = MODELS.build(loss_heatmap_recon) if use_heatmap_recon else None
-        self.loss_heatmap_module = MODELS.build(loss_heatmap) if use_separate_deconv else None
         self.loss_pose_l2norm_module = MODELS.build(loss_pose_l2norm)
         self.loss_cosine_similarity_module = MODELS.build(loss_cosine_similarity)
         self.loss_limb_length_module = MODELS.build(loss_limb_length)
         self.loss_hmd_module = MODELS.build(loss_hmd)
 
-        # ===== v1: Separate Deconv path (independent from lifting) =====
-        if use_separate_deconv:
-            self.deconv_layers = self._make_deconv_layers(
-                in_channels=in_channels,
-                out_channels=deconv_out_channels,
-                kernel_sizes=deconv_kernel_sizes
-            )
-            self.final_layer = nn.Conv2d(
-                in_channels=deconv_out_channels[-1],
-                out_channels=out_channels,
-                kernel_size=1,
-                stride=1,
-                padding=0
-            )
-
-        # ViT Lifting Network
-        self.lifting_network = ViTLiftingNetwork(
+        # ViT Lifting Network v6
+        self.lifting_network = ViTLiftingNetworkV6(
             num_joints=out_channels,
             embed_dim=embed_dim,
             backbone_channels=in_channels,
@@ -585,11 +683,15 @@ class CustomEgoposeViTLiftingHead(BaseHead):
             num_layers=num_layers,
             mlp_ratio=mlp_ratio,
             dropout=dropout,
+            init_temperature=init_temperature,
             use_hmd=use_hmd,
-            use_heatmap_recon=use_heatmap_recon
+            use_heatmap_recon=use_heatmap_recon,
+            use_spt=use_spt,
+            use_dwconv=use_dwconv,
+            use_lsa=use_lsa
         )
 
-        # Decoder (for 2D keypoint decoding from reconstructed heatmaps)
+        # Decoder
         if decoder is not None:
             self.decoder = KEYPOINT_CODECS.build(decoder)
         else:
@@ -603,66 +705,7 @@ class CustomEgoposeViTLiftingHead(BaseHead):
             dict(type='TruncNormal', layer='Linear', std=0.02)
         ]
 
-    def _make_deconv_layers(
-        self,
-        in_channels: int,
-        out_channels: Sequence[int],
-        kernel_sizes: Sequence[int]
-    ) -> nn.Module:
-        """Build deconv layers for v1 separate heatmap path.
-
-        Args:
-            in_channels: Input channels (2048)
-            out_channels: Output channels for each deconv layer
-            kernel_sizes: Kernel sizes for each deconv layer
-
-        Returns:
-            nn.Sequential of deconv layers
-        """
-        layers = []
-        for i, (out_ch, kernel) in enumerate(zip(out_channels, kernel_sizes)):
-            # Deconv layer
-            if kernel == 4:
-                padding, output_padding = 1, 0
-            elif kernel == 3:
-                padding, output_padding = 1, 1
-            elif kernel == 2:
-                padding, output_padding = 0, 0
-            else:
-                raise ValueError(f'Unsupported kernel size: {kernel}')
-
-            layers.append(
-                nn.ConvTranspose2d(
-                    in_channels=in_channels,
-                    out_channels=out_ch,
-                    kernel_size=kernel,
-                    stride=2,
-                    padding=padding,
-                    output_padding=output_padding,
-                    bias=False
-                )
-            )
-            layers.append(nn.BatchNorm2d(out_ch))
-            layers.append(nn.ReLU(inplace=True))
-            in_channels = out_ch
-
-        return nn.Sequential(*layers)
-
-    def forward_deconv(self, backbone_feat: Tensor) -> Tensor:
-        """Forward pass through separate deconv path (v1).
-
-        Args:
-            backbone_feat: [B, 2048, 8, 8]
-
-        Returns:
-            heatmaps: [B, 16, 64, 64] (or similar based on deconv config)
-        """
-        x = self.deconv_layers(backbone_feat)
-        heatmaps = self.final_layer(x)
-        return heatmaps
-
     def forward(self, feats: Tuple[Tensor]) -> Tensor:
-        """Forward pass - returns None as heatmaps come from reconstruction."""
         return None
 
     def forward_lifting(
@@ -670,22 +713,10 @@ class CustomEgoposeViTLiftingHead(BaseHead):
         backbone_feat: Tensor,
         hmd_info: Tensor
     ) -> Tuple[Tensor, Optional[Tensor], dict]:
-        """
-        Forward pass for ViT-style lifting.
-
-        Args:
-            backbone_feat: [B, 2048, 8, 8]
-            hmd_info: [B, 9]
-
-        Returns:
-            pose_3d: [B, 16, 3]
-            recon_heatmaps: [B, 16, 47, 47] or None
-            info: dict
-        """
         return self.lifting_network(backbone_feat, hmd_info)
 
     def _compute_hmd_from_pose(self, pose_3d: Tensor) -> Tensor:
-        """Compute HMD info from 3D pose prediction."""
+        """Compute HMD info from 3D pose."""
         head = pose_3d[:, 0]
         right_hand = pose_3d[:, 7]
         left_hand = pose_3d[:, 4]
@@ -732,24 +763,20 @@ class CustomEgoposeViTLiftingHead(BaseHead):
     ) -> Tuple[InstanceList, Tensor]:
         """Decode predictions."""
 
-        # Get HMD info
         HMD_info = torch.cat([
             d.gt_instance_labels.hmd_info for d in batch_data_samples
         ])
 
-        # ViT Lifting
         pose_3d, recon_heatmaps_out, info = self.forward_lifting(
             backbone_feat, HMD_info.float()
         )
 
-        # Use passed heatmaps or the ones from forward_lifting
         if recon_heatmaps is None:
             recon_heatmaps = recon_heatmaps_out
 
-        # HMD reconstruction
         hmd_recons = self._compute_hmd_from_pose(pose_3d)
 
-        # Decode 2D keypoints from reconstructed heatmaps if available
+        # Decode 2D keypoints
         if recon_heatmaps is not None and self.decoder is not None:
             if self.decoder.support_batch_decoding:
                 batch_keypoints, batch_scores = self.decoder.batch_decode(recon_heatmaps)
@@ -772,10 +799,9 @@ class CustomEgoposeViTLiftingHead(BaseHead):
                         batch_scores.append(scores)
                         batch_visibility.append(None)
         else:
-            # Use pose_3d[:, :, :2] as 2D keypoints
             B = pose_3d.shape[0]
-            pose_2d = pose_3d[:, :, :2]  # [B, 16, 2]
-            batch_keypoints = pose_2d.detach().cpu().numpy() * 256  # Scale to input size
+            pose_2d = pose_3d[:, :, :2]
+            batch_keypoints = pose_2d.detach().cpu().numpy() * 256
             batch_scores = [np.ones((16,)) for _ in range(B)]
             batch_visibility = [None] * B
 
@@ -783,18 +809,18 @@ class CustomEgoposeViTLiftingHead(BaseHead):
         B = pose_3d.shape[0]
         for i in range(B):
             if isinstance(batch_keypoints, np.ndarray):
-                kpts = batch_keypoints[i:i+1]  # [1, 16, 2]
+                kpts = batch_keypoints[i:i+1]
             else:
                 kpts = batch_keypoints[i]
                 if kpts.ndim == 2:
-                    kpts = kpts[np.newaxis, ...]  # [1, 16, 2]
+                    kpts = kpts[np.newaxis, ...]
 
             if isinstance(batch_scores, np.ndarray):
-                scores = batch_scores[i:i+1]  # [1, 16]
+                scores = batch_scores[i:i+1]
             else:
                 scores = batch_scores[i]
                 if isinstance(scores, np.ndarray) and scores.ndim == 1:
-                    scores = scores[np.newaxis, ...]  # [1, 16]
+                    scores = scores[np.newaxis, ...]
 
             pred = InstanceData(
                 keypoints=kpts,
@@ -817,11 +843,9 @@ class CustomEgoposeViTLiftingHead(BaseHead):
         """Predict from features."""
 
         backbone_feat = feats[-1]
-
         preds, _ = self.decode(backbone_feat, batch_data_samples)
 
         if test_cfg.get('output_heatmaps', False):
-            # Get reconstructed heatmaps
             HMD_info = torch.cat([
                 d.gt_instance_labels.hmd_info for d in batch_data_samples
             ])
@@ -842,7 +866,6 @@ class CustomEgoposeViTLiftingHead(BaseHead):
 
         backbone_feat = feats[-1]
 
-        # Get HMD info and GT
         HMD_info = torch.cat([
             d.gt_instance_labels.hmd_info for d in batch_data_samples
         ])
@@ -850,15 +873,12 @@ class CustomEgoposeViTLiftingHead(BaseHead):
             d.gt_instance_labels.keypoint3d for d in batch_data_samples
         ])
 
-        # ViT Lifting forward (returns pose_3d, recon_heatmaps, info)
         pose_3d, recon_heatmaps, info = self.forward_lifting(backbone_feat, HMD_info.float())
-
-        # HMD reconstruction from predicted pose
         hmd_recon = self._compute_hmd_from_pose(pose_3d)
 
         losses = dict()
 
-        # ===== 3D Pose Losses =====
+        # 3D Pose Losses
         pose_3d = pose_3d.reshape(-1, 16, 3)
 
         loss_pose_l2norm = self.loss_pose_l2norm_module(pose_3d, gt_keypoint_3d)
@@ -869,62 +889,25 @@ class CustomEgoposeViTLiftingHead(BaseHead):
         losses['loss_cosine_similarity'] = torch.mean(loss_cosine_similarity)
         losses['loss_limb_length'] = torch.mean(loss_limb_length)
 
-        # ===== HMD Loss =====
-        loss_hmd = self.loss_hmd_module(
-            hmd_recon.double(), HMD_info.double()
-        )
+        # HMD Loss
+        loss_hmd = self.loss_hmd_module(hmd_recon.double(), HMD_info.double())
         losses['loss_hmd'] = loss_hmd
 
-        # ===== Heatmap Reconstruction Loss (key for injecting 2D info) =====
+        # Heatmap Reconstruction Loss
         if self.use_heatmap_recon and recon_heatmaps is not None:
             gt_heatmaps = torch.stack([d.gt_fields.heatmaps for d in batch_data_samples])
             keypoint_weights = torch.cat([
                 d.gt_instance_labels.keypoint_weights for d in batch_data_samples
             ])
 
-            # Reconstruction loss forces joint tokens to encode 2D joint locations
             loss_heatmap_recon = self.loss_heatmap_recon_module(
                 recon_heatmaps, gt_heatmaps, keypoint_weights
             )
             losses['loss_heatmap_recon'] = loss_heatmap_recon
 
-            # Accuracy from reconstructed heatmap
             if train_cfg.get('compute_acc', True):
                 _, avg_acc, _ = pose_pck_accuracy(
                     output=to_numpy(recon_heatmaps),
-                    target=to_numpy(gt_heatmaps),
-                    mask=to_numpy(keypoint_weights) > 0)
-                losses['acc_pose'] = torch.tensor(avg_acc, device=gt_heatmaps.device)
-
-        # ===== v1: Separate Deconv Heatmap Loss (independent from lifting) =====
-        if self.use_separate_deconv:
-            # Generate heatmaps via separate deconv path
-            deconv_heatmaps = self.forward_deconv(backbone_feat)  # [B, 16, H, W]
-
-            gt_heatmaps = torch.stack([d.gt_fields.heatmaps for d in batch_data_samples])
-            keypoint_weights = torch.cat([
-                d.gt_instance_labels.keypoint_weights for d in batch_data_samples
-            ])
-
-            # Resize deconv heatmaps to match GT if needed
-            if deconv_heatmaps.shape[-1] != gt_heatmaps.shape[-1]:
-                deconv_heatmaps = F.interpolate(
-                    deconv_heatmaps,
-                    size=gt_heatmaps.shape[-2:],
-                    mode='bilinear',
-                    align_corners=False
-                )
-
-            # v1 heatmap loss (auxiliary, does NOT affect joint tokens)
-            loss_heatmap = self.loss_heatmap_module(
-                deconv_heatmaps, gt_heatmaps, keypoint_weights
-            )
-            losses['loss_heatmap'] = loss_heatmap
-
-            # Accuracy from deconv heatmap
-            if train_cfg.get('compute_acc', True) and 'acc_pose' not in losses:
-                _, avg_acc, _ = pose_pck_accuracy(
-                    output=to_numpy(deconv_heatmaps),
                     target=to_numpy(gt_heatmaps),
                     mask=to_numpy(keypoint_weights) > 0)
                 losses['acc_pose'] = torch.tensor(avg_acc, device=gt_heatmaps.device)

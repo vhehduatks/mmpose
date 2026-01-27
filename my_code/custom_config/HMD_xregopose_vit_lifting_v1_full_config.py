@@ -1,20 +1,39 @@
 """
-Attention-based Lifting Head v6 - CosineRestartLR (Warm Restarts)
-- LR 0.001 (same as v3/v4)
-- CosineRestartLR (with restarts, oscillating LR)
-- Gradient clipping (max_norm=1.0)
+ViT-Style Lifting Head v1 - Separate Deconv Path (Full Training)
 
-Previous results:
-- v1 (LR=0.0005, MultiStepLR): 45.43mm at epoch 7
-- v3 (LR=0.001, MultiStepLR): 46.68mm at epoch 1, then diverged
-- v4 (LR=0.001, CosineAnnealing): 47.95mm at epoch 6
-- v5 (LR=0.002, CosineAnnealing): 49.75mm at epoch 8 (LR too high)
+v1 Key Feature: Heatmap and Lifting are INDEPENDENT paths
+- Backbone → Deconv → Heatmap → Heatmap Loss (별도 경로)
+- Backbone → Spatial Tokens + Joint Queries → Self-Attention → 3D Pose
 
-v6 Hypothesis:
-- CosineRestartLR allows LR to reset periodically
-- Warm restarts may help escape local minima
-- periods=[3,3,3,1]: restart at epoch 3, 6, 9
-- Expected LR pattern: 0.001 → decay → 0.001 → decay → ...
+Architecture:
+    ┌─────────────────────────────────────────────────────────────┐
+    │  Backbone feat [2048, 8, 8]                                 │
+    │         │                                                   │
+    │         ├──────────────────────────┐                        │
+    │         │                          │                        │
+    │         ▼ (Deconv - 독립 경로)      ▼ (Lifting 경로)          │
+    │  Heatmap [16, 64, 64]       Spatial Tokens + Joint Queries  │
+    │         │                          │                        │
+    │         ▼                          ▼                        │
+    │  Heatmap Loss (auxiliary)   Self-Attention (4 layers)       │
+    │                                    │                        │
+    │                             Joint Tokens [16, D]            │
+    │                                    │                        │
+    │                             HMD Cross-Attention             │
+    │                                    │                        │
+    │                             3D Pose Head                    │
+    │                                    │                        │
+    │                             3D Pose [16, 3]                 │
+    └─────────────────────────────────────────────────────────────┘
+
+Key Difference from v3:
+- v1: Heatmap via Deconv (does NOT affect joint tokens)
+- v3: Heatmap via Decoder from joint tokens (regularizes tokens)
+
+LR Schedule: Based on Attention Lifting analysis
+- LR=0.0005 (v1 optimal)
+- Short iter warmup (500 iters)
+- MultiStepLR [3, 5, 7]
 """
 
 import platform
@@ -33,7 +52,7 @@ else:
     cache_file_val = '/mnt/dataset_vol/h5cache/test_cache_with_images.h5'
 
 # =============================================================================
-# Training Config - CosineAnnealingWarmRestarts
+# Training Config
 # =============================================================================
 auto_scale_lr = dict(base_batch_size=256)
 backend_args = dict(backend='local')
@@ -46,27 +65,38 @@ train_cfg = dict(
 val_cfg = dict()
 test_cfg = None
 
-# Optimizer: LR=0.002 + Gradient Clipping
+# =============================================================================
+# Optimizer: Based on Attention Lifting analysis
+# =============================================================================
 optim_wrapper = dict(
-    optimizer=dict(lr=0.001, type='AdamW', weight_decay=0.01),
+    optimizer=dict(lr=0.0005, type='AdamW', weight_decay=0.01),
     clip_grad=dict(max_norm=1.0, norm_type=2),
 )
 
-# LR Schedule: CosineAnnealingWarmRestarts
-# T_0=3: first cycle is 3 epochs
-# T_mult=1: subsequent cycles have same length
-# eta_min=1e-5: minimum LR
-# Expected pattern: epochs 0-2 (cycle 1), 3-5 (cycle 2), 6-8 (cycle 3), 9 (cycle 4 start)
+# =============================================================================
+# LR Schedule: Based on v1-v7 analysis
+# =============================================================================
 param_scheduler = [
+    # Short iter warmup
     dict(
-        type='CosineRestartLR',
-        periods=[3, 3, 3, 1],  # 3+3+3+1 = 10 epochs
-        restart_weights=[1, 1, 1, 1],
-        eta_min=1e-5,
+        type='LinearLR',
+        start_factor=0.5,
+        by_epoch=False,
+        begin=0,
+        end=500,
+    ),
+    # MultiStepLR (v1 style, earlier decay)
+    dict(
+        type='MultiStepLR',
+        milestones=[3, 5, 7],
+        gamma=0.5,
         by_epoch=True,
     ),
 ]
 
+# =============================================================================
+# Hooks
+# =============================================================================
 default_hooks = dict(
     checkpoint=dict(
         interval=1,
@@ -128,7 +158,7 @@ log_processor = dict(
 )
 
 # =============================================================================
-# Model - Attention-based Lifting Head
+# Model - ViT-Style Lifting v1 (Separate Deconv Path)
 # =============================================================================
 model = dict(
     type='TopdownPoseEstimator',
@@ -147,18 +177,25 @@ model = dict(
         type='PoseDataPreprocessor'
     ),
     head=dict(
-        type='CustomEgoposeAttentionLiftingHead',
+        type='CustomEgoposeViTLiftingHead',
         in_channels=2048,
         out_channels=16,
         decoder=codec,
-        # Attention params
-        joint_dim=64,
-        num_heads=4,
-        num_self_attn_layers=2,
+        # ViT Lifting params
+        embed_dim=256,
+        num_heads=8,
+        num_layers=4,
+        mlp_ratio=4.0,
         dropout=0.1,
-        detach_2d_coords=True,
+        heatmap_size=47,
+        use_hmd=True,
+        # ===== v1: Separate Deconv path (independent from lifting) =====
+        use_heatmap_recon=False,  # v3 style OFF
+        use_separate_deconv=True,  # v1 style ON
+        deconv_out_channels=(256, 256, 256),
+        deconv_kernel_sizes=(4, 4, 4),
         # Losses
-        loss=dict(
+        loss_heatmap=dict(  # v1: Deconv heatmap loss (auxiliary)
             loss_weight=1000,
             type='KeypointMSELoss',
             use_target_weight=False
@@ -166,11 +203,6 @@ model = dict(
         loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'),
         loss_cosine_similarity=dict(loss_weight=0.1, type='cosine_similarity'),
         loss_limb_length=dict(loss_weight=0.25, type='limb_length'),
-        loss_heatmap_recon=dict(
-            loss_weight=250,
-            type='KeypointMSELoss',
-            use_target_weight=False
-        ),
         loss_hmd=dict(type='MSELoss', loss_weight=1.0),
     ),
     test_cfg=dict(
@@ -282,7 +314,7 @@ val_evaluator = dict(
 vis_backends = [
     dict(type='LocalVisBackend'),
     dict(
-        init_kwargs=dict(project='mmpose_xregopose_attention_lifting_v6'),
+        init_kwargs=dict(project='mmpose_xregopose_vit_lifting_v1'),
         type='WandbVisBackend'
     ),
 ]
@@ -293,4 +325,4 @@ visualizer = dict(
     vis_backends=vis_backends
 )
 
-work_dir = 'work_dirs/HMD_xregopose_attention_lifting_v6_full'
+work_dir = 'work_dirs/HMD_xregopose_vit_lifting_v1_full'
