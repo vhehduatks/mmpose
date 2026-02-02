@@ -1,4 +1,9 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+"""Baseline head with configurable HMD info size.
+
+This head extends CustomxRegoposeBaselinel1 with a configurable hmd_info_size
+parameter to support enhanced HMD info (10, 11, or 12 dimensions instead of 9).
+"""
 from typing import Optional, Sequence, Tuple, Union
 
 import torch
@@ -22,28 +27,16 @@ from .blocks import PoseDecoder, HeatmapDecoder, EfficientHeatmapDecoder
 
 OptIntSeq = Optional[Sequence[int]]
 
-## A simple yet effective baseline for 3d human pose estimation
-'''
-https://github.com/vhehduatks/3d_pose_baseline_pytorch
-@inproceedings{martinez_2017_3dbaseline,
-  title={A simple yet effective baseline for 3d human pose estimation},
-  author={Martinez, Julieta and Hossain, Rayat and Romero, Javier and Little, James J.},
-  booktitle={ICCV},
-  year={2017}
-}
-'''
-
-import torch.nn as nn
-
 
 def weight_init(m):
 	if isinstance(m, nn.Linear):
 		nn.init.kaiming_normal(m.weight)
 
 
-class Encoder(nn.Module):
-	def __init__(self, num_classes=16, output_size = 64, hmd_info_size = 9):
-		super(Encoder, self).__init__()
+class EnhancedEncoder(nn.Module):
+	"""Encoder with configurable HMD info size."""
+	def __init__(self, num_classes=16, output_size=64, hmd_info_size=9):
+		super(EnhancedEncoder, self).__init__()
 		self.conv1 = nn.Conv2d(num_classes, 64, kernel_size=4, stride=2, padding=2)
 		self.lrelu1 = nn.LeakyReLU(0.2)
 		self.conv2 = nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1)
@@ -51,15 +44,15 @@ class Encoder(nn.Module):
 		self.conv3 = nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1)
 		self.lrelu3 = nn.LeakyReLU(0.2)
 		self.avr_pool = nn.AdaptiveAvgPool2d((1, 1))
-		
-		self.linear1 = nn.Linear(hmd_info_size,36)
+
+		self.linear1 = nn.Linear(hmd_info_size, 36)
 		self.lrelu4 = nn.LeakyReLU(0.2)
 
 		self.linear2 = nn.Linear(256+36, output_size)
 		self.linear2_ = nn.Linear(256, output_size)
 		self.lrelu5 = nn.LeakyReLU(0.2)
 
-	def forward(self, hm, hmd = None):
+	def forward(self, hm, hmd=None):
 		hm = self.conv1(hm)
 		hm = self.lrelu1(hm)
 		hm = self.conv2(hm)
@@ -67,15 +60,14 @@ class Encoder(nn.Module):
 		hm = self.conv3(hm)
 		hm = self.lrelu3(hm)
 
-		hm_avgpool = self.avr_pool(hm).view(-1,256)
-
+		hm_avgpool = self.avr_pool(hm).reshape(-1, 256)
 
 		if hmd is not None:
 			hmd = self.linear1(hmd)
 			hmd = self.lrelu4(hmd)
-			
-			x = torch.cat((hm_avgpool,hmd),dim=1).to(torch.float32)
-		
+
+			x = torch.cat((hm_avgpool, hmd), dim=1).to(torch.float32)
+
 			x = self.linear2(x)
 		else:
 			x = self.linear2_(hm_avgpool)
@@ -117,8 +109,8 @@ class Linear(nn.Module):
 
 class LinearModel(nn.Module):
 	def __init__(self,
-				input_size = 20,
-				num_classes = 16,
+				input_size=20,
+				num_classes=16,
 				linear_size=512,
 				num_stage=1,
 				p_dropout=0.5,
@@ -130,7 +122,7 @@ class LinearModel(nn.Module):
 		self.num_stage = num_stage
 
 		# 2d joints
-		self.input_size =  input_size
+		self.input_size = input_size
 		# 3d joints
 		self.output_size = num_classes * 3
 
@@ -161,14 +153,20 @@ class LinearModel(nn.Module):
 			y = self.linear_stages[i](y)
 
 		y = self.w2(y)
-		y = y.view(-1,self.output_size//3,3)
+		y = y.reshape(-1, self.output_size // 3, 3)
 		return y
 
 
 @MODELS.register_module()
-class CustomxRegoposeBaselinel1(BaseHead):
-	"""
-	-
+class CustomxRegoposeBaselinel1_enhanced_hmd(BaseHead):
+	"""Baseline head with configurable HMD info size.
+
+	This head is identical to CustomxRegoposeBaselinel1 but accepts a configurable
+	hmd_info_size parameter to support enhanced HMD info from the EnhanceHMDInfo transform.
+
+	Args:
+		hmd_info_size (int): Size of HMD info input. Default: 9 (standard).
+			Options: 10 (head_height), 11 (torso_reference), 12 (head_hands_y or relative_heights)
 	"""
 
 	_version = 2
@@ -176,41 +174,37 @@ class CustomxRegoposeBaselinel1(BaseHead):
 	def __init__(self,
 				in_channels: Union[int, Sequence[int]],
 				out_channels: int,
-				# input_size:Tuple[int,int],
-				# deconv_out_channels: OptIntSeq = (256, 256, 256),
-				# deconv_kernel_sizes: OptIntSeq = (4, 4, 4),
-				# deconv_stride_sizes: OptIntSeq = (2, 2, 2),
 				deconv_out_channels: OptIntSeq = (256, 256),
 				deconv_kernel_sizes: OptIntSeq = (4, 4),
 				deconv_stride_sizes: OptIntSeq = (2, 2),
 				conv_out_channels: OptIntSeq = None,
 				conv_kernel_sizes: OptIntSeq = None,
 				final_layer: dict = dict(kernel_size=1),
+				hmd_info_size: int = 9,  # NEW: configurable HMD info size
 				loss: ConfigType = dict(
 					type='KeypointMSELoss'),
 				loss_pose_l2norm: ConfigType = dict(
 					type='pose_l2norm'),
 				loss_cosine_similarity: ConfigType = dict(
 					type='cosine_similarity'),
-				loss_limb_length:ConfigType = dict(
+				loss_limb_length: ConfigType = dict(
 					type='limb_length'
 				),
-				loss_heatmap_recon:ConfigType = dict(
+				loss_heatmap_recon: ConfigType = dict(
 					type='KeypointMSELoss'
 				),
-				loss_hmd:ConfigType = dict(
+				loss_hmd: ConfigType = dict(
 					type='MSELoss'
 				),
-				loss_backbone_latant:ConfigType = dict(
+				loss_backbone_latant: ConfigType = dict(
 					type='MSELoss'
 				),
 				loss_backbone_heatmap: ConfigType = dict(
 					type='KeypointMSELoss'),
-				# Optional structural losses (NEW)
 				loss_bone_length: OptConfigType = None,
 				loss_symmetry: OptConfigType = None,
 				decoder: OptConfigType = None,
-				heatmap_decoder_type: str = 'original',  # 'original' or 'efficient'
+				heatmap_decoder_type: str = 'original',
 				init_cfg: OptConfigType = None):
 
 		if init_cfg is None:
@@ -220,17 +214,16 @@ class CustomxRegoposeBaselinel1(BaseHead):
 		self.hm_iteration = 2000
 		self.in_channels = in_channels
 		self.out_channels = out_channels
+		self.hmd_info_size = hmd_info_size  # Store for reference
+
 		self.loss_module = MODELS.build(loss)
-		self.loss_pose_l2norm_module = MODELS.build(loss_pose_l2norm) # 수정
+		self.loss_pose_l2norm_module = MODELS.build(loss_pose_l2norm)
 		self.loss_cosine_similarity_module = MODELS.build(loss_cosine_similarity)
 		self.loss_limb_length_module = MODELS.build(loss_limb_length)
 		self.loss_heatmap_recon_module = MODELS.build(loss_heatmap_recon)
 		self.loss_hmd_module = MODELS.build(loss_hmd)
-		# self.loss_backbone_latant_module = MODELS.build(loss_backbone_latant)
-		# self.loss_backbone_heatmap_module = MODELS.build(loss_backbone_heatmap)
-		# self.loss_module_ = MODELS.build(loss_)
 
-		# Optional structural losses (NEW)
+		# Optional structural losses
 		if loss_bone_length is not None:
 			self.loss_bone_length_module = MODELS.build(loss_bone_length)
 		else:
@@ -241,38 +234,36 @@ class CustomxRegoposeBaselinel1(BaseHead):
 		else:
 			self.loss_symmetry_module = None
 
-
-		# self.pose_decoder = PoseDecoder(num_classes = out_channels)
-		# Heatmap decoder that takes latent vector Z and generates the original 2D heatmap
-
-		# self.encoder = Encoder(num_classes=out_channels, heatmap_resolution=47)
-
-		
-		self.encoder = Encoder(num_classes=out_channels, output_size = 64, hmd_info_size = 9)
+		# Use EnhancedEncoder with configurable hmd_info_size
+		self.encoder = EnhancedEncoder(
+			num_classes=out_channels,
+			output_size=64,
+			hmd_info_size=hmd_info_size
+		)
 
 		# Select heatmap decoder type
 		self.heatmap_decoder_type = heatmap_decoder_type
 		if heatmap_decoder_type == 'efficient':
 			self.heatmap_decoder = EfficientHeatmapDecoder(
 				num_classes=out_channels, heatmap_resolution=47, input_size=64)
-		else:  # 'original'
+		else:
 			self.heatmap_decoder = HeatmapDecoder(
 				num_classes=out_channels, heatmap_resolution=47, input_size=64)
+
 		self.pose_decoder = LinearModel(
-			input_size = 64, 
-			num_classes = 16,	
+			input_size=64,
+			num_classes=16,
 			linear_size=512,
 			num_stage=1,
 			p_dropout=0.3
-			)
-		
+		)
+
+		# HMD linear layer with configurable input size
 		self.hmd_linear = nn.Sequential(
-			nn.Linear(9,64),
+			nn.Linear(hmd_info_size, 64),
 			nn.ReLU(inplace=True)
-			)
-		# self.hmd_decoder = nn.Sequential(
-		# 	nn.Linear(64,9),
-		# 	)
+		)
+
 		self.avr_pool = nn.AdaptiveAvgPool2d((1, 1))
 		if decoder is not None:
 			self.decoder = KEYPOINT_CODECS.build(decoder)
@@ -294,12 +285,6 @@ class CustomxRegoposeBaselinel1(BaseHead):
 				layer_kernel_sizes=deconv_kernel_sizes,
 				layer_stride_sizes=deconv_stride_sizes,
 			)
-			# self.deconv_layers_ = self._make_deconv_layers(
-			# 	in_channels=in_channels,
-			# 	layer_out_channels=deconv_out_channels,
-			# 	layer_kernel_sizes=deconv_kernel_sizes,
-			# 	layer_stride_sizes=deconv_stride_sizes,
-			# )
 			in_channels = deconv_out_channels[-1]
 		else:
 			self.deconv_layers = nn.Identity()
@@ -317,28 +302,20 @@ class CustomxRegoposeBaselinel1(BaseHead):
 				in_channels=in_channels,
 				layer_out_channels=conv_out_channels,
 				layer_kernel_sizes=conv_kernel_sizes)
-			# self.conv_layers_ = self._make_conv_layers(
-			# 	in_channels=in_channels,
-			# 	layer_out_channels=conv_out_channels,
-			# 	layer_kernel_sizes=conv_kernel_sizes)
-			# in_channels = conv_out_channels[-1]
 		else:
 			self.conv_layers = nn.Identity()
-			# self.conv_layers_ = nn.Identity()
 
 		if final_layer is not None:
 			cfg = dict(
 				type='Conv2d',
 				in_channels=in_channels,
-				out_channels=out_channels, # 요거가 heatmap 차원 결정
+				out_channels=out_channels,
 				kernel_size=1)
 			cfg.update(final_layer)
 			self.final_layer = build_conv_layer(cfg)
-			# self.final_layer_ = build_conv_layer(cfg)
 		else:
 			self.final_layer = nn.Identity()
 
-		## heatmap to 47
 		self.add_deconv_layers = nn.Sequential(
 			nn.Upsample(size=(47, 47), mode='bilinear', align_corners=False),
 			nn.Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False),
@@ -346,14 +323,6 @@ class CustomxRegoposeBaselinel1(BaseHead):
 			nn.ReLU(inplace=True)
 		)
 
-		# self.add_deconv_layers_ = nn.Sequential(
-		# 	nn.Upsample(size=(47, 47), mode='bilinear', align_corners=False),
-		# 	nn.Conv2d(256, 256, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False),
-		# 	nn.BatchNorm2d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True),
-		# 	nn.ReLU(inplace=True)
-		# )
-		##
-		# Register the hook to automatically convert old version state dicts
 		self._register_load_state_dict_pre_hook(self._load_state_dict_pre_hook)
 
 	def _make_conv_layers(self, in_channels: int,
@@ -382,11 +351,11 @@ class CustomxRegoposeBaselinel1(BaseHead):
 	def _make_deconv_layers(self, in_channels: int,
 							layer_out_channels: Sequence[int],
 							layer_kernel_sizes: Sequence[int],
-							layer_stride_sizes:Sequence[int]) -> nn.Module:
+							layer_stride_sizes: Sequence[int]) -> nn.Module:
 		"""Create deconvolutional layers by given parameters."""
 
 		layers = []
-		for out_channels, kernel_size,stride_size in zip(layer_out_channels,
+		for out_channels, kernel_size, stride_size in zip(layer_out_channels,
 											 layer_kernel_sizes,
 											 layer_stride_sizes):
 			if kernel_size == 4:
@@ -428,55 +397,20 @@ class CustomxRegoposeBaselinel1(BaseHead):
 		return init_cfg
 
 	def forward(self, feats: Tuple[Tensor]) -> Tensor:
-		"""Forward the network. The input is multi scale feature maps and the
-		output is the heatmap.
-
-		Args:
-			feats (Tuple[Tensor]): Multi scale feature maps.
-
-		Returns:
-			Tensor: output heatmap.
-		"""
-		# backbone_feat, backbone_feat2 = feats
-		# backbone_feat = backbone_feat[-1]
-		# backbone_feat2 = backbone_feat2[-1]
-		# x = self.deconv_layers(backbone_feat)
+		"""Forward the network."""
 		x = self.deconv_layers(feats[-1])
-
-		## heatmap 47
 		x = self.add_deconv_layers(x)
-		##
 		x = self.conv_layers(x)
 		x = self.final_layer(x)
-
-		# x_ = self.deconv_layers_(backbone_feat2)
-		# ## heatmap 47
-		# x_ = self.add_deconv_layers_(x_)
-		# ##
-		# x_ = self.conv_layers_(x_)
-		# x_ = self.final_layer_(x_)
-
 		return x
 
-	def decode(self, batch_outputs: Union[Tensor,Tuple[Tensor]], batch_data_samples: OptSampleList) -> InstanceList:
-		"""Decode keypoints from outputs.
-
-		Args:
-			batch_outputs (Tensor | Tuple[Tensor]): The network outputs of
-				a data batch
-
-		Returns:
-			List[InstanceData]: A list of InstanceData, each contains the
-			decoded pose information of the instances of one data sample.
-		"""
+	def decode(self, batch_outputs: Union[Tensor, Tuple[Tensor]], batch_data_samples: OptSampleList) -> InstanceList:
+		"""Decode keypoints from outputs."""
 
 		def _pack_and_call(args, func):
 			if not isinstance(args, tuple):
 				args = (args, )
 			return func(*args)
-		
-		
-		MASK_TH = 0.3
 
 		if self.decoder is None:
 			raise RuntimeError(
@@ -491,144 +425,101 @@ class CustomxRegoposeBaselinel1(BaseHead):
 				batch_scores, batch_visibility = batch_scores
 			else:
 				batch_visibility = [None] * len(batch_keypoints)
-
 		else:
 			batch_output_np = to_numpy(batch_outputs, unzip=True)
 			batch_keypoints = []
 			batch_scores = []
 			batch_visibility = []
-			# batch_masked_keypoints =[]
 			for outputs in batch_output_np:
 				keypoints, scores = _pack_and_call(outputs,
 												   self.decoder.decode)
 				batch_keypoints.append(keypoints)
-				# scores = _sigmoid(scores)
 				if isinstance(scores, tuple) and len(scores) == 2:
 					batch_scores.append(scores[0])
 					batch_visibility.append(scores[1])
 				else:
-					# mask = np.expand_dims((scores > MASK_TH),axis=-1)
-					# masked_keypoints = keypoints * mask
-					# batch_masked_keypoints.append(masked_keypoints)
 					batch_scores.append(scores)
 					batch_visibility.append(None)
 
 		preds = []
 
-
-		## HMD_info
+		# HMD_info (now with configurable size)
 		HMD_info = torch.cat([
 			d.gt_instance_labels.hmd_info for d in batch_data_samples
 		])
-		# HMD_info = HMD_info.flatten(start_dim=1) # shape (batch_size,9)
-		
-		
-		# z = self.encoder(batch_outputs.to(torch.float32),HMD_info.to(torch.float32)) # z : 64
+
 		z = self.encoder(batch_outputs.to(torch.float32))
-		# batch_recon2d_keypoints = self.posedecoder_2d(z)
-		# batch_3d_keypoints = self.keypoints_3d_module(z)
 		hmd_info_ = self.hmd_linear(HMD_info.to(torch.float32))
 
-		batch_3d_keypoints = self.pose_decoder(z+hmd_info_)
-		generated_heatmaps = self.heatmap_decoder(z+hmd_info_)
-		# hmd_recons = self.hmd_decoder(z+hmd_info_)
+		batch_3d_keypoints = self.pose_decoder(z + hmd_info_)
+		generated_heatmaps = self.heatmap_decoder(z + hmd_info_)
 
 		def preprocess_hmd_data_batch(p3d):
 			# Ensure p3d is a PyTorch tensor
 			if not isinstance(p3d, torch.Tensor):
 				p3d = torch.tensor(p3d, dtype=torch.float32)
-			
+
 			# Extract head and hand positions
 			head = p3d[:, 0]
 			right_hand = p3d[:, 7]
 			left_hand = p3d[:, 4]
-			
-			# Step 1: Create a local coordinate system
-			# Z-axis: from head to the midpoint between hands
+
+			# Create a local coordinate system
 			midpoint = (right_hand + left_hand) / 2
 			z_axis = midpoint - head
 			z_axis = z_axis / torch.norm(z_axis, dim=1, keepdim=True)
-			
-			# X-axis: perpendicular to Z-axis and the vector between hands
+
 			hand_vector = right_hand - left_hand
 			x_axis = torch.cross(z_axis, hand_vector, dim=1)
 			x_axis = x_axis / torch.norm(x_axis, dim=1, keepdim=True)
-			
-			# Y-axis: complete the right-handed coordinate system
+
 			y_axis = torch.cross(z_axis, x_axis, dim=1)
-			
-			# Step 2: Create rotation matrices
+
 			rotation_matrices = torch.stack((x_axis, y_axis, z_axis), dim=2)
-			
-			# Step 3: Transform hand positions to local coordinate system
+
 			right_local = torch.bmm(rotation_matrices.transpose(1, 2), (right_hand - head).unsqueeze(2)).squeeze(2)
 			left_local = torch.bmm(rotation_matrices.transpose(1, 2), (left_hand - head).unsqueeze(2)).squeeze(2)
-			
-			# Step 4: Compute additional features
+
 			hand_distance = torch.norm(right_local - left_local, dim=1)
 			right_distance = torch.norm(right_local, dim=1)
 			left_distance = torch.norm(left_local, dim=1)
-			
-			# Create preprocessed feature vector
+
+			# Return only base 9 dims for HMD reconstruction loss
 			preprocessed_hmd = torch.cat([
 				right_local, left_local,
 				hand_distance.unsqueeze(1), right_distance.unsqueeze(1), left_distance.unsqueeze(1)
 			], dim=1)
-			
+
 			return preprocessed_hmd
 
 		hmd_recons = preprocess_hmd_data_batch(batch_3d_keypoints)
 
-
-		for keypoints, keypoint_3d, scores, visibility, generated_heatmap, hmd_recon in zip(batch_keypoints, batch_3d_keypoints, batch_scores,
-												 batch_visibility, generated_heatmaps, hmd_recons):
+		for keypoints, keypoint_3d, scores, visibility, generated_heatmap, hmd_recon in zip(
+				batch_keypoints, batch_3d_keypoints, batch_scores,
+				batch_visibility, generated_heatmaps, hmd_recons):
 			keypoint_3d = keypoint_3d.unsqueeze(dim=0)
-			# recon2d_keypoints = recon2d_keypoints.unsqueeze(dim=0)
 			hmd_recon = hmd_recon.unsqueeze(dim=0)
 			generated_heatmap = generated_heatmap.unsqueeze(dim=0)
-			pred = InstanceData(keypoints=keypoints, keypoint_scores=scores, keypoint_3d=keypoint_3d, generated_heatmap=generated_heatmap, hmd_recon = hmd_recon)
+			pred = InstanceData(
+				keypoints=keypoints,
+				keypoint_scores=scores,
+				keypoint_3d=keypoint_3d,
+				generated_heatmap=generated_heatmap,
+				hmd_recon=hmd_recon
+			)
 			if visibility is not None:
 				pred.keypoints_visible = visibility
 			preds.append(pred)
 
-		return preds,batch_3d_keypoints
+		return preds, batch_3d_keypoints
 
 	def predict(self,
 				feats: Features,
 				batch_data_samples: OptSampleList,
 				test_cfg: ConfigType = {}) -> Predictions:
-		"""Predict results from features.
-
-		Args:
-			feats (Tuple[Tensor] | List[Tuple[Tensor]]): The multi-stage
-				features (or multiple multi-stage features in TTA)
-			batch_data_samples (List[:obj:`PoseDataSample`]): The batch
-				data samples
-			test_cfg (dict): The runtime config for testing process. Defaults
-				to {}
-
-		Returns:
-			Union[InstanceList | Tuple[InstanceList | PixelDataList]]: If
-			``test_cfg['output_heatmap']==True``, return both pose and heatmap
-			prediction; otherwise only return the pose prediction.
-
-			The pose prediction is a list of ``InstanceData``, each contains
-			the following fields:
-
-				- keypoints (np.ndarray): predicted keypoint coordinates in
-					shape (num_instances, K, D) where K is the keypoint number
-					and D is the keypoint dimension
-				- keypoint_scores (np.ndarray): predicted keypoint scores in
-					shape (num_instances, K)
-
-			The heatmap prediction is a list of ``PixelData``, each contains
-			the following fields:
-
-				- heatmaps (Tensor): The predicted heatmaps in shape (K, h, w)
-		"""
+		"""Predict results from features."""
 
 		if test_cfg.get('flip_test', False):
-			# TTA: flip test -> feats = [orig, flipped]
 			assert isinstance(feats, list) and len(feats) == 2
 			flip_indices = batch_data_samples[0].metainfo['flip_indices']
 			_feats, _feats_flip = feats
@@ -642,8 +533,7 @@ class CustomxRegoposeBaselinel1(BaseHead):
 		else:
 			batch_heatmaps = self.forward(feats)
 
-
-		preds,_ = self.decode(batch_heatmaps, batch_data_samples)
+		preds, _ = self.decode(batch_heatmaps, batch_data_samples)
 
 		if test_cfg.get('output_heatmaps', False):
 			pred_fields = [
@@ -657,18 +547,7 @@ class CustomxRegoposeBaselinel1(BaseHead):
 			 feats: Tuple[Tensor],
 			 batch_data_samples: OptSampleList,
 			 train_cfg: ConfigType = {}) -> dict:
-		"""Calculate losses from a batch of inputs and data samples.
-
-		Args:
-			feats (Tuple[Tensor]): The multi-stage features
-			batch_data_samples (List[:obj:`PoseDataSample`]): The batch
-				data samples
-			train_cfg (dict): The runtime config for training process.
-				Defaults to {}
-
-		Returns:
-			dict: A dictionary of losses.
-		"""
+		"""Calculate losses from a batch of inputs and data samples."""
 		pred_fields = self.forward(feats)
 		gt_heatmaps = torch.stack(
 			[d.gt_fields.heatmaps for d in batch_data_samples])
@@ -676,12 +555,7 @@ class CustomxRegoposeBaselinel1(BaseHead):
 			d.gt_instance_labels.keypoint_weights for d in batch_data_samples
 		])
 
-		pred,pred_batch_3d_keypoints = self.decode(pred_fields,batch_data_samples)
-
-		## recon2d 
-		# gt_keypoints = torch.cat([
-		# 	d.gt_instance_labels.keypoints for d in batch_data_samples
-		# ])
+		pred, pred_batch_3d_keypoints = self.decode(pred_fields, batch_data_samples)
 
 		pred_recon_heatmap = torch.cat([
 			p.generated_heatmap for p in pred
@@ -690,11 +564,7 @@ class CustomxRegoposeBaselinel1(BaseHead):
 		pred_recon_hmd = torch.cat([
 			p.hmd_recon for p in pred
 		])
-		# gt_keypoints = gt_keypoints / self.scale_factor.view(1, 1, 2).to(device=gt_keypoints.device)
-		# loss_recon2d = self.loss_recon2d_module(pred_recon2d_keypoints.to(torch.double),gt_keypoints.to(torch.double))
-		##
 
-		## 3d baseline
 		gt_keypoint_3d = torch.cat([
 			d.gt_instance_labels.keypoint3d for d in batch_data_samples
 		])
@@ -702,47 +572,28 @@ class CustomxRegoposeBaselinel1(BaseHead):
 			d.gt_instance_labels.hmd_info for d in batch_data_samples
 		])
 
-		pred_batch_3d_keypoints = pred_batch_3d_keypoints.view(-1,16,3)
+		# For HMD loss, use only first 9 dims (base HMD info)
+		HMD_info_base = HMD_info[:, :9]
+
+		pred_batch_3d_keypoints = pred_batch_3d_keypoints.reshape(-1, 16, 3)
 
 		loss_pose_l2norm = self.loss_pose_l2norm_module(pred_batch_3d_keypoints, gt_keypoint_3d)
 		loss_cosine_similarity = self.loss_cosine_similarity_module(pred_batch_3d_keypoints, gt_keypoint_3d)
 		loss_limb_length = self.loss_limb_length_module(pred_batch_3d_keypoints, gt_keypoint_3d)
-		loss_heatmap_recon = self.loss_heatmap_recon_module(pred_recon_heatmap,gt_heatmaps,keypoint_weights)
+		loss_heatmap_recon = self.loss_heatmap_recon_module(pred_recon_heatmap, gt_heatmaps, keypoint_weights)
 		loss_2dkpt = self.loss_module(pred_fields, gt_heatmaps, keypoint_weights)
-		loss_hmd = self.loss_hmd_module(pred_recon_hmd.to(torch.double),HMD_info.to(torch.double))
-		
-		# loss_ = self.loss_module_(pred_fields_, gt_heatmaps, keypoint_weights)
-		# loss_backbone_latant = self.loss_backbone_latant_module(backbone_feat, backbone_feat2)
-		# loss_backone_heatmap = self.loss_backbone_heatmap_module(pred_fields,pred_fields_)
-		# loss_kpt3d = self.loss_3d_module(pred_batch_3d_keypoints.to(torch.double),gt_keypoint_3d.to(torch.double),keypoint_weights_3d)
-		##
-		
-		# calculate losses
-		losses = dict()
-		
-		losses.update(loss_pose_l2norm = torch.mean(loss_pose_l2norm))
-		losses.update(loss_cosine_similarity = torch.mean(loss_cosine_similarity))
-		losses.update(loss_limb_length = torch.mean(loss_limb_length))
-		# losses.update(loss_heatmap_recon = torch.mean(loss_heatmap_recon))
-		losses.update(loss_heatmap_recon = loss_heatmap_recon)
-		losses.update(loss_hmd = loss_hmd)
+		loss_hmd = self.loss_hmd_module(pred_recon_hmd.to(torch.double), HMD_info_base.to(torch.double))
 
-		# losses.update(loss_ = loss_)
-		# losses.update(loss_backbone_latant = loss_backbone_latant)
-		# losses.update(loss_backbone_heatmap = loss_backone_heatmap)
-		## 3d baseline
-		# if self.hm_iteration >= 0:
-		# 	losses.update(loss_hmd = loss_hmd)
-		# 	losses.update(loss_kpt3d = loss_kpt3d)
-		##
-		
+		losses = dict()
+
+		losses.update(loss_pose_l2norm=torch.mean(loss_pose_l2norm))
+		losses.update(loss_cosine_similarity=torch.mean(loss_cosine_similarity))
+		losses.update(loss_limb_length=torch.mean(loss_limb_length))
+		losses.update(loss_heatmap_recon=loss_heatmap_recon)
+		losses.update(loss_hmd=loss_hmd)
 		losses.update(loss_kpt=loss_2dkpt)
 
-		## recon2d
-		# losses.update(loss_recon2d = loss_recon2d)
-		## TODO : loss, head debug
-
-		# Optional structural losses (NEW)
+		# Optional structural losses
 		if self.loss_bone_length_module is not None:
 			loss_bone = self.loss_bone_length_module(
 				pred_batch_3d_keypoints, gt_keypoint_3d)
@@ -761,55 +612,34 @@ class CustomxRegoposeBaselinel1(BaseHead):
 
 			acc_pose = torch.tensor(avg_acc, device=gt_heatmaps.device)
 			losses.update(acc_pose=acc_pose)
-		
+
 		self.hm_iteration += 1
-		
+
 		return losses
 
 	def _load_state_dict_pre_hook(self, state_dict, prefix, local_meta, *args,
 								  **kwargs):
-		"""A hook function to convert old-version state dict of
-		:class:`TopdownHeatmapSimpleHead` (before MMPose v1.0.0) to a
-		compatible format of :class:`HeatmapHead`.
-
-		The hook will be automatically registered during initialization.
-		"""
+		"""Hook to convert old-version state dict."""
 		version = local_meta.get('version', None)
 		if version and version >= self._version:
 			return
 
-		# convert old-version state dict
 		keys = list(state_dict.keys())
 		for _k in keys:
 			if not _k.startswith(prefix):
 				continue
 			v = state_dict.pop(_k)
 			k = _k[len(prefix):]
-			# In old version, "final_layer" includes both intermediate
-			# conv layers (new "conv_layers") and final conv layers (new
-			# "final_layer").
-			#
-			# If there is no intermediate conv layer, old "final_layer" will
-			# have keys like "final_layer.xxx", which should be still
-			# named "final_layer.xxx";
-			#
-			# If there are intermediate conv layers, old "final_layer"  will
-			# have keys like "final_layer.n.xxx", where the weights of the last
-			# one should be renamed "final_layer.xxx", and others should be
-			# renamed "conv_layers.n.xxx"
 			k_parts = k.split('.')
 			if k_parts[0] == 'final_layer':
 				if len(k_parts) == 3:
 					assert isinstance(self.conv_layers, nn.Sequential)
 					idx = int(k_parts[1])
 					if idx < len(self.conv_layers):
-						# final_layer.n.xxx -> conv_layers.n.xxx
 						k_new = 'conv_layers.' + '.'.join(k_parts[1:])
 					else:
-						# final_layer.n.xxx -> final_layer.xxx
 						k_new = 'final_layer.' + k_parts[2]
 				else:
-					# final_layer.xxx remains final_layer.xxx
 					k_new = k
 			else:
 				k_new = k

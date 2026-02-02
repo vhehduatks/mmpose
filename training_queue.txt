@@ -1,4 +1,36 @@
-my_code/custom_config/HMD_xregopose_vit_lifting_v6_full_config.py
-my_code/custom_config/HMD_xregopose_vit_lifting_v6_lower_body_full_config.py
-my_code/custom_config/HMD_xregopose_attention_z_encoder_full_config.py
-my_code/custom_config/HMD_xregopose_cascaded_refinement_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_vit_lifting_v6_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_vit_lifting_v6_lower_body_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_attention_z_encoder_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_refinement_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_vit_lifting_v6_20ep_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_decoupled_v2_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_refinement_v2_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_attention_z_encoder_v2_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_baseline_structural_losses_full_config.py
+# Reproducibility tests
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_refinement_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_attention_z_encoder_full_config.py
+# New experiments
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_refinement_20ep_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_refinement_v3_full_config.py
+# Enhanced HMD Info experiments (root-relative compatible modes only)
+[DONE] my_code/custom_config/HMD_xregopose_enhanced_hmd_hands_y_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_enhanced_hmd_torso_ref_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_enhanced_hmd_relative_heights_full_config.py
+# Cascaded Refinement + Enhanced HMD (Stage 1 & Stage 2)
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_enhanced_hmd_full_config.py
+# Ground Reference (realistic HMD deployment - uses feet to estimate ground)
+[DONE] my_code/custom_config/HMD_xregopose_enhanced_hmd_ground_ref_full_config.py
+# Ground-based variants (ablation study) - HMD-measurable only
+[DONE] my_code/custom_config/HMD_xregopose_enhanced_hmd_head_from_ground_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_enhanced_hmd_hand_from_ground_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_enhanced_hmd_both_from_ground_full_config.py
+# Cascaded Refinement + both_from_ground (combining best HMD-deployable features with refinement)
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_both_from_ground_full_config.py
+# HMD Attention Fusion + both_from_ground (cross-attention for HMD-visual fusion)
+[DONE] my_code/custom_config/HMD_xregopose_hmd_attention_fusion_both_from_ground_full_config.py
+# Cascaded + Both From Ground V2 Ablation (test each optimization individually)
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_both_from_ground_v2_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_both_from_ground_v2a_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_both_from_ground_v2b_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_both_from_ground_v2c_full_config.py

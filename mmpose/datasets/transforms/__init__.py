@@ -16,6 +16,7 @@ from .loading import LoadImage, LoadImageFromH5
 from .mix_img_transforms import Mosaic, YOLOXMixUp
 from .pose3d_transforms import RandomFlipAroundRoot
 from .topdown_transforms import TopdownAffine
+from .enhance_hmd_info import EnhanceHMDInfo
 
 __all__ = [
     'GetBBoxCenterScale', 'RandomBBoxTransform', 'RandomFlip',
@@ -25,5 +26,6 @@ __all__ = [
     'GenerateTarget', 'KeypointConverter', 'RandomFlipAroundRoot',
     'FilterAnnotations', 'YOLOXHSVRandomAug', 'YOLOXMixUp', 'Mosaic',
     'BottomupRandomCrop', 'BottomupRandomChoiceResize', 'HandRandomFlip',
-    'SingleHandConverter', 'EgoposeFilterAnnotations', 'FisheyeCropTransform'
+    'SingleHandConverter', 'EgoposeFilterAnnotations', 'FisheyeCropTransform',
+    'EnhanceHMDInfo'
 ]
