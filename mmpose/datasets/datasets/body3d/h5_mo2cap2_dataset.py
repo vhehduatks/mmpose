@@ -60,7 +60,7 @@ class H5Mo2Cap2Dataset(BaseDataset):
 
     MM_TO_M = 1000  # mo2cap2 uses millimeters
     NUM_KEYPOINTS = 15
-    METAINFO: dict = dict(from_file=r'C:\Users\user\Documents\GitHub\mmpose\configs\_base_\datasets\custom_mo2cap2.py')
+    METAINFO: dict = dict(from_file='configs/_base_/datasets/custom_mo2cap2.py')
 
     def __init__(self,
                  data_mode: str = 'topdown',
@@ -351,6 +351,19 @@ class H5Mo2Cap2Dataset(BaseDataset):
                 'bbox_score': np.ones(1, dtype=np.float32),
                 'img_id': idx,
                 'img_path': f'h5://{chunk_idx}/{local_idx}',  # Virtual path
+
+                # raw_ann_info for metric compatibility (minimal placeholder)
+                # CustomMo2Cap2Metric requires this field but only uses keypoint3d
+                'raw_ann_info': {
+                    'id': idx,
+                    'image_id': idx,
+                    'category_id': 1,
+                    'keypoints': all_keypoints[idx].flatten().tolist() + [2] * self.NUM_KEYPOINTS,  # x,y,v format
+                    'num_keypoints': self.NUM_KEYPOINTS,
+                    'bbox': [0, 0, self.input_size[0], self.input_size[1]],
+                    'area': self.input_size[0] * self.input_size[1],
+                    'iscrowd': 0,
+                },
             }
             data_list.append(data_info)
 

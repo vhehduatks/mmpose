@@ -132,6 +132,10 @@ class LoadImageFromH5(object):
             [hand_distance, right_distance, left_distance]
         ]).astype(np.float32)
 
+    def __call__(self, results: dict) -> Optional[dict]:
+        """Call transform method."""
+        return self.transform(results)
+
     def __repr__(self) -> str:
         return (f'{self.__class__.__name__}('
                 f'to_float32={self.to_float32}, '

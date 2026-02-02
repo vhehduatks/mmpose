@@ -17,6 +17,7 @@ from .mix_img_transforms import Mosaic, YOLOXMixUp
 from .pose3d_transforms import RandomFlipAroundRoot
 from .topdown_transforms import TopdownAffine
 from .enhance_hmd_info import EnhanceHMDInfo
+from .enhance_hmd_info_mo2cap2 import EnhanceHMDInfo_Mo2Cap2
 
 __all__ = [
     'GetBBoxCenterScale', 'RandomBBoxTransform', 'RandomFlip',
@@ -27,5 +28,5 @@ __all__ = [
     'FilterAnnotations', 'YOLOXHSVRandomAug', 'YOLOXMixUp', 'Mosaic',
     'BottomupRandomCrop', 'BottomupRandomChoiceResize', 'HandRandomFlip',
     'SingleHandConverter', 'EgoposeFilterAnnotations', 'FisheyeCropTransform',
-    'EnhanceHMDInfo'
+    'EnhanceHMDInfo', 'EnhanceHMDInfo_Mo2Cap2'
 ]

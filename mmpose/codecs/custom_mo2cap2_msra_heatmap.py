@@ -49,6 +49,8 @@ class Custom_mo2cap2_MSRAHeatmap(BaseKeypointCodec):
 
 	## 3d baseline
 	# instance_mapping_table  -> gt_instance
+	# NOTE: 'action' removed - it's a string field that should go in metainfo, not gt_instances
+	# Having 'action' here causes InstanceData.to() to fail due to length mismatch
 	instance_mapping_table = dict(
 		bbox='bboxes',
 		bbox_score='bbox_scores',
@@ -63,8 +65,6 @@ class Custom_mo2cap2_MSRAHeatmap(BaseKeypointCodec):
 		# namely, PCKh
 		head_size='head_size',
 		keypoint3d = 'keypoint3d',
-		action = 'action',
-		
 	)
 
 	# items in `field_mapping_table` will be packed into
