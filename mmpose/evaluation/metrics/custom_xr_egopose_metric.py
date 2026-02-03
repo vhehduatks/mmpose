@@ -24,7 +24,7 @@ from mmpose.registry import KEYPOINT_CODECS, MODELS
 from mmpose.utils.typing import (ConfigType, Features, OptConfigType,
 								 OptSampleList, Predictions, InstanceList)
 
-from . import mo2cap2_evaluate
+from . import xr_egopose_evaluate
 
 @METRICS.register_module()
 class CustomxRegoposeMetric(BaseMetric):
@@ -178,7 +178,7 @@ class CustomxRegoposeMetric(BaseMetric):
 
 			## mo2cap2
 			if self.use_action:
-				gt['action'] = data_sample['gt_instances']['action'][0]
+				gt['action'] = data_sample['action']  # action is in metainfo, not gt_instances
 			##
 
 ## TODO metric 수정할 것 gt , pred 둘다 data_sample에 있ㅇ므
@@ -232,14 +232,8 @@ class CustomxRegoposeMetric(BaseMetric):
 		upper_body_errors = per_joint_error_np[:, UPPER].mean(axis=1)
 		lower_body_errors = per_joint_error_np[:, LOWER].mean(axis=1)
 
-		# Action name mapping (same logic as BaseEval._map_action_name)
-		_action_map = mo2cap2_evaluate.config.load_config().actions
-
-		def _map_action(name):
-			suffix = re.findall(r'_mixamo_com.*', name)
-			if suffix:
-				name = name.replace(suffix[0], '')
-			return _action_map.get(name, 'All')
+		# Action name mapping using xr_egopose_evaluate
+		_map_action = xr_egopose_evaluate.map_action_name
 
 		def _build_results_dict(errors_np):
 			"""Build per-action results dict matching original format."""
