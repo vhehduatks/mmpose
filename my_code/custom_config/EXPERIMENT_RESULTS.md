@@ -1,14 +1,58 @@
 # EgoPose 3D Experiment Results and Analysis
 
-> Last updated: 2026-02-02 (Experiment #35 Cascaded V2b - **34.24mm, New Best HMD-deployable**)
+> Last updated: 2026-02-04 (V3 Ground Ablation Complete - NEW SOTA: 34.06mm!)
+
+## 🏆 V3 Ground Ablation Results (Body-Axis Fix)
+
+**V3 both_from_ground achieves NEW SOTA: 34.06mm MPJPE!**
+
+| Model | Full Body | Upper Body | Lower Body | Best Epoch |
+|-------|-----------|------------|------------|------------|
+| Baseline | 41.37 mm | 29.42 mm | 53.31 mm | 8 |
+| V3 head_from_ground | 47.09 mm | 37.15 mm | 57.03 mm | 10 |
+| V3 hand_from_ground | 37.20 mm | 27.78 mm | 46.61 mm | 9 |
+| **V3 both_from_ground** | **34.06 mm** 🏆 | 25.84 mm | **42.29 mm** | 8 |
+
+Key findings:
+- **Hand heights are more important than head height** (37.20mm vs 47.09mm)
+- **Both together give best results** (34.06mm, -7.31mm from Baseline)
+- **Lower Body dramatically improved**: 42.29mm vs 53.31mm (-11.02mm, -20.7%)
+
+---
+
+## ⚠️ IMPORTANT: Ground Info Bug (Fixed 2026-02-03)
+
+**Experiments #29-35 used INCORRECT ground reference computation.**
+
+The `EnhanceHMDInfo` transform was using Y-axis for ground calculation, but in camera coordinates, **no axis corresponds to height**. The correct method uses **body-axis (Vector A)** from root toward pelvis.
+
+| Method | Value | Interpretation |
+|--------|-------|----------------|
+| OLD (Y-axis) | ~0.23m | ❌ WRONG - meaningless |
+| NEW (Body-axis) | ~1.43m | ✅ Correct body height |
+
+**Affected Experiments:**
+- #29: Enhanced HMD Ground Ref (36.28mm) - **INVALID**
+- #30: Cascaded + Both From Ground V1 (37.88mm) - **INVALID**
+- #31: HMD Attention Fusion (44.65mm) - **INVALID**
+- #32-35: Cascaded V2/V2a/V2b/V2c - **INVALID**
+
+**V3 ablation completed with fixed transform:**
+- ✅ V3 head_from_ground: 47.09mm
+- ✅ V3 hand_from_ground: 37.20mm
+- ✅ V3 both_from_ground: **34.06mm** 🏆 NEW SOTA
+
+---
 
 ## Objective
 
 **Achieve 3D pose estimation performance better than Single COCO Baseline (41.37mm MPJPE)**
 
-✅ **ACHIEVED**:
-- Overall best: Enhanced HMD Ground Ref **36.28mm** (-5.09mm) ⚠️ Uses GT torso, not HMD-deployable
-- **HMD-deployable best: Cascaded V2b (EfficientDecoder + 20ep) 34.24mm** (-7.13mm, -17.2%) ✅ 🏆
+**Current Best (Valid Results):**
+- **V3 both_from_ground: 34.06mm** (-7.31mm, -17.7% from Baseline) 🏆 **NEW SOTA**
+- V3 hand_from_ground: **37.20mm** (-4.17mm from Baseline)
+- Cascaded Refinement: **41.60mm** (+0.23mm from Baseline)
+- Attention Z Encoder: **43.69mm** (+2.32mm from Baseline)
 
 ---
 
@@ -47,25 +91,31 @@
 | 26 | Upper-Lower Decoupled V2 | `HMD_xregopose_decoupled_v2_full_config.py` | `CustomEgoposeDecoupledHead` | 43.54 | 8 | ❌ (MultiStepLR improved over v1, still worse than Baseline) |
 | 27 | Attention Z Encoder V2 | `HMD_xregopose_attention_z_encoder_v2_full_config.py` | `CustomEgoposeAttentionZEncoderHead` | 45.26 | 9 | ❌ (pretrained loading hurt gate learning) |
 | 28 | Baseline + Structural Losses | `HMD_xregopose_baseline_structural_losses_full_config.py` | `CustomxRegoposeBaselinel1` | 43.76 | 10 | ❌ (structural losses hurt Baseline, +2.39mm) |
-| 29 | Enhanced HMD Ground Ref | `HMD_xregopose_enhanced_hmd_ground_ref_full_config.py` | `CustomxRegoposeBaselinel1` | **36.28** | 8 | ⚠️ Best overall, but uses GT torso (not HMD-deployable) |
-| 30 | **Cascaded + Both From Ground** | `HMD_xregopose_cascaded_both_from_ground_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | **37.88** | 10 | 🏆 **Best HMD-deployable! -3.49mm from Baseline** |
-| 31 | HMD Attention Fusion | `HMD_xregopose_hmd_attention_fusion_both_from_ground_full_config.py` | `CustomEgoposeHMDAttentionFusionHead` | 44.65 | 8 | ❌ (unstable training, cross-attention didn't help) |
-| 32 | Cascaded V2 (EfficientDecoder) | `HMD_xregopose_cascaded_both_from_ground_v2_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | **35.67** | 8 | ⭐ EfficientDecoder improved +2.21mm |
-| 33 | Cascaded V2a (+Stronger MLP) | `HMD_xregopose_cascaded_both_from_ground_v2a_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | 39.02 | 8 | ❌ (stronger MLP hurt, +1.14mm vs V1) |
-| 34 | Cascaded V2b (+20 Epochs) | `HMD_xregopose_cascaded_both_from_ground_v2b_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | **34.24** | 19 | 🏆 **Best HMD-deployable! -7.13mm from Baseline** |
-| 35 | Cascaded V2c (+Loss Tuning) | `HMD_xregopose_cascaded_both_from_ground_v2c_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | 37.81 | 8 | ❌ (loss tuning minimal effect, -0.07mm) |
+| 29 | Enhanced HMD Ground Ref | `HMD_xregopose_enhanced_hmd_ground_ref_full_config.py` | `CustomxRegoposeBaselinel1` | 36.28 | 8 | ⚠️ **INVALID** (ground info bug) |
+| 30 | Cascaded + Both From Ground | `HMD_xregopose_cascaded_both_from_ground_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | 37.88 | 10 | ⚠️ **INVALID** (ground info bug) |
+| 31 | HMD Attention Fusion | `HMD_xregopose_hmd_attention_fusion_both_from_ground_full_config.py` | `CustomEgoposeHMDAttentionFusionHead` | 44.65 | 8 | ⚠️ **INVALID** (ground info bug) |
+| 32 | Cascaded V2 (EfficientDecoder) | `HMD_xregopose_cascaded_both_from_ground_v2_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | 35.67 | 8 | ⚠️ **INVALID** (ground info bug) |
+| 33 | Cascaded V2a (+Stronger MLP) | `HMD_xregopose_cascaded_both_from_ground_v2a_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | 39.02 | 8 | ⚠️ **INVALID** (ground info bug) |
+| 34 | Cascaded V2b (+20 Epochs) | `HMD_xregopose_cascaded_both_from_ground_v2b_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | 34.24 | 19 | ⚠️ **INVALID** (ground info bug) |
+| 35 | Cascaded V2c (+Loss Tuning) | `HMD_xregopose_cascaded_both_from_ground_v2c_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | 37.81 | 8 | ⚠️ **INVALID** (ground info bug) |
+| 36 | V3 Head From Ground | `HMD_xregopose_cascaded_head_from_ground_v3_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | 47.09 | 10 | ❌ (head height alone insufficient) |
+| 37 | V3 Hand From Ground | `HMD_xregopose_cascaded_hand_from_ground_v3_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | **37.20** | 9 | ⭐ Hand heights very effective |
+| 38 | **V3 Both From Ground** | `HMD_xregopose_cascaded_both_from_ground_v3_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | **34.06** | 8 | 🏆 **NEW SOTA (-7.31mm, -17.7%)** |
 
 ### Detailed Results by Body Part
 
-| Experiment Name | Full Body | Upper Body | Lower Body | Best Epoch |
-|--------|-----------|------------|------------|------------|
-| **Cascaded V2b (+20 Epochs)** | **34.24mm** 🏆 | **22.04mm** 🏆 | **46.45mm** | 19 | ✅ **Best HMD-deployable** |
-| Cascaded V2 (EfficientDecoder) | **35.67mm** | 24.83mm | 46.52mm | 8 | ✅ HMD-deployable |
-| Enhanced HMD Ground Ref ⚠️ | **36.28mm** | 29.38mm | **43.18mm** | 8 | ⚠️ Uses GT torso |
-| Cascaded V2c (+Loss Tuning) | 37.81mm | 25.72mm | 49.90mm | 8 | ✅ HMD-deployable |
-| Cascaded + Both From Ground V1 | 37.88mm | 25.10mm | 50.66mm | 10 | ✅ HMD-deployable |
-| Cascaded V2a (+Stronger MLP) | 39.02mm | 25.91mm | 52.13mm | 8 | ❌ (stronger MLP hurt) |
-| Single COCO (Baseline) | 41.37mm | 29.42mm | 53.31mm | 8 |
+| Experiment Name | Full Body | Upper Body | Lower Body | Best Epoch | Notes |
+|--------|-----------|------------|------------|------------|-------|
+| **V3 Both From Ground** | **34.06mm** 🏆 | 25.84mm | **42.29mm** 🏆 | 8 | **NEW SOTA! Body-axis fix** |
+| V3 Hand From Ground | **37.20mm** | 27.78mm | 46.61mm | 9 | Hand heights very effective |
+| V3 Head From Ground | 47.09mm | 37.15mm | 57.03mm | 10 | Head height alone insufficient |
+| Cascaded V2b (+20 Epochs) ⚠️ | 34.24mm | 22.04mm | 46.45mm | 19 | ⚠️ INVALID (Y-axis bug) |
+| Cascaded V2 (EfficientDecoder) ⚠️ | 35.67mm | 24.83mm | 46.52mm | 8 | ⚠️ INVALID (Y-axis bug) |
+| Enhanced HMD Ground Ref ⚠️ | 36.28mm | 29.38mm | 43.18mm | 8 | ⚠️ INVALID (Y-axis bug) |
+| Cascaded V2c (+Loss Tuning) ⚠️ | 37.81mm | 25.72mm | 49.90mm | 8 | ⚠️ INVALID (Y-axis bug) |
+| Cascaded + Both From Ground V1 ⚠️ | 37.88mm | 25.10mm | 50.66mm | 10 | ⚠️ INVALID (Y-axis bug) |
+| Cascaded V2a (+Stronger MLP) ⚠️ | 39.02mm | 25.91mm | 52.13mm | 8 | ⚠️ INVALID (Y-axis bug) |
+| Single COCO (Baseline) | 41.37mm | 29.42mm | 53.31mm | 8 | Reference |
 | Dual COCO+MPII | 43.26mm | 30.03mm | 56.48mm | 8 |
 | Dual Warmup v2 | 45.93mm | 31.07mm | 60.79mm | 9 |
 | Single Lifting | 45.92mm | 33.91mm | 57.93mm | 9 |
@@ -99,12 +149,15 @@
 
 | Experiment Name | Full Body | vs Baseline | Notes |
 |--------|-----------|-------------|------|
-| **Cascaded V2b (+20 Epochs)** | **34.24mm** | **-7.13mm (-17.2%)** 🏆 | **Best HMD-deployable! Upper 22.04mm, Lower 46.45mm** |
-| Cascaded V2 (EfficientDecoder) | **35.67mm** | **-5.70mm (-13.8%)** | EfficientDecoder helped despite 40M→1.35M params |
-| Enhanced HMD Ground Ref ⚠️ | **36.28mm** | **-5.09mm** | Best non-HMD-deployable (uses GT torso) |
-| Cascaded V2c (+Loss Tuning) | 37.81mm | -3.56mm | Loss weight changes had minimal effect |
-| Cascaded + Both From Ground V1 | 37.88mm | -3.49mm | Original Cascaded + both_from_ground |
-| Cascaded V2a (+Stronger MLP) | 39.02mm | -2.35mm ❌ | Stronger MLP hurt performance |
+| **V3 Both From Ground** | **34.06mm** | **-7.31mm (-17.7%)** 🏆 | **NEW SOTA! Lower Body 42.29mm (-11.02mm, -20.7%)** |
+| **V3 Hand From Ground** | **37.20mm** | **-4.17mm (-10.1%)** | Hand heights very effective for lower body |
+| V3 Head From Ground | 47.09mm | +5.72mm ❌ | Head height alone is insufficient |
+| Cascaded V2b (+20 Epochs) ⚠️ | 34.24mm | ⚠️ INVALID | Y-axis ground info bug |
+| Cascaded V2 (EfficientDecoder) ⚠️ | 35.67mm | ⚠️ INVALID | Y-axis ground info bug |
+| Enhanced HMD Ground Ref ⚠️ | 36.28mm | ⚠️ INVALID | Y-axis ground info bug |
+| Cascaded V2c (+Loss Tuning) ⚠️ | 37.81mm | ⚠️ INVALID | Y-axis ground info bug |
+| Cascaded + Both From Ground V1 ⚠️ | 37.88mm | ⚠️ INVALID | Y-axis ground info bug |
+| Cascaded V2a (+Stronger MLP) ⚠️ | 39.02mm | ⚠️ INVALID | Y-axis ground info bug |
 | Single COCO (Baseline) | 41.37mm | - | Reference |
 | Dual COCO+MPII | 43.26mm | +1.89mm ❌ | mutual learning degraded |
 | Dual Warmup v2 | 45.93mm | +4.56mm ❌ | warmup also ineffective |
@@ -173,12 +226,107 @@ Systematic ablation of optimizations for Cascaded + Both From Ground (V1: 37.88m
 
 ### Conclusion
 
-**Best HMD-deployable configuration: V2b (EfficientDecoder + 20 Epochs) at 34.24mm**
+⚠️ **NOTE: V2 ablation results are INVALID due to Y-axis ground info bug.**
 
-- **-7.13mm (-17.2%)** improvement over Baseline (41.37mm)
-- **-3.64mm (-9.6%)** improvement over V1 (37.88mm)
-- Upper Body: 22.04mm (best ever)
-- Lower Body: 46.45mm (best HMD-deployable)
+The V2 experiments (#32-35) used incorrect ground height calculation. See V3 Ground Ablation Study for corrected results.
+
+---
+
+## V3 Ground Ablation Study (Body-Axis Fix) 🏆
+
+**Fixed ground height calculation using body-axis projection (not Y-axis)**
+
+The body-axis method projects head/hand positions onto a vertical axis defined by the root→pelvis vector, providing meaningful height values (~1.43m for head) instead of meaningless Y-axis values (~0.23m).
+
+### Ablation Design
+
+| Mode | HMD Info Dim | Ground Features |
+|------|-------------|-----------------|
+| `head_from_ground` | 10 (9 base + 1) | Head height only |
+| `hand_from_ground` | 11 (9 base + 2) | Left + Right hand heights |
+| `both_from_ground` | 12 (9 base + 3) | Head + Left + Right hand heights |
+
+### V3 Ablation Results
+
+| Config | Mode | Best MPJPE | Upper | Lower | Best Epoch | vs Baseline |
+|--------|------|------------|-------|-------|------------|-------------|
+| V3 Head | `head_from_ground` | 47.09mm | 37.15 | 57.03 | 10 | +5.72mm ❌ |
+| **V3 Hand** | `hand_from_ground` | **37.20mm** | 27.78 | 46.61 | 9 | **-4.17mm** ⭐ |
+| **V3 Both** | `both_from_ground` | **34.06mm** | 25.84 | **42.29** | 8 | **-7.31mm** 🏆 |
+
+### Per-Epoch Results
+
+**V3 Head From Ground** (10-dim, head height only):
+| Epoch | Full Body | Upper Body | Lower Body |
+|-------|-----------|------------|------------|
+| 1 | 66.52mm | 52.36mm | 80.68mm |
+| 5 | 48.96mm | 37.87mm | 60.05mm |
+| 8 | 47.71mm | 37.94mm | 57.48mm |
+| **10** | **47.09mm** | **37.15mm** | **57.03mm** |
+
+**V3 Hand From Ground** (11-dim, left+right hand heights):
+| Epoch | Full Body | Upper Body | Lower Body |
+|-------|-----------|------------|------------|
+| 1 | 57.52mm | 39.82mm | 75.22mm |
+| 5 | 39.22mm | 29.18mm | 49.26mm |
+| 8 | 37.86mm | 28.04mm | 47.68mm |
+| **9** | **37.20mm** | **27.78mm** | **46.61mm** |
+| 10 | 37.62mm | 27.83mm | 47.42mm |
+
+**V3 Both From Ground** (12-dim, head + both hands):
+| Epoch | Full Body | Upper Body | Lower Body |
+|-------|-----------|------------|------------|
+| 1 | 55.62mm | 38.71mm | 72.53mm |
+| 5 | 36.16mm | 26.78mm | 45.55mm |
+| 7 | 34.68mm | 26.25mm | 43.11mm |
+| **8** | **34.06mm** | **25.84mm** | **42.29mm** |
+| 9 | 35.29mm | 26.65mm | 43.93mm |
+| 10 | 34.77mm | 26.40mm | 43.13mm |
+
+### Key Findings
+
+1. **Hand heights are more important than head height**
+   - Head-only (V3 Head): 47.09mm (+5.72mm worse than Baseline!)
+   - Hand-only (V3 Hand): 37.20mm (-4.17mm better than Baseline)
+   - **Hand heights provide ~11mm more improvement than head height**
+
+2. **Both together give best results** (V3 Both: 34.06mm)
+   - Combining head + hand heights: -7.31mm (-17.7%) from Baseline
+   - Synergistic effect: head provides body scale, hands provide limb extension info
+
+3. **Lower Body dramatically improved**
+   - V3 Both Lower Body: 42.29mm vs Baseline 53.31mm
+   - **-11.02mm (-20.7%)** improvement!
+   - Ground reference resolves depth ambiguity for legs/feet
+
+4. **Upper Body also improved**
+   - V3 Both Upper Body: 25.84mm vs Baseline 29.42mm
+   - **-3.58mm (-12.2%)** improvement
+   - Hand heights help arm/elbow positioning
+
+### Why Head Height Alone Fails
+
+Head height provides body scale but lacks critical information:
+- No indicator of arm extension/position
+- No asymmetry information (left vs right side)
+- Head is fixed relative to HMD, no new information beyond what HMD orientation provides
+
+Hand heights provide:
+- Direct arm extension information
+- Left/right asymmetry
+- Dynamic range (hands move more than head)
+
+### Conclusion
+
+**NEW SOTA: V3 Both From Ground at 34.06mm** 🏆
+
+| Metric | Value | vs Baseline |
+|--------|-------|-------------|
+| Full Body MPJPE | **34.06mm** | **-7.31mm (-17.7%)** |
+| Upper Body | 25.84mm | -3.58mm (-12.2%) |
+| Lower Body | **42.29mm** | **-11.02mm (-20.7%)** |
+
+**Key Insight**: The combination of head and hand heights from ground provides the optimal ground reference. Hand heights are especially important as they capture arm extension information that head height alone cannot provide.
 
 ---
 
@@ -2329,8 +2477,9 @@ python tools/train.py my_code/custom_config/HMD_xregopose_efficient_decoder_full
 | `CustomEgoposeAttentionZEncoderHead` | `custom_egopose_attention_z_encoder_head.py` | Attention Z Encoder | 43.69mm ⭐ (repro) |
 | `CustomEgoposeCascadedRefinementHead` | `custom_egopose_cascaded_refinement_head.py` | Cascaded Refinement | **41.60mm** ⭐ (repro) |
 | `CustomEgoposeCascadedRefinementHeadV2` | `custom_egopose_cascaded_refinement_head_v2.py` | Cascaded Refinement V2 (Pretrained) | 44.78mm ❌ |
-| `CustomEgoposeCascadedRefinementHead_enhanced` | `custom_egopose_cascaded_refinement_head_enhanced.py` | Cascaded + Enhanced HMD | **37.88mm** 🏆 |
-| `CustomEgoposeHMDAttentionFusionHead` | `custom_egopose_hmd_attention_fusion_head.py` | HMD Attention Fusion | 44.65mm ❌ |
+| `CustomEgoposeCascadedRefinementHead_enhanced` | `custom_egopose_cascaded_refinement_head_enhanced.py` | Cascaded + Enhanced HMD (V1) ⚠️ | 37.88mm ⚠️ INVALID |
+| `CustomEgoposeCascadedRefinementHead_enhanced` | `custom_egopose_cascaded_refinement_head_enhanced.py` | **V3 Both From Ground** | **34.06mm** 🏆 NEW SOTA |
+| `CustomEgoposeHMDAttentionFusionHead` | `custom_egopose_hmd_attention_fusion_head.py` | HMD Attention Fusion ⚠️ | 44.65mm ⚠️ INVALID |
 
 ### Config Files
 
@@ -2365,7 +2514,10 @@ python tools/train.py my_code/custom_config/HMD_xregopose_efficient_decoder_full
 | `HMD_xregopose_cascaded_refinement_v2_full_config.py` | Cascaded Refinement V2 (Pretrained) | 44.78mm ❌ |
 | `HMD_xregopose_baseline_structural_losses_full_config.py` | Baseline + Structural Losses | 43.76mm ❌ |
 | `HMD_xregopose_vit_lifting_v6_20ep_full_config.py` | ViT Lifting V6 20ep | 44.00mm ❌ |
-| `HMD_xregopose_enhanced_hmd_ground_ref_full_config.py` | Enhanced HMD Ground Ref | 36.28mm ⚠️ (uses GT torso) |
-| `HMD_xregopose_enhanced_hmd_both_from_ground_full_config.py` | Both From Ground (baseline) | 39.81mm ✅ |
-| `HMD_xregopose_cascaded_both_from_ground_full_config.py` | **Cascaded + Both From Ground** | **37.88mm** 🏆 |
-| `HMD_xregopose_hmd_attention_fusion_both_from_ground_full_config.py` | HMD Attention Fusion | 44.65mm ❌ |
+| `HMD_xregopose_enhanced_hmd_ground_ref_full_config.py` | Enhanced HMD Ground Ref ⚠️ | 36.28mm ⚠️ INVALID |
+| `HMD_xregopose_enhanced_hmd_both_from_ground_full_config.py` | Both From Ground (baseline) ⚠️ | 39.81mm ⚠️ INVALID |
+| `HMD_xregopose_cascaded_both_from_ground_full_config.py` | Cascaded + Both From Ground V1 ⚠️ | 37.88mm ⚠️ INVALID |
+| `HMD_xregopose_hmd_attention_fusion_both_from_ground_full_config.py` | HMD Attention Fusion ⚠️ | 44.65mm ⚠️ INVALID |
+| `HMD_xregopose_cascaded_head_from_ground_v3_full_config.py` | V3 Head From Ground | 47.09mm ❌ |
+| `HMD_xregopose_cascaded_hand_from_ground_v3_full_config.py` | V3 Hand From Ground | **37.20mm** ⭐ |
+| `HMD_xregopose_cascaded_both_from_ground_v3_full_config.py` | **V3 Both From Ground** | **34.06mm** 🏆 NEW SOTA |

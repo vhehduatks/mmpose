@@ -122,14 +122,15 @@ hmd_info = [
 ]
 ```
 
-**Enhanced HMD Info (11-dim)** - Ground Reference Mode (🏆 New SOTA):
+**Enhanced HMD Info (12-dim)** - Ground Reference Mode (🏆 New SOTA):
 ```python
 enhanced_hmd_info = [
-    *hmd_info,          # (9,) standard HMD info
-    head_from_ground,   # (1,) head height from estimated ground plane
-    head_torso_dist     # (1,) distance from head to torso center
+    *hmd_info,            # (9,) standard HMD info
+    head_from_ground,     # (1,) head height from estimated ground plane
+    left_hand_from_ground,  # (1,) left hand height from ground
+    right_hand_from_ground  # (1,) right hand height from ground
 ]
-# Ground estimation: min(left_foot_y, right_foot_y) from GT 3D pose
+# Ground estimation: body-axis projection (root→pelvis vector defines vertical)
 # Deployable on real HMD via floor detection / room setup
 ```
 
@@ -138,33 +139,36 @@ Located in `my_code/custom_config/` (see `my_code/custom_config/README.md` for d
 
 | Config | Head Type | Features | Results |
 |--------|-----------|----------|---------|
-| `HMD_xregopose_enhanced_hmd_ground_ref_full_config.py` | `CustomxRegoposeBaselinel1` | **Enhanced HMD (Ground Ref)** | **36.28mm 🏆 NEW SOTA** |
+| `HMD_xregopose_cascaded_both_from_ground_v3_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | **V3 Both From Ground** | **34.06mm 🏆 NEW SOTA** |
+| `HMD_xregopose_cascaded_hand_from_ground_v3_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | V3 Hand From Ground | 37.20mm |
 | `HMD_xregopose_single_coco_full_config.py` | `CustomxRegoposeBaselinel1` | Single COCO baseline | 41.37mm (Reference) |
 | `HMD_xregopose_cascaded_refinement_full_config.py` | `CustomEgoposeCascadedRefinementHead` | Two-stage Refinement | 41.60mm |
 | `HMD_xregopose_attention_z_encoder_full_config.py` | `CustomEgoposeAttentionZEncoderHead` | Attention Z Encoder | 43.69mm |
-| `HMD_xregopose_h5cache_coco_mpii_config.py` | `CustomxRegoposeBaselinel1_multi_backbone` | Dual COCO+MPII | 43.26mm |
 | `HMD_xregopose_vit_lifting_full_config.py` | `CustomEgoposeViTLiftingHead` | ViT-Style Lifting v3 | 45.34mm |
-| `HMD_xregopose_attention_lifting_full_config.py` | `CustomEgoposeAttentionLiftingHead` | Attention Lifting | 45.43mm |
-| `HMD_xregopose_decoupled_full_config.py` | `CustomEgoposeDecoupledHead` | Upper-Lower Decoupled | 45.00mm |
+| `HMD_xregopose_cascaded_head_from_ground_v3_full_config.py` | `CustomEgoposeCascadedRefinementHead_enhanced` | V3 Head From Ground | 47.09mm |
 
-### Experiment Results Summary (2026-01-31)
+### Experiment Results Summary (2026-02-04)
 
 | Model | Full Body MPJPE | Upper Body | Lower Body | vs Baseline |
 |-------|-----------------|------------|------------|-------------|
-| **Enhanced HMD Ground Ref** | **36.28mm** 🏆 | 29.38mm | **43.18mm** | **-5.09mm (-12.3%)** |
+| **V3 Both From Ground** | **34.06mm** 🏆 | 25.84mm | **42.29mm** | **-7.31mm (-17.7%)** |
+| V3 Hand From Ground | 37.20mm | 27.78mm | 46.61mm | -4.17mm (-10.1%) |
 | Single COCO (Baseline) | 41.37mm | 29.42mm | 53.31mm | - (Reference) |
 | Cascaded Refinement | 41.60mm | 30.10mm | 53.11mm | +0.23mm |
 | Attention Z Encoder | 43.69mm | 29.64mm | 57.74mm | +2.32mm |
-| ViT Lifting v3 | 45.34mm | **23.49mm** ⭐ | 67.19mm | +3.97mm |
+| V3 Head From Ground | 47.09mm | 37.15mm | 57.03mm | +5.72mm |
 
-**✅ GOAL ACHIEVED**: Enhanced HMD Ground Ref breaks the 41mm barrier with **36.28mm**
+**✅ NEW SOTA: V3 Both From Ground achieves 34.06mm** (-7.31mm, -17.7% from Baseline)
 
-**Key Breakthrough**: Lower Body improved by **-10.13mm (19%)** by providing height information (head from ground) that real HMD can measure via floor detection.
+**Key Findings from V3 Ground Ablation**:
+- **Hand heights are more important than head height** (37.20mm vs 47.09mm)
+- **Lower Body dramatically improved**: 42.29mm vs 53.31mm (-11.02mm, -20.7%)
+- Head + Hand heights together provide synergistic effect
 
-**Why Ground Ref works**:
-- Provides absolute depth reference for untracked lower body joints
-- HMD can measure ground height via room setup / floor plane detection
-- No additional hardware required - deployable on real HMD devices
+**Why V3 Ground Ref works**:
+- Body-axis projection provides meaningful height values (~1.43m) instead of Y-axis (~0.23m)
+- Hand heights capture arm extension information for better upper/lower body estimation
+- Deployable on real HMD via floor detection / room setup
 
 ### Document Structure
 
