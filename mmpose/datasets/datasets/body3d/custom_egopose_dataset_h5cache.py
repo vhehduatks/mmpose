@@ -436,13 +436,16 @@ class H5CachedEgoposeDataset(BaseDataset):
                          logger='current', level=logging.INFO)
 
             # Check if cache is preprocessed (keypoints already transformed)
+            # V2+ caches (version 2.x) have preprocessed keypoints even without explicit flag
             is_preprocessed = hf.attrs.get('preprocessed', False)
-            if is_preprocessed:
+            cache_version = str(hf.attrs.get('version', '1.0'))
+            if is_preprocessed or cache_version.startswith('2'):
                 self._is_preprocessed = True
                 self._cached_img_size = hf.attrs.get('img_size', 256)
-                print_log(f'Using preprocessed cache (images: {self._cached_img_size}x{self._cached_img_size}, '
-                         f'keypoints already transformed)',
-                         logger='current', level=logging.INFO)
+                if cache_version.startswith('2') and not is_preprocessed:
+                    print_log(f'V2 cache detected (version {cache_version}), '
+                             f'keypoints already in {self._cached_img_size}x{self._cached_img_size} space',
+                             logger='current', level=logging.INFO)
 
         # Apply sample interval
         indices = list(range(0, n_samples, self.sample_interval))
@@ -479,11 +482,11 @@ class H5CachedEgoposeDataset(BaseDataset):
                 data_info['h5_cache_path'] = self.cache_file
                 data_info['h5_img_idx'] = idx
 
-                # Transform keypoints to cached image coordinates
-                data_info['keypoints'] = self._transform_keypoints_for_cached_image(
-                    keypoints[idx])
-
-            # For preprocessed cache: keypoints are already transformed, no action needed
+                # Transform keypoints only for V1 caches (V2+ have preprocessed keypoints)
+                if not getattr(self, '_is_preprocessed', False):
+                    data_info['keypoints'] = self._transform_keypoints_for_cached_image(
+                        keypoints[idx])
+                # For V2+ preprocessed cache: keypoints are already in correct space
 
             data_list.append(data_info)
 

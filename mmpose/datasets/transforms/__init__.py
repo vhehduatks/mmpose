@@ -12,21 +12,24 @@ from .custom_transforms import EgoposeFilterAnnotations,FisheyeCropTransform
 from .converting import KeypointConverter, SingleHandConverter
 from .formatting import PackPoseInputs
 from .hand_transforms import HandRandomFlip
-from .loading import LoadImage, LoadImageFromH5
+from .loading import LoadImage, LoadImageFromH5, LoadImageFromH5Cache
 from .mix_img_transforms import Mosaic, YOLOXMixUp
 from .pose3d_transforms import RandomFlipAroundRoot
 from .topdown_transforms import TopdownAffine
 from .enhance_hmd_info import EnhanceHMDInfo
 from .enhance_hmd_info_mo2cap2 import EnhanceHMDInfo_Mo2Cap2
+from .circular_crop import CircularCrop, RandomVignette
+from .center_crop import Mo2Cap2CenterCrop
 
 __all__ = [
     'GetBBoxCenterScale', 'RandomBBoxTransform', 'RandomFlip',
     'RandomHalfBody', 'TopdownAffine', 'Albumentation',
     'PhotometricDistortion', 'PackPoseInputs', 'LoadImage', 'LoadImageFromH5',
-    'BottomupGetHeatmapMask', 'BottomupRandomAffine', 'BottomupResize',
-    'GenerateTarget', 'KeypointConverter', 'RandomFlipAroundRoot',
+    'LoadImageFromH5Cache', 'BottomupGetHeatmapMask', 'BottomupRandomAffine',
+    'BottomupResize', 'GenerateTarget', 'KeypointConverter', 'RandomFlipAroundRoot',
     'FilterAnnotations', 'YOLOXHSVRandomAug', 'YOLOXMixUp', 'Mosaic',
     'BottomupRandomCrop', 'BottomupRandomChoiceResize', 'HandRandomFlip',
     'SingleHandConverter', 'EgoposeFilterAnnotations', 'FisheyeCropTransform',
-    'EnhanceHMDInfo', 'EnhanceHMDInfo_Mo2Cap2'
+    'EnhanceHMDInfo', 'EnhanceHMDInfo_Mo2Cap2', 'CircularCrop', 'RandomVignette',
+    'Mo2Cap2CenterCrop'
 ]

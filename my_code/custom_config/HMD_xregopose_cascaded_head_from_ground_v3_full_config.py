@@ -178,7 +178,7 @@ val_pipeline = [
     dict(input_size=(256, 256), type='TopdownAffine'),
     dict(encoder=codec, type='GenerateTarget'),
     dict(type='EnhanceHMDInfo', mode='head_from_ground'),
-    dict(type='PackPoseInputs', meta_keys=_meta_keys),
+    dict(type='PackPoseInputs', meta_keys=_meta_keys, pack_transformed=True),
 ]
 
 data_mode = 'topdown'
