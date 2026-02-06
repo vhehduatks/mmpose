@@ -219,8 +219,9 @@ class Mo2Cap2TestDataset(BaseDataset):
         """
         data_list = []
 
-        bbox = np.array([[0, 0, self.input_size[0], self.input_size[1]]],
-                       dtype=np.float32)
+        # Mo2Cap2 test images are 1280x1024, then center-cropped to 1024x1024
+        # bbox should reflect the cropped image size for correct center/scale computation
+        bbox = np.array([[0, 0, 1024, 1024]], dtype=np.float32)
 
         for idx in range(self.num_samples):
             img_path = os.path.join(self.img_dir, self.img_files[idx])
@@ -401,7 +402,10 @@ class Mo2Cap2CombinedTestDataset(BaseDataset):
     def load_data_list(self) -> List[dict]:
         """Load data list."""
         data_list = []
-        bbox = np.array([[0, 0, self.input_size[0], self.input_size[1]]], dtype=np.float32)
+        # Mo2Cap2 test images are 1280x1024, then center-cropped to 1024x1024
+        # bbox should reflect the cropped image size for correct center/scale computation
+        # in GetBBoxCenterScale and TopdownAffine transforms
+        bbox = np.array([[0, 0, 1024, 1024]], dtype=np.float32)
 
         for idx, sample in enumerate(self.all_samples):
             data_info = {
