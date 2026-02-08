@@ -46,3 +46,5 @@
 [DONE] my_code/custom_config/HMD_mo2cap2_baseline_config.py
 [DONE] my_code/custom_config/HMD_mo2cap2_baseline_with_ground_lr_config.py
 [DONE] my_code/custom_config/HMD_mo2cap2_cascaded_no_ground_config.py
+# Mo2Cap2 Cascaded Optimization: Asymmetric Loss Weights
+[DONE] my_code/custom_config/HMD_mo2cap2_cascaded_both_from_ground_v3_config.py

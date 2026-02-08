@@ -38,9 +38,10 @@ This document tracks experiment results for the Mo2Cap2 egocentric pose estimati
 
 | Model | HMD Info | Full Body | Upper Body | Lower Body | Notes |
 |-------|----------|-----------|------------|------------|-------|
-| **Baseline + Ground (lr=0.00025)** | 12-dim | **82.08mm** 🏆 | 79.44mm | 84.39mm | **NEW BEST** |
-| Cascaded V2 (lr=0.00025) | 12-dim | 82.28mm | **78.39mm** | 85.68mm | Previous best |
-| Baseline + Ground (lr=0.0005) | 12-dim | 85.30mm | 87.42mm | **83.44mm** | Higher LR |
+| **Cascaded V3 Asymmetric** | 12-dim | **81.89mm** 🏆 | 79.68mm | **83.83mm** | **NEW BEST** |
+| Baseline + Ground (lr=0.00025) | 12-dim | 82.08mm | **79.44mm** | 84.39mm | Previous best |
+| Cascaded V2 (lr=0.00025) | 12-dim | 82.28mm | 78.39mm | 85.68mm | Equal loss weights |
+| Baseline + Ground (lr=0.0005) | 12-dim | 85.30mm | 87.42mm | 83.44mm | Higher LR |
 | Cascaded No Ground | 9-dim | 88.31mm | 89.03mm | 87.67mm | No ground ref |
 | Baseline No Ground | 9-dim | 92.59mm | 93.01mm | 92.22mm | No ground ref |
 | HEAD from ground | 10-dim | 148.88mm | 145.88mm | 151.50mm | Head height only |
@@ -50,7 +51,68 @@ This document tracks experiment results for the Mo2Cap2 egocentric pose estimati
 
 ## Detailed Results
 
-### 1. Cascaded BOTH From Ground V2 (lr=0.00025) - BEST
+### 1. Cascaded BOTH From Ground V3 (Asymmetric Loss) - NEW BEST
+
+**Config**: `HMD_mo2cap2_cascaded_both_from_ground_v3_config.py`
+
+| Setting | Value |
+|---------|-------|
+| Architecture | Cascaded Refinement |
+| HMD Info | 12-dim (9 base + 3 ground) |
+| Learning Rate | 0.00025 |
+| **loss_pose_l2norm** | **0.3** (reduced from 1.0) |
+| loss_pose_l2norm_refined | 1.0 |
+| Epochs | 10 |
+| Best Epoch | 7 |
+
+#### Overall Results (Best Epoch 7)
+
+| Metric | MPJPE (mm) |
+|--------|------------|
+| **Full Body** | **81.89** 🏆 |
+| Upper Body | 79.68 |
+| Lower Body | 83.83 |
+
+#### Per-Action Breakdown
+
+| Action | MPJPE (mm) | Difficulty |
+|--------|------------|------------|
+| walking | 69.76 | Easy |
+| waving | 71.72 | Easy |
+| boxing | 71.94 | Easy |
+| dancing | 72.78 | Medium |
+| crawling | 95.48 | Hard |
+| sitting | 96.39 | Hard |
+| crouching | 98.36 | Hard |
+| stretching | 105.34 | Very Hard |
+
+#### Epoch Progression
+
+| Epoch | Full Body | Upper Body | Lower Body |
+|-------|-----------|------------|------------|
+| 1 | 113.12 | 115.08 | 111.41 |
+| 2 | 91.67 | 89.29 | 93.75 |
+| 3 | 88.54 | 85.10 | 91.55 |
+| 4 | 82.48 | 79.36 | 85.20 |
+| 5 | 130.09 ⚠️ | 115.71 | 142.67 |
+| 6 | 87.47 | 85.93 | 88.83 |
+| **7** | **81.89** | **79.68** | **83.83** |
+| 8 | 83.47 | 81.46 | 85.24 |
+| 9 | 82.23 | 80.58 | 83.67 |
+| 10 | 83.34 | 81.94 | 84.56 |
+
+#### Key Insight: Asymmetric Loss Weights
+
+The original cascaded model (V2) had equal loss weights for coarse and refined poses, causing gradient competition. By reducing the coarse pose loss weight (`loss_pose_l2norm: 1.0 → 0.3`), the refinement stage can dominate optimization.
+
+| Change | V2 → V3 |
+|--------|---------|
+| Full Body | 82.28 → **81.89mm** (-0.39mm) |
+| Lower Body | 85.68 → **83.83mm** (-1.85mm) |
+
+---
+
+### 2. Cascaded BOTH From Ground V2 (lr=0.00025)
 
 **Config**: `HMD_mo2cap2_cascaded_both_from_ground_v2_config.py`
 
@@ -59,6 +121,7 @@ This document tracks experiment results for the Mo2Cap2 egocentric pose estimati
 | Architecture | Cascaded Refinement |
 | HMD Info | 12-dim (9 base + 3 ground: head + left_hand + right_hand) |
 | Learning Rate | 0.00025 |
+| loss_pose_l2norm | 1.0 (equal weights) |
 | Epochs | 10 |
 | Best Epoch | 9 |
 
@@ -100,7 +163,7 @@ This document tracks experiment results for the Mo2Cap2 egocentric pose estimati
 
 ---
 
-### 2. HEAD From Ground (Body-Axis)
+### 4. HEAD From Ground (Body-Axis)
 
 **Config**: `HMD_mo2cap2_cascaded_head_from_ground_config.py`
 
@@ -121,7 +184,7 @@ This document tracks experiment results for the Mo2Cap2 egocentric pose estimati
 
 ---
 
-### 3. HAND From Ground (Body-Axis)
+### 5. HAND From Ground (Body-Axis)
 
 **Config**: `HMD_mo2cap2_cascaded_hand_from_ground_config.py`
 
@@ -207,7 +270,7 @@ MultiStepLR:
 | Dataset | Model | Full Body MPJPE |
 |---------|-------|-----------------|
 | xR-EgoPose | V3 Both From Ground | **34.06mm** |
-| Mo2Cap2 | BOTH V2 (lr=0.00025) | **82.28mm** |
+| Mo2Cap2 | V3 Asymmetric Loss | **81.89mm** |
 
 Mo2Cap2 is more challenging due to:
 - More diverse action categories (8 vs xR-EgoPose)
@@ -220,13 +283,14 @@ Mo2Cap2 is more challenging due to:
 
 ### Complete Results Table
 
-| # | Config | Arch | Ground | LR | Best Epoch | Full Body | Upper Body | Lower Body |
-|---|--------|------|--------|-----|------------|-----------|------------|------------|
-| 1 | baseline_no_ground | Baseline | 9-dim | 0.0005 | 7 | 92.59mm | 93.01mm | 92.22mm |
-| 2 | baseline | Baseline | 12-dim | 0.0005 | 2 | 85.30mm | 87.42mm | 83.44mm |
-| 3 | baseline_with_ground_lr | Baseline | 12-dim | 0.00025 | 7 | **82.08mm** | **79.44mm** | 84.39mm |
-| 4 | cascaded_no_ground | Cascaded | 9-dim | 0.00025 | 2 | 88.31mm | 89.03mm | 87.67mm |
-| 5 | cascaded_both_v2 | Cascaded | 12-dim | 0.00025 | 9 | 82.28mm | 78.39mm | **85.68mm** |
+| # | Config | Arch | Ground | LR | Loss Weight | Best Epoch | Full Body | Upper Body | Lower Body |
+|---|--------|------|--------|-----|-------------|------------|-----------|------------|------------|
+| 1 | baseline_no_ground | Baseline | 9-dim | 0.0005 | - | 7 | 92.59mm | 93.01mm | 92.22mm |
+| 2 | baseline | Baseline | 12-dim | 0.0005 | - | 2 | 85.30mm | 87.42mm | 83.44mm |
+| 3 | baseline_with_ground_lr | Baseline | 12-dim | 0.00025 | - | 7 | 82.08mm | 79.44mm | 84.39mm |
+| 4 | cascaded_no_ground | Cascaded | 9-dim | 0.00025 | Equal (1.0) | 2 | 88.31mm | 89.03mm | 87.67mm |
+| 5 | cascaded_both_v2 | Cascaded | 12-dim | 0.00025 | Equal (1.0) | 9 | 82.28mm | 78.39mm | 85.68mm |
+| 6 | **cascaded_both_v3** | Cascaded | 12-dim | 0.00025 | **Asym (0.3)** | 7 | **81.89mm** 🏆 | 79.68mm | **83.83mm** |
 
 ### Key Findings
 
@@ -250,27 +314,43 @@ Mo2Cap2 is more challenging due to:
 
 #### 3. Architecture Effect (Matched Conditions)
 
-| Comparison | Baseline | Cascaded | Δ |
-|------------|----------|----------|---|
-| Without Ground (9-dim) | 92.59mm | 88.31mm | **-4.28mm (Cascaded wins)** |
-| With Ground, LR=0.00025 | **82.08mm** | 82.28mm | **+0.20mm (Baseline wins!)** |
+| Comparison | Baseline | Cascaded V2 | Cascaded V3 | Best |
+|------------|----------|-------------|-------------|------|
+| Without Ground (9-dim) | 92.59mm | 88.31mm | - | Cascaded |
+| With Ground, Equal Loss | 82.08mm | 82.28mm | - | Baseline |
+| With Ground, Asym Loss | 82.08mm | - | **81.89mm** | **Cascaded V3** |
 
-**🎯 Surprising Finding**: With ground reference and matched LR, **Baseline slightly outperforms Cascaded!**
-- Baseline (82.08mm) vs Cascaded (82.28mm) = **0.20mm better**
-- Upper Body: Baseline (79.44mm) vs Cascaded (78.39mm) = Cascaded 1.05mm better
-- Lower Body: Baseline (84.39mm) vs Cascaded (85.68mm) = Baseline 1.29mm better
+**🎯 Key Finding**: Cascaded refinement **does help** when loss weights are properly balanced!
+- V2 (equal weights): Baseline wins by 0.20mm
+- V3 (asymmetric weights): **Cascaded wins by 0.19mm**
 
-#### 4. Summary: What Matters Most
+#### 4. Loss Weight Effect (Cascaded Models)
+
+| Loss Weight | Full Body | Upper Body | Lower Body | Δ Full |
+|-------------|-----------|------------|------------|--------|
+| Equal (1.0/1.0) | 82.28mm | **78.39mm** | 85.68mm | baseline |
+| **Asymmetric (0.3/1.0)** | **81.89mm** | 79.68mm | **83.83mm** | **-0.39mm** |
+
+**Lower coarse loss weight enables better refinement learning**, especially for lower body (-1.85mm).
+
+#### 5. Summary: What Matters Most
 
 | Factor | Impact | Notes |
 |--------|--------|-------|
 | **Ground Reference** | **-6~7mm** | Most important factor |
 | **Learning Rate** | **-3mm** | Lower LR (0.00025) is better |
-| **Architecture** | **±0.2mm** | Minimal difference with ground ref |
+| **Loss Weight Balance** | **-0.4mm** | Asymmetric (0.3/1.0) for cascaded |
+| **Architecture** | **-0.2mm** | Cascaded wins with proper loss weights |
 
 ### Best Configuration
 
-**Baseline + Ground Reference + LR=0.00025** achieves **82.08mm** (slightly better than Cascaded V2's 82.28mm)
+**Cascaded V3 + Ground Reference + Asymmetric Loss (0.3/1.0)** achieves **81.89mm** 🏆
+
+| Rank | Model | Full Body |
+|------|-------|-----------|
+| 1 | **Cascaded V3 (Asymmetric)** | **81.89mm** |
+| 2 | Baseline + Ground | 82.08mm |
+| 3 | Cascaded V2 (Equal) | 82.28mm |
 
 ---
 
@@ -314,5 +394,8 @@ Mo2Cap2 is more challenging due to:
   - Learning rate: 0.0005 vs 0.00025
   - Architecture: Baseline vs Cascaded
 - [x] Run ablation experiments ✅
+- [x] Ablation study on loss weights ✅
+  - Created `HMD_mo2cap2_cascaded_both_from_ground_v3_config.py`
+  - Asymmetric loss (0.3/1.0) achieves **81.89mm** (new best)
+  - See `MO2CAP2_CASCADED_ANALYSIS.md` for detailed analysis
 - [ ] Per-joint MPJPE analysis
-- [ ] Ablation study on loss weights
