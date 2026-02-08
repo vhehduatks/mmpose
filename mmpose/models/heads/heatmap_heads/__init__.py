@@ -35,6 +35,7 @@ from .custom_egopose_baselinel1_head_enhanced_hmd import CustomxRegoposeBaseline
 from .custom_egopose_cascaded_refinement_head_enhanced import CustomEgoposeCascadedRefinementHead_enhanced
 from .custom_egopose_hmd_attention_fusion_head import CustomEgoposeHMDAttentionFusionHead
 from .custom_mo2cap2_cascaded_refinement_head_enhanced import CustomMo2Cap2CascadedRefinementHead_enhanced
+from .custom_mo2cap2_baseline_head import CustomMo2Cap2BaselineHead
 
 __all__ = [
     'HeatmapHead', 'CPMHead', 'MSPNHead', 'ViPNASHead',
@@ -60,5 +61,6 @@ __all__ = [
 	'CustomxRegoposeBaselinel1_enhanced_hmd',
 	'CustomEgoposeCascadedRefinementHead_enhanced',
 	'CustomEgoposeHMDAttentionFusionHead',
-	'CustomMo2Cap2CascadedRefinementHead_enhanced'
+	'CustomMo2Cap2CascadedRefinementHead_enhanced',
+	'CustomMo2Cap2BaselineHead'
 ]

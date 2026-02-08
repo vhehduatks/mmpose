@@ -161,6 +161,11 @@ class CustomMo2Cap2Metric(BaseMetric):
         lower_results = eval_lower.get_results()
         per_joint_results = eval_per_joint.get_results()
 
+        # Get environment results
+        body_env_results = eval_body.get_environment_results()
+        upper_env_results = eval_upper.get_environment_results()
+        lower_env_results = eval_lower.get_environment_results()
+
         # Log detailed results
         logger.info(f'Full Body: {body_results}')
         logger.info(f'Upper Body: {upper_results}')
@@ -170,11 +175,13 @@ class CustomMo2Cap2Metric(BaseMetric):
         # Log action breakdown if available
         if self.use_action:
             logger.info('\n' + mo2cap2_evaluate.get_action_breakdown_summary(body_results))
+            # Log environment breakdown
+            logger.info('\n' + mo2cap2_evaluate.get_environment_breakdown_summary(body_env_results))
 
         # Build output metrics dictionary
         eval_results = OrderedDict()
 
-        # Add Full Body, Upper Body, Lower Body metrics
+        # Add Full Body, Upper Body, Lower Body metrics (overall + per-action)
         for part_name, part_results in [
             ('Full Body', body_results),
             ('Upper Body', upper_results),
@@ -182,6 +189,16 @@ class CustomMo2Cap2Metric(BaseMetric):
         ]:
             for action_name, metrics in part_results.items():
                 metric_key = f'{part_name}_{action_name}_mpjpe'
+                eval_results[metric_key] = metrics['mpjpe']
+
+        # Add environment-specific metrics
+        for part_name, env_results in [
+            ('Full Body', body_env_results),
+            ('Upper Body', upper_env_results),
+            ('Lower Body', lower_env_results),
+        ]:
+            for env_name, metrics in env_results.items():
+                metric_key = f'{part_name}_{env_name}_mpjpe'
                 eval_results[metric_key] = metrics['mpjpe']
 
         return eval_results

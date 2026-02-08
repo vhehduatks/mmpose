@@ -34,3 +34,15 @@
 [DONE] my_code/custom_config/HMD_xregopose_cascaded_both_from_ground_v2a_full_config.py
 [DONE] my_code/custom_config/HMD_xregopose_cascaded_both_from_ground_v2b_full_config.py
 [DONE] my_code/custom_config/HMD_xregopose_cascaded_both_from_ground_v2c_full_config.py
+# Ground Info V3 Ablation (FIXED body-axis method instead of Y-axis)
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_head_from_ground_v3_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_hand_from_ground_v3_full_config.py
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_both_from_ground_v3_full_config.py
+# Mo2Cap2 Ground Info Ablation (body-axis method, ImageNet normalization)
+[DONE] my_code/custom_config/HMD_mo2cap2_cascaded_head_from_ground_config.py
+[DONE] my_code/custom_config/HMD_mo2cap2_cascaded_hand_from_ground_config.py
+# Mo2Cap2 Ablation Study: Baseline vs Cascaded, Ground Reference, LR
+[DONE] my_code/custom_config/HMD_mo2cap2_baseline_no_ground_config.py
+[DONE] my_code/custom_config/HMD_mo2cap2_baseline_config.py
+[DONE] my_code/custom_config/HMD_mo2cap2_baseline_with_ground_lr_config.py
+[DONE] my_code/custom_config/HMD_mo2cap2_cascaded_no_ground_config.py

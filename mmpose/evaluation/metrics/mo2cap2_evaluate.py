@@ -60,7 +60,8 @@ ACTION_FRAME_RANGES = {
 ACTION_NAMES = ['walking', 'sitting', 'crawling', 'crouching',
                 'boxing', 'dancing', 'stretching', 'waving']
 
-__all__ = ["EvalBody", "EvalUpperBody", "EvalLowerBody", "EvalPerJoint"]
+__all__ = ["EvalBody", "EvalUpperBody", "EvalLowerBody", "EvalPerJoint",
+           "ENVIRONMENT_MAP", "ENVIRONMENT_NAMES"]
 
 
 # ============================================================================
@@ -291,6 +292,18 @@ def get_action_from_frame(sequence_name, frame_idx):
 
 
 # ============================================================================
+# Environment mapping
+# ============================================================================
+
+ENVIRONMENT_MAP = {
+    'olek_outdoor': 'outdoor',
+    'weipeng_studio': 'indoor',
+}
+
+ENVIRONMENT_NAMES = ['outdoor', 'indoor']
+
+
+# ============================================================================
 # Base evaluation class
 # ============================================================================
 
@@ -303,12 +316,27 @@ class BaseEval(ABC):
         # Initialize all action categories
         for action in ACTION_NAMES:
             self.error[action] = []
+        # Initialize environment categories
+        self.error_by_env = {
+            'outdoor': [],
+            'indoor': [],
+        }
 
-    def _add_error(self, err, action=None):
-        """Add error to tracking."""
+    def _add_error(self, err, action=None, sequence_name=None):
+        """Add error to tracking.
+
+        Args:
+            err: error value
+            action: action name (optional)
+            sequence_name: sequence name for environment tracking (optional)
+        """
         self.error['All'].append(err)
         if action and action in self.error:
             self.error[action].append(err)
+        # Track by environment
+        if sequence_name and sequence_name in ENVIRONMENT_MAP:
+            env = ENVIRONMENT_MAP[sequence_name]
+            self.error_by_env[env].append(err)
 
     def get_results(self):
         """Get evaluation results."""
@@ -319,6 +347,18 @@ class BaseEval(ABC):
                     "mpjpe": float(np.mean(v)),
                     "std_mpjpe": float(np.std(v)),
                     "num_samples": len(v)
+                }
+        return results
+
+    def get_environment_results(self):
+        """Get evaluation results by environment (indoor/outdoor)."""
+        results = {}
+        for env, errors in self.error_by_env.items():
+            if len(errors) > 0:
+                results[env] = {
+                    "mpjpe": float(np.mean(errors)),
+                    "std_mpjpe": float(np.std(errors)),
+                    "num_samples": len(errors)
                 }
         return results
 
@@ -359,15 +399,17 @@ class EvalBody(BaseEval):
 
         for i, err in enumerate(mean_errors):
             action = None
+            seq_name = None
             if use_action_:
                 # Try official frame-based action lookup first
                 if frame_indices is not None and sequence_names is not None:
-                    action = get_action_from_frame(sequence_names[i], frame_indices[i])
+                    seq_name = sequence_names[i]
+                    action = get_action_from_frame(seq_name, frame_indices[i])
                 # Fall back to provided action names (sequence-level)
                 elif actions and i < len(actions):
                     action = actions[i]
 
-            self._add_error(err, action)
+            self._add_error(err, action, seq_name)
 
     def desc(self):
         return "FullBody_MPJPE"
@@ -387,13 +429,15 @@ class EvalUpperBody(BaseEval):
 
         for i, err in enumerate(mean_errors):
             action = None
+            seq_name = None
             if use_action_:
                 if frame_indices is not None and sequence_names is not None:
-                    action = get_action_from_frame(sequence_names[i], frame_indices[i])
+                    seq_name = sequence_names[i]
+                    action = get_action_from_frame(seq_name, frame_indices[i])
                 elif actions and i < len(actions):
                     action = actions[i]
 
-            self._add_error(err, action)
+            self._add_error(err, action, seq_name)
 
     def desc(self):
         return "UpperBody_MPJPE"
@@ -413,13 +457,15 @@ class EvalLowerBody(BaseEval):
 
         for i, err in enumerate(mean_errors):
             action = None
+            seq_name = None
             if use_action_:
                 if frame_indices is not None and sequence_names is not None:
-                    action = get_action_from_frame(sequence_names[i], frame_indices[i])
+                    seq_name = sequence_names[i]
+                    action = get_action_from_frame(seq_name, frame_indices[i])
                 elif actions and i < len(actions):
                     action = actions[i]
 
-            self._add_error(err, action)
+            self._add_error(err, action, seq_name)
 
     def desc(self):
         return "LowerBody_MPJPE"
@@ -478,4 +524,22 @@ def get_action_breakdown_summary(results_dict):
             r = results_dict[action]
             lines.append(f"  {action:12s}: {r['mpjpe']:7.2f}mm (n={r['num_samples']})")
 
+    return '\n'.join(lines)
+
+
+def get_environment_breakdown_summary(env_results_dict):
+    """Format environment breakdown for logging.
+
+    Args:
+        env_results_dict: dict from get_environment_results()
+
+    Returns:
+        str: formatted summary
+    """
+    lines = ["Per-environment breakdown:"]
+    for env in ENVIRONMENT_NAMES:
+        if env in env_results_dict:
+            r = env_results_dict[env]
+            lines.append(f"  {env:10s}: {r['mpjpe']:7.2f}mm "
+                        f"(std: {r['std_mpjpe']:.2f}, n={r['num_samples']})")
     return '\n'.join(lines)
