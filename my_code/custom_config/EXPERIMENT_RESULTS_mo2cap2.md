@@ -38,10 +38,12 @@ This document tracks experiment results for the Mo2Cap2 egocentric pose estimati
 
 | Model | HMD Info | Full Body | Upper Body | Lower Body | Notes |
 |-------|----------|-----------|------------|------------|-------|
-| **Cascaded V3 Asymmetric** | 12-dim | **81.89mm** 🏆 | 79.68mm | **83.83mm** | **NEW BEST** |
-| Baseline + Ground (lr=0.00025) | 12-dim | 82.08mm | **79.44mm** | 84.39mm | Previous best |
+| **Cascaded V3b (Asym + LR=0.0005)** | 12-dim | **81.14mm** 🏆 | **76.49mm** | 85.21mm | **NEW BEST** |
+| Cascaded V3 (Asym + LR=0.00025) | 12-dim | 81.89mm | 79.68mm | **83.83mm** | Previous best |
+| Baseline + Ground (lr=0.00025) | 12-dim | 82.08mm | 79.44mm | 84.39mm | |
 | Cascaded V2 (lr=0.00025) | 12-dim | 82.28mm | 78.39mm | 85.68mm | Equal loss weights |
-| Baseline + Ground (lr=0.0005) | 12-dim | 85.30mm | 87.42mm | 83.44mm | Higher LR |
+| Cascaded V3a (Asym + LR=0.000125) | 12-dim | 84.34mm | 82.95mm | 85.56mm | Lower LR |
+| Baseline + Ground (lr=0.0005) | 12-dim | 85.30mm | 87.42mm | 83.44mm | |
 | Cascaded No Ground | 9-dim | 88.31mm | 89.03mm | 87.67mm | No ground ref |
 | Baseline No Ground | 9-dim | 92.59mm | 93.01mm | 92.22mm | No ground ref |
 | HEAD from ground | 10-dim | 148.88mm | 145.88mm | 151.50mm | Head height only |
@@ -51,7 +53,42 @@ This document tracks experiment results for the Mo2Cap2 egocentric pose estimati
 
 ## Detailed Results
 
-### 1. Cascaded BOTH From Ground V3 (Asymmetric Loss) - NEW BEST
+### 1. Cascaded BOTH From Ground V3b (Asymmetric Loss + Higher LR) - NEW BEST 🏆
+
+**Config**: `HMD_mo2cap2_cascaded_both_from_ground_v3b_config.py`
+
+| Setting | Value |
+|---------|-------|
+| Architecture | Cascaded Refinement |
+| HMD Info | 12-dim (9 base + 3 ground) |
+| **Learning Rate** | **0.0005** (doubled from V3) |
+| **loss_pose_l2norm** | **0.3** (asymmetric) |
+| loss_pose_l2norm_refined | 1.0 |
+| Epochs | 10 |
+| Best Epoch | 4 |
+
+#### Overall Results (Best Epoch 4)
+
+| Metric | MPJPE (mm) |
+|--------|------------|
+| **Full Body** | **81.14** 🏆 |
+| **Upper Body** | **76.49** |
+| Lower Body | 85.21 |
+
+#### Key Insight: Higher LR + Asymmetric Loss
+
+With asymmetric loss weights properly balancing gradient flow, higher learning rate enables faster and better convergence:
+
+| Change | V3 → V3b |
+|--------|----------|
+| Learning Rate | 0.00025 → **0.0005** |
+| Full Body | 81.89 → **81.14mm** (-0.75mm) |
+| Upper Body | 79.68 → **76.49mm** (-3.19mm) |
+| Best Epoch | 7 → **4** (faster convergence) |
+
+---
+
+### 2. Cascaded BOTH From Ground V3 (Asymmetric Loss + LR=0.00025)
 
 **Config**: `HMD_mo2cap2_cascaded_both_from_ground_v3_config.py`
 
@@ -69,9 +106,9 @@ This document tracks experiment results for the Mo2Cap2 egocentric pose estimati
 
 | Metric | MPJPE (mm) |
 |--------|------------|
-| **Full Body** | **81.89** 🏆 |
+| **Full Body** | **81.89** |
 | Upper Body | 79.68 |
-| Lower Body | 83.83 |
+| **Lower Body** | **83.83** (best lower body) |
 
 #### Per-Action Breakdown
 
@@ -112,7 +149,37 @@ The original cascaded model (V2) had equal loss weights for coarse and refined p
 
 ---
 
-### 2. Cascaded BOTH From Ground V2 (lr=0.00025)
+### 3. Cascaded BOTH From Ground V3a (Asymmetric Loss + Lower LR)
+
+**Config**: `HMD_mo2cap2_cascaded_both_from_ground_v3a_config.py`
+
+| Setting | Value |
+|---------|-------|
+| Architecture | Cascaded Refinement |
+| HMD Info | 12-dim (9 base + 3 ground) |
+| **Learning Rate** | **0.000125** (halved from V3) |
+| loss_pose_l2norm | 0.3 (asymmetric) |
+| loss_pose_l2norm_refined | 1.0 |
+| Epochs | 10 |
+| Best Epoch | 9 |
+
+#### Overall Results (Best Epoch 9)
+
+| Metric | MPJPE (mm) |
+|--------|------------|
+| Full Body | 84.34 |
+| Upper Body | 82.95 |
+| Lower Body | 85.56 |
+
+#### Key Insight: Lower LR Underperforms
+
+Lower learning rate with asymmetric loss leads to underperformance:
+- Slower convergence (best at epoch 9)
+- Worse overall results (+2.45mm vs V3)
+
+---
+
+### 4. Cascaded BOTH From Ground V2 (lr=0.00025)
 
 **Config**: `HMD_mo2cap2_cascaded_both_from_ground_v2_config.py`
 
@@ -163,7 +230,7 @@ The original cascaded model (V2) had equal loss weights for coarse and refined p
 
 ---
 
-### 4. HEAD From Ground (Body-Axis)
+### 5. HEAD From Ground (Body-Axis)
 
 **Config**: `HMD_mo2cap2_cascaded_head_from_ground_config.py`
 
@@ -184,7 +251,7 @@ The original cascaded model (V2) had equal loss weights for coarse and refined p
 
 ---
 
-### 5. HAND From Ground (Body-Axis)
+### 6. HAND From Ground (Body-Axis)
 
 **Config**: `HMD_mo2cap2_cascaded_hand_from_ground_config.py`
 
@@ -218,10 +285,18 @@ The "both_from_ground" mode (head + hand heights) significantly outperforms sing
 
 ### 2. Learning Rate Impact
 
-Lower learning rate (0.00025 vs 0.0005) provided more stable training:
-- V2 (lr=0.00025): Best at epoch 9 with 82.28mm
-- Smoother convergence curve
-- Less overfitting at later epochs
+Learning rate effect depends on loss weight configuration:
+
+**Baseline + Ground (equal loss weights)**:
+- LR 0.00025: 82.08mm ✅ (lower LR is better)
+- LR 0.0005: 85.30mm
+
+**Cascaded + Asymmetric Loss (0.3/1.0)**:
+- LR 0.0005: **81.14mm** 🏆 (higher LR is better!)
+- LR 0.00025: 81.89mm
+- LR 0.000125: 84.34mm
+
+**Insight**: Asymmetric loss weights stabilize training, allowing higher LR to be beneficial.
 
 ### 3. Action Difficulty Analysis
 
@@ -241,17 +316,17 @@ Actions can be categorized by difficulty:
 
 ## Training Configuration
 
-### Loss Functions
+### Loss Functions (V3b Best Configuration)
 
 | Loss | Weight | Purpose |
 |------|--------|---------|
 | loss_kpt (heatmap MSE) | 1000 | Primary 2D heatmap |
 | loss_heatmap_recon | 500 | Heatmap reconstruction |
-| loss_pose_l2norm | 1.0 | Coarse 3D pose |
+| **loss_pose_l2norm** | **0.3** | Coarse 3D pose (asymmetric) |
 | loss_cosine_similarity | 0.1 | Bone direction |
 | loss_limb_length | 0.25 | L1 distance |
 | loss_hmd | 1.0 | HMD reconstruction |
-| loss_pose_l2norm_refined | 1.0 | Refined 3D pose |
+| **loss_pose_l2norm_refined** | **1.0** | Refined 3D pose (full weight) |
 | loss_bone_length | 0.5 | Per-bone length |
 | loss_symmetry | 0.1 | Left-right symmetry |
 
@@ -270,7 +345,7 @@ MultiStepLR:
 | Dataset | Model | Full Body MPJPE |
 |---------|-------|-----------------|
 | xR-EgoPose | V3 Both From Ground | **34.06mm** |
-| Mo2Cap2 | V3 Asymmetric Loss | **81.89mm** |
+| Mo2Cap2 | V3b Asym + Higher LR | **81.14mm** |
 
 Mo2Cap2 is more challenging due to:
 - More diverse action categories (8 vs xR-EgoPose)
@@ -290,7 +365,9 @@ Mo2Cap2 is more challenging due to:
 | 3 | baseline_with_ground_lr | Baseline | 12-dim | 0.00025 | - | 7 | 82.08mm | 79.44mm | 84.39mm |
 | 4 | cascaded_no_ground | Cascaded | 9-dim | 0.00025 | Equal (1.0) | 2 | 88.31mm | 89.03mm | 87.67mm |
 | 5 | cascaded_both_v2 | Cascaded | 12-dim | 0.00025 | Equal (1.0) | 9 | 82.28mm | 78.39mm | 85.68mm |
-| 6 | **cascaded_both_v3** | Cascaded | 12-dim | 0.00025 | **Asym (0.3)** | 7 | **81.89mm** 🏆 | 79.68mm | **83.83mm** |
+| 6 | cascaded_both_v3 | Cascaded | 12-dim | 0.00025 | Asym (0.3) | 7 | 81.89mm | 79.68mm | **83.83mm** |
+| 7 | cascaded_both_v3a | Cascaded | 12-dim | 0.000125 | Asym (0.3) | 9 | 84.34mm | 82.95mm | 85.56mm |
+| 8 | **cascaded_both_v3b** | Cascaded | 12-dim | **0.0005** | **Asym (0.3)** | 4 | **81.14mm** 🏆 | **76.49mm** | 85.21mm |
 
 ### Key Findings
 
@@ -333,24 +410,41 @@ Mo2Cap2 is more challenging due to:
 
 **Lower coarse loss weight enables better refinement learning**, especially for lower body (-1.85mm).
 
-#### 5. Summary: What Matters Most
+#### 5. Learning Rate Effect with Asymmetric Loss (V3 Ablation)
+
+| LR | Full Body | Upper Body | Lower Body | Best Epoch | Δ Full |
+|----|-----------|------------|------------|------------|--------|
+| 0.000125 (V3a) | 84.34mm | 82.95mm | 85.56mm | 9 | +2.45mm (worse) |
+| 0.00025 (V3) | 81.89mm | 79.68mm | **83.83mm** | 7 | baseline |
+| **0.0005 (V3b)** | **81.14mm** | **76.49mm** | 85.21mm | **4** | **-0.75mm (best)** |
+
+**🎯 Key Finding**: Higher LR (0.0005) works **better** with asymmetric loss!
+- Faster convergence (best at epoch 4 vs 7)
+- Significantly better upper body (-3.19mm)
+- Lower body slightly worse (+1.38mm) - tradeoff for overall improvement
+
+#### 6. Summary: What Matters Most
 
 | Factor | Impact | Notes |
 |--------|--------|-------|
 | **Ground Reference** | **-6~7mm** | Most important factor |
-| **Learning Rate** | **-3mm** | Lower LR (0.00025) is better |
+| **LR + Asymmetric Loss** | **-0.9mm** | Higher LR (0.0005) with asymmetric loss |
 | **Loss Weight Balance** | **-0.4mm** | Asymmetric (0.3/1.0) for cascaded |
 | **Architecture** | **-0.2mm** | Cascaded wins with proper loss weights |
 
 ### Best Configuration
 
-**Cascaded V3 + Ground Reference + Asymmetric Loss (0.3/1.0)** achieves **81.89mm** 🏆
+**Cascaded V3b + Ground Reference + Asymmetric Loss (0.3/1.0) + Higher LR (0.0005)** achieves **81.14mm** 🏆
 
-| Rank | Model | Full Body |
-|------|-------|-----------|
-| 1 | **Cascaded V3 (Asymmetric)** | **81.89mm** |
-| 2 | Baseline + Ground | 82.08mm |
-| 3 | Cascaded V2 (Equal) | 82.28mm |
+| Rank | Model | Full Body | Upper Body | Lower Body |
+|------|-------|-----------|------------|------------|
+| 1 | **Cascaded V3b (Asym + LR=0.0005)** | **81.14mm** | **76.49mm** | 85.21mm |
+| 2 | Cascaded V3 (Asym + LR=0.00025) | 81.89mm | 79.68mm | **83.83mm** |
+| 3 | Baseline + Ground (LR=0.00025) | 82.08mm | 79.44mm | 84.39mm |
+| 4 | Cascaded V2 (Equal) | 82.28mm | 78.39mm | 85.68mm |
+| 5 | Cascaded V3a (Asym + LR=0.000125) | 84.34mm | 82.95mm | 85.56mm |
+
+**Note**: V3b achieves best overall and upper body, while V3 has best lower body.
 
 ---
 
@@ -396,6 +490,10 @@ Mo2Cap2 is more challenging due to:
 - [x] Run ablation experiments ✅
 - [x] Ablation study on loss weights ✅
   - Created `HMD_mo2cap2_cascaded_both_from_ground_v3_config.py`
-  - Asymmetric loss (0.3/1.0) achieves **81.89mm** (new best)
+  - Asymmetric loss (0.3/1.0) achieves 81.89mm
   - See `MO2CAP2_CASCADED_ANALYSIS.md` for detailed analysis
+- [x] LR ablation with asymmetric loss (V3a, V3b) ✅
+  - V3a (lr=0.000125): 84.34mm (worse)
+  - V3 (lr=0.00025): 81.89mm
+  - **V3b (lr=0.0005): 81.14mm 🏆 (NEW BEST)**
 - [ ] Per-joint MPJPE analysis
