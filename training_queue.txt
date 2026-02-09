@@ -51,3 +51,7 @@
 # Mo2Cap2 V3 Asymmetric + LR Ablation
 [DONE] my_code/custom_config/HMD_mo2cap2_cascaded_both_from_ground_v3a_config.py
 [DONE] my_code/custom_config/HMD_mo2cap2_cascaded_both_from_ground_v3b_config.py
+# Mo2Cap2 Previous Experiment Comparison Ablation (excluding distillation arch)
+[FAILED] my_code/custom_config/HMD_mo2cap2_baseline_no_ground_crop940_config.py
+my_code/custom_config/HMD_mo2cap2_baseline_no_ground_lr_decay_config.py
+my_code/custom_config/HMD_mo2cap2_baseline_no_ground_heatmap_recon200_config.py
