@@ -47,6 +47,7 @@ get_next_config() {
         [[ -z "$line" ]] && continue
         [[ "$line" == \#* ]] && continue
         [[ "$line" == \[DONE\]* ]] && continue
+        [[ "$line" == \[FAILED\]* ]] && continue
         echo "$line"
         return 0
     done < "$QUEUE_FILE"

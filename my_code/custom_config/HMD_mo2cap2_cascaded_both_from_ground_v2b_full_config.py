@@ -59,8 +59,10 @@ default_hooks = dict(
         max_keep_ckpts=3,
     ),
     visualization=dict(
-        enable=False,
-        type='PoseVisualizationHook'
+        type='PoseVisualizationHook',
+        enable=True,  # Enable visualization during validation
+        interval=50,  # Visualize every 50 samples
+        # NOTE: Do NOT set out_dir - it disables WandB image logging
     ),
     logger=dict(type='LoggerHook', interval=50),
 )
@@ -209,8 +211,10 @@ train_pipeline = [
 ]
 
 # Validation pipeline: Load JPG images from disk
+# Mo2Cap2 test images: 1280x1024, crop 128px margins from each horizontal side -> 1024x1024
 val_pipeline = [
     dict(type='LoadImage'),  # Load from JPG files
+    dict(type='Mo2Cap2CenterCrop', margin_left=128, margin_right=128),  # Crop to 1024x1024
     dict(padding=1.0, type='GetBBoxCenterScale'),
     dict(input_size=(256, 256), type='TopdownAffine'),
     dict(encoder=codec, type='GenerateTarget'),
@@ -291,7 +295,7 @@ vis_backends = [
 
 visualizer = dict(
     name='visualizer',
-    type='CustomPose3dLocalVisualizer',
+    type='Mo2Cap2Visualizer',
     vis_backends=vis_backends
 )
 

@@ -6,6 +6,11 @@ Maps the 32-joint Azure Kinect skeleton to the 16-joint xRegopose format.
 Uses real VR device positions from synced_data.csv for HMD info instead
 of estimating from skeleton keypoints.
 
+Supports optional ground info enhancement (12-dim HMD info):
+    In the Unity/VR coordinate system, Y-axis = vertical (height from floor).
+    The CSV Y values (hmd_pos_y, left_pos_y, right_pos_y) directly provide
+    ground heights without any body-axis projection needed.
+
 Data layout expected under data_root:
     {batch}/{session}/ego_dataset/annotations/frame_XXXXXX.json
     {batch}/{session}/ego_dataset/images/frame_XXXXXX.jpg
@@ -71,10 +76,22 @@ class KinectEgoposeDataset(BaseDataset):
         pipeline (list): Processing pipeline.
         test_mode (bool): Whether in test mode.
         sample_interval (int): Sample every N-th frame.
+        ground_info_mode (str or None): Ground info enhancement mode.
+            None: standard 9-dim HMD info (default).
+            'both_from_ground': 12-dim HMD info (9 base + head_y, left_y,
+                right_y from CSV). Uses Unity Y-axis as ground height.
+        use_hmd (bool): Whether to include real HMD data. Default: True.
+            When False, hmd_info is filled with zeros (vision-only ablation).
     """
 
     MM_TO_M = 1000.0
     METAINFO: dict = dict(from_file=os.path.join(_CURRENT_DIR, 'egopose_info.py'))
+
+    # Ground info mode → output HMD info dimension
+    GROUND_INFO_MODES = {
+        None: 9,                 # standard 9-dim
+        'both_from_ground': 12,  # 9 + head_y + left_y + right_y
+    }
 
     def __init__(self,
                  data_mode: str = 'topdown',
@@ -88,10 +105,24 @@ class KinectEgoposeDataset(BaseDataset):
                  test_mode: bool = False,
                  lazy_init: bool = False,
                  max_refetch: int = 1000,
-                 sample_interval: int = 1):
+                 sample_interval: int = 1,
+                 ground_info_mode: Optional[str] = None,
+                 use_hmd: bool = True):
         self.data_mode = data_mode
         self.data_root = data_root
         self.sample_interval = sample_interval
+        self.ground_info_mode = ground_info_mode
+        self.use_hmd = use_hmd
+        self.hmd_dim = self.GROUND_INFO_MODES.get(ground_info_mode, 9)
+
+        if ground_info_mode is not None and ground_info_mode not in self.GROUND_INFO_MODES:
+            raise ValueError(
+                f"Invalid ground_info_mode '{ground_info_mode}'. "
+                f"Must be one of {list(self.GROUND_INFO_MODES.keys())}")
+
+        print_log(f'KinectEgoposeDataset: ground_info_mode={ground_info_mode}, '
+                  f'hmd_dim={self.hmd_dim}, use_hmd={use_hmd}',
+                  logger='current', level=logging.INFO)
 
         super().__init__(
             metainfo=metainfo,
@@ -289,19 +320,12 @@ class KinectEgoposeDataset(BaseDataset):
         # Convert mm → meters
         p3d /= self.MM_TO_M
 
-        # Compute bbox from visible 2D keypoints (with 20px padding)
-        visible_mask = vis > 0
-        if visible_mask.any():
-            vis_pts = p2d[visible_mask]
-            pad = 20.0
-            x_min = max(0, vis_pts[:, 0].min() - pad)
-            y_min = max(0, vis_pts[:, 1].min() - pad)
-            x_max = vis_pts[:, 0].max() + pad
-            y_max = vis_pts[:, 1].max() + pad
-            bbox = np.array([[x_min, y_min, x_max, y_max]], dtype=np.float32)
-        else:
-            # No visible joints – use full image as bbox
-            bbox = np.array([[0, 0, 1920, 1080]], dtype=np.float32)
+        # Use the full image as bbox so TopdownAffine simply resizes the
+        # raw 1920x1080 egocentric image to 256x256 without any cropping.
+        # In egocentric setup the body is always in view; keypoint-based
+        # bboxes are unreliable because HEAD/shoulders project behind the
+        # camera (out of image bounds).
+        bbox = np.array([[0, 0, 1920, 1080]], dtype=np.float32)
 
         # Compute HMD info from CSV sensor data
         head = np.array([
@@ -319,7 +343,23 @@ class KinectEgoposeDataset(BaseDataset):
             float(csv_row['right_pos_y']),
             float(csv_row['right_pos_z']),
         ], dtype=np.float32)
-        hmd_info = self._preprocess_hmd_data(head, right_hand, left_hand)
+        if self.use_hmd:
+            hmd_info = self._preprocess_hmd_data(head, right_hand, left_hand)
+
+            # Optionally enhance HMD info with ground heights from CSV Y values
+            if self.ground_info_mode == 'both_from_ground':
+                # In Unity/VR coordinate system, Y-axis = vertical (height from floor)
+                # CSV values are already in meters
+                head_from_ground = float(csv_row['hmd_pos_y'])
+                left_from_ground = float(csv_row['left_pos_y'])
+                right_from_ground = float(csv_row['right_pos_y'])
+                ground_extra = np.array(
+                    [head_from_ground, left_from_ground, right_from_ground],
+                    dtype=np.float32)
+                hmd_info = np.concatenate([hmd_info, ground_extra])
+        else:
+            # Vision-only ablation: zero HMD info
+            hmd_info = np.zeros(self.hmd_dim, dtype=np.float32)
 
         return {
             'img_path': img_path,
@@ -327,7 +367,7 @@ class KinectEgoposeDataset(BaseDataset):
             'keypoint3d': p3d.reshape(1, 16, 3),
             'bbox': bbox,
             'bbox_score': np.ones(1, dtype=np.float32),
-            'hmd_info': hmd_info.reshape(1, 9),
+            'hmd_info': hmd_info.reshape(1, self.hmd_dim),
             'keypoints_visible': vis.reshape(1, 16),
             'action': np.array([action]),
         }

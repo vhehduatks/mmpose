@@ -257,7 +257,9 @@ class H5Mo2Cap2Dataset(BaseDataset):
                 all_keypoints = hf['keypoints'][:]
                 all_keypoint3d = hf['keypoint3d'][:]
                 all_hmd_info = hf['hmd_info'][:]
-            print_log(f'Cache loaded: {all_keypoints.shape[0]} samples',
+            # NOTE: X offset (-33) is already applied when building the cache
+            # Do NOT apply it again here
+            print_log(f'Cache loaded: {all_keypoints.shape[0]} samples (X offset -33 already in cache)',
                       logger='current', level=logging.INFO)
             return all_keypoints, all_keypoint3d, all_hmd_info
 
@@ -274,6 +276,10 @@ class H5Mo2Cap2Dataset(BaseDataset):
             with h5py.File(chunk_path, 'r') as hf:
                 annot2d = hf['Annot2D'][:]  # (N, 15, 2)
                 annot3d = hf['Annot3D'][:]  # (N, 15, 3)
+
+                # Apply X coordinate offset (-33) for Mo2Cap2 image alignment
+                # See MO2CAP2_DATASET.md for details
+                annot2d[:, :, 0] = annot2d[:, :, 0] - 33
 
                 # Convert 3D to meters
                 annot3d_m = annot3d / self.MM_TO_M

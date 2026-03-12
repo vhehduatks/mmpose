@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import math
+import os
 from typing import Dict, List, Optional, Tuple, Union
 
 import cv2
@@ -15,6 +16,12 @@ from mmpose.structures import PoseDataSample
 from . import PoseLocalVisualizer
 from ..evaluation.metrics import mo2cap2_evaluate
 import scipy.io
+
+# Path to mean3D.mat (platform-independent)
+_MEAN3D_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    'utils', 'mean3D.mat'
+)
 
 @VISUALIZERS.register_module()
 class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
@@ -252,7 +259,7 @@ class CustomPose3dLocalVisualizer(PoseLocalVisualizer):
 		# 								   pred_instances.keypoints)
 		## mo2cap2 joint modify
 		## re scale,
-		mean3D = scipy.io.loadmat(r'C:\Users\user\Documents\GitHub\mmpose\mmpose\utils\mean3D.mat')['mean3D'] # 3x15 shape
+		mean3D = scipy.io.loadmat(_MEAN3D_PATH)['mean3D']  # 3x15 shape
 		
 		kinematic_parents = np.array([ 0, 0, 1, 2, 0, 4, 5, 1, 7, 8, 9, 4, 11, 12, 13]) #TODO : upper bodys는 7개 관절이니까 parents 도 수정해야 함
 

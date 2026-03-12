@@ -34,7 +34,7 @@ train_cfg = dict(
     val_interval=1,
 )
 val_cfg = dict()
-test_cfg = None
+test_cfg = dict()
 
 # ABLATION: Starting LR 0.000125 (lower than previous 0.00025)
 optim_wrapper = dict(
@@ -42,12 +42,13 @@ optim_wrapper = dict(
 )
 
 # ABLATION: Aggressive LR decay - halve every epoch (like previous experiment)
+# Note: milestones are epochs AFTER which LR is decayed
 param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
         end=10,
-        milestones=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],  # Every epoch
+        milestones=[1, 2, 3, 4, 5, 6, 7, 8, 9],  # Decay after each epoch
         gamma=0.5,  # Halve each time
         by_epoch=True
     ),

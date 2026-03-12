@@ -20,6 +20,7 @@ from .enhance_hmd_info import EnhanceHMDInfo
 from .enhance_hmd_info_mo2cap2 import EnhanceHMDInfo_Mo2Cap2
 from .circular_crop import CircularCrop, RandomVignette
 from .center_crop import Mo2Cap2CenterCrop
+from .ego_resize import EgoImageResize
 
 __all__ = [
     'GetBBoxCenterScale', 'RandomBBoxTransform', 'RandomFlip',
@@ -31,5 +32,5 @@ __all__ = [
     'BottomupRandomCrop', 'BottomupRandomChoiceResize', 'HandRandomFlip',
     'SingleHandConverter', 'EgoposeFilterAnnotations', 'FisheyeCropTransform',
     'EnhanceHMDInfo', 'EnhanceHMDInfo_Mo2Cap2', 'CircularCrop', 'RandomVignette',
-    'Mo2Cap2CenterCrop'
+    'Mo2Cap2CenterCrop', 'EgoImageResize'
 ]

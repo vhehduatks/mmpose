@@ -1,14 +1,18 @@
 """
-Mo2Cap2 Baseline - NO Ground Reference - Crop Region Ablation
+Mo2Cap2 Cascaded Refinement + BOTH FROM GROUND + Dataset-Specific Normalization
 
-Testing hypothesis: Previous experiment's crop region (940px width) vs current (1024px).
+Model: Cascaded Refinement with Enhanced HMD (12-dim: 9 base + 3 ground ref)
+Ground Reference: Body-relative direction (Neck→Pelvis vector)
+Normalization: Dataset-specific mean/std (calculated from Mo2Cap2 data)
 
-Change from baseline_no_ground:
-  - Mo2Cap2CenterCrop: margin_left=128, margin_right=128 -> margin_left=180, margin_right=160
-  - This matches previous experiment bbox [180, 0, 1120, 1024] (940px width)
+Data:
+  - Training: H5 chunks from /mnt/sdb2/mo2cap2_dataset/training_data (~530k samples)
+  - Validation: JPG + MAT from /mnt/sdb2/mo2cap2_dataset/test_data/TestSet (5646 samples)
 
-Previous experiment: bbox [180, 0, 1120, 1024] means x range [180, 1120] = 940px
-Current experiment: margin 128 each side means x range [128, 1152] = 1024px
+Normalization Statistics (calculated from actual dataset):
+  - Training set (RGB): mean=[99.379, 87.095, 92.618], std=[80.840, 72.526, 75.862]
+  - Test set (RGB):     mean=[87.283, 84.411, 98.625], std=[75.173, 73.373, 89.350]
+  - Using training set statistics (standard practice)
 """
 
 import platform
@@ -24,16 +28,41 @@ else:
     test_data_root = '/mnt/sdb2/mo2cap2_dataset/test_data/TestSet'
     pretrained_coco = '/mnt/dataset_vol/pretrained/coco_pose_resnet_101_256x192.pth.tar'
 
+# ============================================================================
+# Mo2Cap2 Dataset-Specific Normalization (RGB order)
+# Calculated from actual dataset statistics
+# ============================================================================
+# Training set statistics (recommended - model learns from this distribution)
+MO2CAP2_TRAIN_MEAN = [99.379, 87.095, 92.618]
+MO2CAP2_TRAIN_STD = [80.840, 72.526, 75.862]
+
+# Test set statistics (for reference)
+MO2CAP2_TEST_MEAN = [87.283, 84.411, 98.625]
+MO2CAP2_TEST_STD = [75.173, 73.373, 89.350]
+
+# Combined statistics (average of train and test)
+MO2CAP2_COMBINED_MEAN = [93.331, 85.753, 95.621]
+MO2CAP2_COMBINED_STD = [78.006, 72.950, 82.606]
+
+# ImageNet defaults (for comparison)
+# IMAGENET_MEAN = [123.675, 116.28, 103.53]
+# IMAGENET_STD = [58.395, 57.12, 57.375]
+
+# Use training set statistics (standard practice)
+_NORM_MEAN = MO2CAP2_TRAIN_MEAN
+_NORM_STD = MO2CAP2_TRAIN_STD
+
 auto_scale_lr = dict(base_batch_size=256)
 backend_args = dict(backend='local')
 
+# Training configuration (10 epochs, val every 1 epoch)
 train_cfg = dict(
     type='EpochBasedTrainLoop',
     max_epochs=10,
-    val_interval=1,
+    val_interval=1,  # Validate every epoch
 )
 val_cfg = dict()
-test_cfg = dict()
+test_cfg = None
 
 optim_wrapper = dict(
     optimizer=dict(lr=0.0005, type='AdamW'),
@@ -61,8 +90,11 @@ default_hooks = dict(
     visualization=dict(
         type='PoseVisualizationHook',
         enable=True,
-        interval=35,
-        train_interval=3300,
+        interval=35,  # Val: ~890 iters total / 35 ≈ 25 images
+        train_interval=3300,  # Train: ~82810 iters total / 3300 ≈ 25 images
+        # Pass normalization parameters for correct denormalization (RGB order)
+        img_mean=_NORM_MEAN,
+        img_std=_NORM_STD,
     ),
     logger=dict(type='LoggerHook', interval=50),
 )
@@ -106,6 +138,8 @@ load_from = None
 log_level = 'INFO'
 log_processor = dict(by_epoch=True, num_digits=6, type='LogProcessor', window_size=50)
 
+# Model: hmd_info_size=12 (9 base + 3 ground ref: neck + left_hand + right_hand from ground)
+# NOTE: Using Mo2Cap2 dataset-specific normalization instead of ImageNet defaults
 model = dict(
     type='TopdownPoseEstimator',
     backbone=dict(
@@ -115,15 +149,15 @@ model = dict(
     ),
     data_preprocessor=dict(
         bgr_to_rgb=True,
-        mean=[123.675, 116.28, 103.53],
-        std=[58.395, 57.12, 57.375],
+        mean=_NORM_MEAN,  # Mo2Cap2 training set mean (RGB)
+        std=_NORM_STD,    # Mo2Cap2 training set std (RGB)
         type='PoseDataPreprocessor'
     ),
     head=dict(
-        type='CustomMo2Cap2BaselineHead',
+        type='CustomMo2Cap2CascadedRefinementHead_enhanced',
         in_channels=2048,
         out_channels=15,
-        hmd_info_size=9,
+        hmd_info_size=12,  # 9 base + 3 (neck + left_hand + right_hand from ground)
         heatmap_decoder_type='efficient',
         decoder=codec,
         loss=dict(loss_weight=1000, type='KeypointMSELoss', use_target_weight=False),
@@ -132,6 +166,7 @@ model = dict(
         loss_limb_length=dict(loss_weight=0.25, type='limb_length'),
         loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'),
         loss_hmd=dict(type='MSELoss'),
+        loss_pose_l2norm_refined=dict(loss_weight=1.0, type='pose_l2norm'),
         loss_bone_length=dict(loss_weight=0.5, type='bone_length_loss', skeleton=MO2CAP2_SKELETON),
         loss_symmetry=dict(loss_weight=0.1, type='symmetry_loss', symmetric_limbs=MO2CAP2_SYMMETRIC_LIMBS),
     ),
@@ -154,23 +189,23 @@ _val_meta_keys = (
     'frame_idx', 'sequence_name'
 )
 
+# Pipeline with both_from_ground mode
 train_pipeline = [
     dict(type='LoadImageFromH5'),
     dict(padding=1.0, type='GetBBoxCenterScale'),
     dict(input_size=(256, 256), type='TopdownAffine'),
     dict(encoder=codec, type='GenerateTarget'),
+    dict(type='EnhanceHMDInfo_Mo2Cap2', mode='both_from_ground'),
     dict(type='PackPoseInputs', meta_keys=_train_meta_keys),
 ]
 
-# ABLATION: Changed crop region to match previous experiment
-# Previous: bbox [180, 0, 1120, 1024] = 940px width
-# margin_left=180 (crop 180 from left), margin_right=160 (crop 160 from right, 1280-1120=160)
 val_pipeline = [
     dict(type='LoadImage'),
-    dict(type='Mo2Cap2CenterCrop', margin_left=180, margin_right=160),  # Changed from 128, 128
+    dict(type='Mo2Cap2CenterCrop', margin_left=128, margin_right=128),
     dict(padding=1.0, type='GetBBoxCenterScale'),
     dict(input_size=(256, 256), type='TopdownAffine'),
     dict(encoder=codec, type='GenerateTarget'),
+    dict(type='EnhanceHMDInfo_Mo2Cap2', mode='both_from_ground'),
     dict(type='PackPoseInputs', meta_keys=_val_meta_keys),
 ]
 
@@ -226,21 +261,18 @@ val_dataloader = dict(
 
 val_evaluator = dict(ann_file=None, type='CustomMo2Cap2Metric', use_action=True)
 
-test_dataloader = val_dataloader
-test_evaluator = val_evaluator
-
 vis_backends = [
     dict(type='LocalVisBackend'),
     dict(
         type='WandbVisBackend',
         init_kwargs=dict(
             project='mo2cap2-pose-estimation',
-            name='baseline_no_ground_crop940',
-            tags=['mo2cap2', 'baseline', 'no_ground', 'crop_ablation'],
+            name='cascaded_BOTH_from_ground_datasetnorm',
+            tags=['mo2cap2', 'cascaded', 'both_from_ground', 'dataset_norm'],
         ),
     ),
 ]
 
 visualizer = dict(name='visualizer', type='Mo2Cap2Visualizer', vis_backends=vis_backends)
 
-work_dir = 'work_dirs/HMD_mo2cap2_baseline_no_ground_crop940'
+work_dir = 'work_dirs/HMD_mo2cap2_cascaded_both_from_ground_datasetnorm'

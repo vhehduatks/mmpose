@@ -1,14 +1,20 @@
 """
-Mo2Cap2 Baseline - NO Ground Reference - Crop Region Ablation
+Mo2Cap2 Cascaded Refinement + Both From Ground + Dataset Normalization - SMOKE TEST
 
-Testing hypothesis: Previous experiment's crop region (940px width) vs current (1024px).
+Purpose: Verify pipeline works correctly with Mo2Cap2-specific normalization.
 
-Change from baseline_no_ground:
-  - Mo2Cap2CenterCrop: margin_left=128, margin_right=128 -> margin_left=180, margin_right=160
-  - This matches previous experiment bbox [180, 0, 1120, 1024] (940px width)
+Settings:
+  - max_epochs: 2
+  - sample_interval: 500 (use ~1k training samples)
+  - checkpoint: None (no saving)
 
-Previous experiment: bbox [180, 0, 1120, 1024] means x range [180, 1120] = 940px
-Current experiment: margin 128 each side means x range [128, 1152] = 1024px
+Data:
+  - Training: H5 chunks from /mnt/sdb2/mo2cap2_dataset/training_data
+  - Validation: JPG + MAT from /mnt/sdb2/mo2cap2_dataset/test_data/TestSet
+
+Normalization: Mo2Cap2 training set statistics (RGB order)
+  - mean = [99.379, 87.095, 92.618]
+  - std  = [80.840, 72.526, 75.862]
 """
 
 import platform
@@ -24,16 +30,26 @@ else:
     test_data_root = '/mnt/sdb2/mo2cap2_dataset/test_data/TestSet'
     pretrained_coco = '/mnt/dataset_vol/pretrained/coco_pose_resnet_101_256x192.pth.tar'
 
+# ============================================================================
+# Mo2Cap2 Dataset-Specific Normalization (RGB order)
+# ============================================================================
+MO2CAP2_TRAIN_MEAN = [99.379, 87.095, 92.618]
+MO2CAP2_TRAIN_STD = [80.840, 72.526, 75.862]
+
+_NORM_MEAN = MO2CAP2_TRAIN_MEAN
+_NORM_STD = MO2CAP2_TRAIN_STD
+
 auto_scale_lr = dict(base_batch_size=256)
 backend_args = dict(backend='local')
 
+# Smoke test: Short training with validation enabled
 train_cfg = dict(
     type='EpochBasedTrainLoop',
-    max_epochs=10,
-    val_interval=1,
+    max_epochs=2,
+    val_interval=1,  # Validate every epoch
 )
 val_cfg = dict()
-test_cfg = dict()
+test_cfg = None
 
 optim_wrapper = dict(
     optimizer=dict(lr=0.0005, type='AdamW'),
@@ -43,28 +59,26 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=10,
-        milestones=[6, 8],
+        end=2,
+        milestones=[1],
         gamma=0.1,
         by_epoch=True
     ),
 ]
 
+# Smoke test: No checkpoint saving
 default_hooks = dict(
-    checkpoint=dict(
-        type='CheckpointHook',
-        interval=2,
-        save_best='mo2cap2/Full Body_All_mpjpe',
-        rule='less',
-        max_keep_ckpts=3,
-    ),
+    checkpoint=None,
     visualization=dict(
         type='PoseVisualizationHook',
         enable=True,
-        interval=35,
-        train_interval=3300,
+        interval=10,  # Frequent visualization for debugging
+        train_interval=50,
+        # Pass normalization parameters for correct denormalization (RGB order)
+        img_mean=_NORM_MEAN,
+        img_std=_NORM_STD,
     ),
-    logger=dict(type='LoggerHook', interval=50),
+    logger=dict(type='LoggerHook', interval=10),
 )
 
 randomness = dict(seed=42, deterministic=False)
@@ -106,6 +120,7 @@ load_from = None
 log_level = 'INFO'
 log_processor = dict(by_epoch=True, num_digits=6, type='LogProcessor', window_size=50)
 
+# Model with Mo2Cap2 dataset-specific normalization
 model = dict(
     type='TopdownPoseEstimator',
     backbone=dict(
@@ -115,15 +130,15 @@ model = dict(
     ),
     data_preprocessor=dict(
         bgr_to_rgb=True,
-        mean=[123.675, 116.28, 103.53],
-        std=[58.395, 57.12, 57.375],
+        mean=_NORM_MEAN,  # Mo2Cap2 training set mean (RGB)
+        std=_NORM_STD,    # Mo2Cap2 training set std (RGB)
         type='PoseDataPreprocessor'
     ),
     head=dict(
-        type='CustomMo2Cap2BaselineHead',
+        type='CustomMo2Cap2CascadedRefinementHead_enhanced',
         in_channels=2048,
         out_channels=15,
-        hmd_info_size=9,
+        hmd_info_size=12,  # 9 base + 3 ground ref
         heatmap_decoder_type='efficient',
         decoder=codec,
         loss=dict(loss_weight=1000, type='KeypointMSELoss', use_target_weight=False),
@@ -132,6 +147,7 @@ model = dict(
         loss_limb_length=dict(loss_weight=0.25, type='limb_length'),
         loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'),
         loss_hmd=dict(type='MSELoss'),
+        loss_pose_l2norm_refined=dict(loss_weight=1.0, type='pose_l2norm'),
         loss_bone_length=dict(loss_weight=0.5, type='bone_length_loss', skeleton=MO2CAP2_SKELETON),
         loss_symmetry=dict(loss_weight=0.1, type='symmetry_loss', symmetric_limbs=MO2CAP2_SYMMETRIC_LIMBS),
     ),
@@ -159,30 +175,30 @@ train_pipeline = [
     dict(padding=1.0, type='GetBBoxCenterScale'),
     dict(input_size=(256, 256), type='TopdownAffine'),
     dict(encoder=codec, type='GenerateTarget'),
+    dict(type='EnhanceHMDInfo_Mo2Cap2', mode='both_from_ground'),
     dict(type='PackPoseInputs', meta_keys=_train_meta_keys),
 ]
 
-# ABLATION: Changed crop region to match previous experiment
-# Previous: bbox [180, 0, 1120, 1024] = 940px width
-# margin_left=180 (crop 180 from left), margin_right=160 (crop 160 from right, 1280-1120=160)
 val_pipeline = [
     dict(type='LoadImage'),
-    dict(type='Mo2Cap2CenterCrop', margin_left=180, margin_right=160),  # Changed from 128, 128
+    dict(type='Mo2Cap2CenterCrop', margin_left=128, margin_right=128),
     dict(padding=1.0, type='GetBBoxCenterScale'),
     dict(input_size=(256, 256), type='TopdownAffine'),
     dict(encoder=codec, type='GenerateTarget'),
+    dict(type='EnhanceHMDInfo_Mo2Cap2', mode='both_from_ground'),
     dict(type='PackPoseInputs', meta_keys=_val_meta_keys),
 ]
 
 data_mode = 'topdown'
 
+# Smoke test: Use sample_interval=500 for ~1k training samples
 dataset_train = dict(
     type='H5Mo2Cap2Dataset',
     data_root=data_root,
     data_mode=data_mode,
     pipeline=train_pipeline,
     input_size=(256, 256),
-    sample_interval=1,
+    sample_interval=500,  # ~1k samples for smoke test
     use_zoom=False,
 )
 
@@ -200,9 +216,9 @@ if IS_WINDOWS:
     _persistent_workers = False
     _batch_size = 16
 else:
-    _num_workers = 8
+    _num_workers = 4
     _persistent_workers = True
-    _batch_size = 64
+    _batch_size = 32
 
 train_dataloader = dict(
     batch_size=_batch_size,
@@ -226,21 +242,10 @@ val_dataloader = dict(
 
 val_evaluator = dict(ann_file=None, type='CustomMo2Cap2Metric', use_action=True)
 
-test_dataloader = val_dataloader
-test_evaluator = val_evaluator
-
 vis_backends = [
     dict(type='LocalVisBackend'),
-    dict(
-        type='WandbVisBackend',
-        init_kwargs=dict(
-            project='mo2cap2-pose-estimation',
-            name='baseline_no_ground_crop940',
-            tags=['mo2cap2', 'baseline', 'no_ground', 'crop_ablation'],
-        ),
-    ),
 ]
 
 visualizer = dict(name='visualizer', type='Mo2Cap2Visualizer', vis_backends=vis_backends)
 
-work_dir = 'work_dirs/HMD_mo2cap2_baseline_no_ground_crop940'
+work_dir = 'work_dirs/HMD_mo2cap2_datasetnorm_smoke'

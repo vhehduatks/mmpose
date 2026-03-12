@@ -1,16 +1,23 @@
 """
-Mo2Cap2 Cascaded Refinement + Both From Ground V2b - SMOKE TEST
+Mo2Cap2 Cascaded Refinement + Both From Ground V2b Config
 
-Purpose: Verify pipeline works correctly with minimal training.
+Adapted from EgoPose cascaded_both_from_ground_v2b for Mo2Cap2 dataset.
 
-Settings:
-  - max_epochs: 2
-  - sample_interval: 500 (use ~1k training samples)
-  - checkpoint: None (no saving)
+Key Differences from EgoPose version:
+  1. 15 joints (Mo2Cap2) vs 16 joints (EgoPose)
+  2. Mo2Cap2 skeleton connections
+  3. Mo2Cap2-specific HMD info computation (Neck=0, RightHand=3, LeftHand=6)
+  4. Ground reference from Neck (as per user requirement)
 
-Data:
-  - Training: H5 chunks from /mnt/sdb2/mo2cap2_dataset/training_data
-  - Validation: JPG + MAT from /mnt/sdb2/mo2cap2_dataset/test_data/TestSet
+Model Architecture:
+  - Stage 1: ResNet101 -> Deconv -> Heatmap -> Encoder -> Z -> PoseDecoder -> Coarse3D
+  - Stage 2: GridSample + KinFeatures + HMD -> RefinementMLP -> Refined3D
+
+HMD Info (12-dim, both_from_ground mode):
+  - Base HMD (9): right_local(3), left_local(3), distances(3)
+  - Enhanced (3): neck_from_ground(1), left_hand_from_ground(1), right_hand_from_ground(1)
+
+Training: 20 epochs with EfficientHeatmapDecoder
 """
 
 import platform
@@ -29,11 +36,11 @@ else:
 auto_scale_lr = dict(base_batch_size=256)
 backend_args = dict(backend='local')
 
-# Smoke test: Short training with validation enabled
+# V2b: Extended training (20 epochs)
 train_cfg = dict(
     type='EpochBasedTrainLoop',
-    max_epochs=2,
-    val_interval=1,  # Validate every epoch
+    max_epochs=20,
+    val_interval=1,
 )
 val_cfg = dict()
 test_cfg = None
@@ -42,61 +49,37 @@ optim_wrapper = dict(
     optimizer=dict(lr=0.0005, type='AdamW'),
 )
 
+# V2b: Adjusted milestones for 20 epochs
 param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=2,
-        milestones=[1],
+        end=20,
+        milestones=[8, 14],
         gamma=0.5,
         by_epoch=True
     ),
 ]
 
-# Smoke test: No checkpoint saving
 default_hooks = dict(
-    checkpoint=None,
-    visualization=dict(
-        type='PoseVisualizationHook',
-        enable=True,  # Enable for smoke test
-        interval=20,  # Visualize val every 20 iterations
-        train_interval=100,  # Visualize train every 100 iterations
-        # NOTE: Do NOT set out_dir - it disables WandB image logging
+    checkpoint=dict(
+        interval=1,
+        max_keep_ckpts=3,
+        rule='less',
+        save_best='mo2cap2/Full Body_All_mpjpe',
+        type='CheckpointHook',
+        by_epoch=True
     ),
-    logger=dict(type='LoggerHook', interval=10),
+    visualization=dict(
+        enable=True,
+        interval=100,
+        kpt_thr=0.3,
+        type='PoseVisualizationHook'
+    )
 )
 
 randomness = dict(seed=42, deterministic=False)
 resume = False
-
-# Mo2Cap2 skeleton (14 bones for 15 joints)
-MO2CAP2_SKELETON = [
-    (0, 1),   # Neck -> RightArm
-    (1, 2),   # RightArm -> RightForeArm
-    (2, 3),   # RightForeArm -> RightHand
-    (0, 4),   # Neck -> LeftArm
-    (4, 5),   # LeftArm -> LeftForeArm
-    (5, 6),   # LeftForeArm -> LeftHand
-    (0, 7),   # Neck -> RightUpLeg
-    (7, 8),   # RightUpLeg -> RightLeg
-    (8, 9),   # RightLeg -> RightFoot
-    (9, 10),  # RightFoot -> RightToeBase
-    (0, 11),  # Neck -> LeftUpLeg
-    (11, 12), # LeftUpLeg -> LeftLeg
-    (12, 13), # LeftLeg -> LeftFoot
-    (13, 14), # LeftFoot -> LeftToeBase
-]
-
-# Mo2Cap2 symmetric limbs: ((left_parent, left_child), (right_parent, right_child))
-MO2CAP2_SYMMETRIC_LIMBS = [
-    ((0, 4), (0, 1)),     # Neck->LeftArm, Neck->RightArm
-    ((4, 5), (1, 2)),     # LeftArm->LeftForeArm, RightArm->RightForeArm
-    ((5, 6), (2, 3)),     # LeftForeArm->LeftHand, RightForeArm->RightHand
-    ((0, 11), (0, 7)),    # Neck->LeftUpLeg, Neck->RightUpLeg
-    ((11, 12), (7, 8)),   # LeftUpLeg->LeftLeg, RightUpLeg->RightLeg
-    ((12, 13), (8, 9)),   # LeftLeg->LeftFoot, RightLeg->RightFoot
-    ((13, 14), (9, 10)),  # LeftFoot->LeftToeBase, RightFoot->RightToeBase
-]
 
 # Mo2Cap2 codec (15 joints, 47x47 heatmap)
 codec = dict(
@@ -106,7 +89,12 @@ codec = dict(
     type='Custom_mo2cap2_MSRAHeatmap'
 )
 
-custom_hooks = []
+custom_hooks = [dict(type='SyncBuffersHook')]
+
+model_wrapper_cfg = dict(
+    type='MMDistributedDataParallel',
+    find_unused_parameters=True
+)
 
 default_scope = 'mmpose'
 
@@ -147,15 +135,16 @@ model = dict(
         in_channels=2048,
         out_channels=15,  # Mo2Cap2 has 15 joints
         hmd_info_size=12,  # 9 base + 3 (neck + left_hand + right_hand from ground)
+        # V2b Optimization: EfficientHeatmapDecoder
         heatmap_decoder_type='efficient',
         decoder=codec,
-        # Stage 1 losses
+        # Stage 1 losses (baseline)
         loss=dict(
             loss_weight=1000,
             type='KeypointMSELoss',
             use_target_weight=False
         ),
-        loss_cosine_similarity=dict(loss_weight=0.1, type='cosine_similarity', skeleton=MO2CAP2_SKELETON),
+        loss_cosine_similarity=dict(loss_weight=0.1, type='cosine_similarity'),
         loss_heatmap_recon=dict(
             loss_weight=500,
             type='KeypointMSELoss',
@@ -164,10 +153,10 @@ model = dict(
         loss_limb_length=dict(loss_weight=0.25, type='limb_length'),
         loss_pose_l2norm=dict(loss_weight=1.0, type='pose_l2norm'),
         loss_hmd=dict(type='MSELoss'),
-        # Stage 2 losses
+        # Stage 2 losses (refinement)
         loss_pose_l2norm_refined=dict(loss_weight=1.0, type='pose_l2norm'),
-        loss_bone_length=dict(loss_weight=0.5, type='bone_length_loss', skeleton=MO2CAP2_SKELETON),
-        loss_symmetry=dict(loss_weight=0.1, type='symmetry_loss', symmetric_limbs=MO2CAP2_SYMMETRIC_LIMBS),
+        loss_bone_length=dict(loss_weight=0.5, type='bone_length_loss'),
+        loss_symmetry=dict(loss_weight=0.1, type='symmetry_loss'),
     ),
     test_cfg=dict(
         flip_test=False,
@@ -175,8 +164,7 @@ model = dict(
     ),
 )
 
-# Meta keys for training (includes H5 fields)
-_train_meta_keys = (
+_meta_keys = (
     'id', 'img_id', 'img_path', 'category_id', 'crowd_index',
     'ori_shape', 'img_shape', 'input_size', 'input_center',
     'input_scale', 'flip', 'flip_direction', 'flip_indices',
@@ -184,68 +172,59 @@ _train_meta_keys = (
     'h5_chunk_idx', 'h5_local_idx', 'h5_chunk_path'
 )
 
-# Meta keys for validation (JPG images, includes frame_idx/sequence_name for official eval)
-_val_meta_keys = (
-    'id', 'img_id', 'img_path', 'category_id', 'crowd_index',
-    'ori_shape', 'img_shape', 'input_size', 'input_center',
-    'input_scale', 'flip', 'flip_direction', 'flip_indices',
-    'raw_ann_info', 'dataset_name', 'action',
-    'frame_idx', 'sequence_name'  # For official per-action evaluation
-)
-
-# Training pipeline: Load from H5 chunks
+# Pipeline with Mo2Cap2-specific EnhanceHMDInfo transform
 train_pipeline = [
-    dict(type='LoadImageFromH5'),
+    dict(type='LoadImageFromH5'),  # Load from H5 chunk files
     dict(padding=1.0, type='GetBBoxCenterScale'),
     dict(input_size=(256, 256), type='TopdownAffine'),
     dict(encoder=codec, type='GenerateTarget'),
     dict(type='EnhanceHMDInfo_Mo2Cap2', mode='both_from_ground'),
-    dict(type='PackPoseInputs', meta_keys=_train_meta_keys),
+    dict(type='PackPoseInputs', meta_keys=_meta_keys),
 ]
 
-# Validation pipeline: Load JPG images from disk
-# Mo2Cap2 test images: 1280x1024, crop 128px margins from each horizontal side -> 1024x1024
 val_pipeline = [
-    dict(type='LoadImage'),  # Load from JPG files
-    dict(type='Mo2Cap2CenterCrop', margin_left=128, margin_right=128),  # Crop to 1024x1024
+    dict(type='LoadImageFromH5'),  # Use H5 for validation too
     dict(padding=1.0, type='GetBBoxCenterScale'),
     dict(input_size=(256, 256), type='TopdownAffine'),
     dict(encoder=codec, type='GenerateTarget'),
     dict(type='EnhanceHMDInfo_Mo2Cap2', mode='both_from_ground'),
-    dict(type='PackPoseInputs', meta_keys=_val_meta_keys),
+    dict(type='PackPoseInputs', meta_keys=_meta_keys),
 ]
 
 data_mode = 'topdown'
 
-# Training dataset: H5 chunks (fast loading)
+# Training dataset - H5 FAST loading
 dataset_train = dict(
     type='H5Mo2Cap2Dataset',
     data_root=data_root,
     data_mode=data_mode,
     pipeline=train_pipeline,
     input_size=(256, 256),
-    sample_interval=500,  # ~1k samples from 530k for smoke test
-    use_zoom=False,
+    sample_interval=1,  # Use all 530k samples
+    use_zoom=False,     # Do not use zoomed images
 )
 
-# Validation dataset: Test set with JPG images + MAT ground truth
+# Validation dataset - Also use H5 for consistency
+# Note: If test set is in different format, may need Mo2Cap2CocoDataset
 dataset_val = dict(
-    type='Mo2Cap2CombinedTestDataset',
-    data_root=test_data_root,
+    type='H5Mo2Cap2Dataset',
+    data_root=data_root,
     data_mode=data_mode,
     pipeline=val_pipeline,
     input_size=(256, 256),
+    sample_interval=50,  # Sample every 50 for validation (10k samples)
+    use_zoom=False,
     test_mode=True,
 )
 
 if IS_WINDOWS:
     _num_workers = 0
     _persistent_workers = False
-    _batch_size = 16
+    _batch_size = 48
 else:
-    _num_workers = 4
+    _num_workers = 6
     _persistent_workers = True
-    _batch_size = 32
+    _batch_size = 64
 
 train_dataloader = dict(
     batch_size=_batch_size,
@@ -270,26 +249,21 @@ val_dataloader = dict(
 val_evaluator = dict(
     ann_file=None,
     type='CustomMo2Cap2Metric',
-    use_action=True  # Test set has action labels (olek_outdoor, weipeng_studio)
+    use_action=False  # Training set doesn't have action labels
 )
 
-# Smoke test: Include WandB for testing
 vis_backends = [
     dict(type='LocalVisBackend'),
     dict(
-        type='WandbVisBackend',
-        init_kwargs=dict(
-            project='mo2cap2-pose-estimation',
-            name='cascaded_v2b_smoke_test',
-            tags=['mo2cap2', 'smoke_test'],
-        ),
+        init_kwargs=dict(project='mmpose_mo2cap2_cascaded_both_from_ground_v2b'),
+        type='WandbVisBackend'
     ),
 ]
 
 visualizer = dict(
     name='visualizer',
-    type='Mo2Cap2Visualizer',
+    type='CustomPose3dLocalVisualizer',
     vis_backends=vis_backends
 )
 
-work_dir = 'work_dirs/HMD_mo2cap2_cascaded_both_from_ground_v2b_small'
+work_dir = 'work_dirs/HMD_mo2cap2_cascaded_both_from_ground_v2b'

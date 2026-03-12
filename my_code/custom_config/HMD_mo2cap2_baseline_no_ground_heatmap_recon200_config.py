@@ -32,7 +32,7 @@ train_cfg = dict(
     val_interval=1,
 )
 val_cfg = dict()
-test_cfg = None
+test_cfg = dict()
 
 optim_wrapper = dict(
     optimizer=dict(lr=0.0005, type='AdamW'),

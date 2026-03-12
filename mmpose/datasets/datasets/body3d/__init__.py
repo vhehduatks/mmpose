@@ -15,6 +15,7 @@ from .mo2cap2_test_dataset import (
 	Mo2Cap2TestDataset,
 	Mo2Cap2CombinedTestDataset
 )
+from .custom_kinect_egopose_dataset import KinectEgoposeDataset
 
 __all__ = [
 	'Human36mDataset',
@@ -26,5 +27,6 @@ __all__ = [
 	'H5Mo2Cap2Dataset',
 	'H5Mo2Cap2Dataset_Lazy',
 	'Mo2Cap2TestDataset',
-	'Mo2Cap2CombinedTestDataset'
+	'Mo2Cap2CombinedTestDataset',
+	'KinectEgoposeDataset',
 	]

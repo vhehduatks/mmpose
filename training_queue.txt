@@ -52,6 +52,24 @@
 [DONE] my_code/custom_config/HMD_mo2cap2_cascaded_both_from_ground_v3a_config.py
 [DONE] my_code/custom_config/HMD_mo2cap2_cascaded_both_from_ground_v3b_config.py
 # Mo2Cap2 Previous Experiment Comparison Ablation (excluding distillation arch)
-[FAILED] my_code/custom_config/HMD_mo2cap2_baseline_no_ground_crop940_config.py
-my_code/custom_config/HMD_mo2cap2_baseline_no_ground_lr_decay_config.py
-my_code/custom_config/HMD_mo2cap2_baseline_no_ground_heatmap_recon200_config.py
+[DONE] my_code/custom_config/HMD_mo2cap2_baseline_no_ground_crop940_config.py
+[DONE] my_code/custom_config/HMD_mo2cap2_baseline_no_ground_lr_decay_config.py
+[DONE] my_code/custom_config/HMD_mo2cap2_baseline_no_ground_heatmap_recon200_config.py
+# Kinect v4 10-epoch Ablation (Ground Info vs Baseline vs Vision-Only)
+[DONE] my_code/custom_config/HMD_kinect_v4_ground_info_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v4_baseline_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v4_no_hmd_10ep_config.py
+# Kinect v4 Cascaded Refinement 10-epoch Ablation (V2b architecture)
+[DONE] my_code/custom_config/HMD_kinect_v4_cascaded_ground_info_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v4_cascaded_baseline_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v4_cascaded_no_hmd_10ep_config.py
+# Kinect v3 (preprocessing_egodataset_weightmodify_intrinsic_ver3) 10-epoch Ablation
+# Dataset: 632 train sessions / 179 val sessions (~80/20 split by batch)
+# Single-Stage
+[DONE] my_code/custom_config/HMD_kinect_v3_ground_info_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v3_baseline_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v3_no_hmd_10ep_config.py
+# Cascaded Refinement V2b
+[DONE] my_code/custom_config/HMD_kinect_v3_cascaded_ground_info_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v3_cascaded_baseline_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v3_cascaded_no_hmd_10ep_config.py

@@ -8,8 +8,15 @@ Mo2Cap2 has 15 joints with different indices than EgoPose (16 joints):
   - 7-10: RightUpLeg, RightLeg, RightFoot, RightToeBase
   - 11-14: LeftUpLeg, LeftLeg, LeftFoot, LeftToeBase
 
-IMPORTANT: keypoint3d is ROOT-RELATIVE (Neck at origin), so neck_y = 0 always.
-Ground reference is estimated from feet positions (lowest Y value).
+IMPORTANT: Since 3D joints are in CAMERA coordinates (not world coordinates),
+none of the X/Y/Z axes directly correspond to the user's height.
+We use a BODY-RELATIVE direction for ground reference:
+
+    Vector a = direction from Neck[0] toward pelvis center
+    pelvis_center = average(L.UpLeg[11], R.UpLeg[7])
+
+Ground reference is the farthest toe (L.ToeBase[14] or R.ToeBase[10])
+projected onto vector a.
 
 Working Options:
     - head_from_ground: Add only neck height from ground (10 dims)
@@ -23,14 +30,17 @@ from mmpose.registry import TRANSFORMS
 
 @TRANSFORMS.register_module()
 class EnhanceHMDInfo_Mo2Cap2:
-    """Enhance HMD info with additional dimensions from keypoint3d for Mo2Cap2.
+    """Enhance HMD info with body-relative ground reference for Mo2Cap2.
 
-    This transform adds extra information to the existing 9-dim HMD info
-    by computing additional values from the 3D keypoints.
+    This transform adds ground reference information using the body's own
+    orientation, which works regardless of camera orientation.
 
-    NOTE: keypoint3d is root-relative (Neck at origin), so neck_y = 0 always.
-    Only features that are meaningful in the root-relative coordinate system
-    are supported.
+    Method:
+        1. Vector a = normalize(pelvis_center - neck)
+           where pelvis_center = average(L.UpLeg, R.UpLeg)
+        2. Ground reference = farthest toe projection onto vector a
+           Compare L.ToeBase[14] vs R.ToeBase[10]
+        3. Heights are distances along vector a to the ground plane
 
     The base 9-dim HMD info contains:
         - right_local (3): right hand in local coordinate system
@@ -42,28 +52,25 @@ class EnhanceHMDInfo_Mo2Cap2:
     Args:
         mode (str): Enhancement mode. Options:
             - 'head_from_ground': Add only neck height from ground (10 dims)
-              This is what HMD tracking systems can directly measure.
             - 'hand_from_ground': Add left/right hand heights from ground (11 dims)
-              Hand positions relative to ground plane.
             - 'both_from_ground': Add neck + left/right hand heights (12 dims)
-              Most complete ground-based info for HMD deployment.
 
     Required Keys:
         - hmd_info: (1, 9) existing HMD info
-        - keypoint3d: (1, 15, 3) 3D keypoints (root-relative)
+        - keypoint3d: (1, 15, 3) 3D keypoints (root-relative, Neck at origin)
 
     Modified Keys:
         - hmd_info: enhanced HMD info with additional dimensions
     """
 
     # Mo2Cap2 Joint indices
-    NECK_IDX = 0          # Root joint (always at origin)
+    NECK_IDX = 0          # Root joint (at origin after root-relative transform)
     RIGHT_HAND_IDX = 3    # RightHand
     LEFT_HAND_IDX = 6     # LeftHand
-    RIGHT_FOOT_IDX = 9    # RightFoot
-    LEFT_FOOT_IDX = 13    # LeftFoot
-    RIGHT_TOE_IDX = 10    # RightToeBase
-    LEFT_TOE_IDX = 14     # LeftToeBase
+    RIGHT_UPLEG_IDX = 7   # RightUpLeg (for pelvis center)
+    LEFT_UPLEG_IDX = 11   # LeftUpLeg (for pelvis center)
+    RIGHT_TOE_IDX = 10    # RightToeBase (for ground reference)
+    LEFT_TOE_IDX = 14     # LeftToeBase (for ground reference)
 
     def __init__(self, mode: str = 'both_from_ground'):
         valid_modes = [
@@ -73,8 +80,57 @@ class EnhanceHMDInfo_Mo2Cap2:
             raise ValueError(f"Invalid mode '{mode}'. Must be one of {valid_modes}")
         self.mode = mode
 
+    def _compute_body_relative_ground(self, p3d: np.ndarray) -> dict:
+        """Compute ground reference using body-relative direction.
+
+        Args:
+            p3d: (15, 3) 3D keypoints (root-relative, Neck at origin)
+
+        Returns:
+            dict with vec_a_unit, ground_ref_proj, and joint projections
+        """
+        neck = p3d[self.NECK_IDX]  # [0, 0, 0] after root-relative
+        left_upleg = p3d[self.LEFT_UPLEG_IDX]
+        right_upleg = p3d[self.RIGHT_UPLEG_IDX]
+        left_hand = p3d[self.LEFT_HAND_IDX]
+        right_hand = p3d[self.RIGHT_HAND_IDX]
+        left_toe = p3d[self.LEFT_TOE_IDX]
+        right_toe = p3d[self.RIGHT_TOE_IDX]
+
+        # Compute pelvis center (average of UpLegs)
+        pelvis_center = (left_upleg + right_upleg) / 2
+
+        # Vector a: direction from Neck to pelvis (body "downward" direction)
+        vec_a = pelvis_center - neck  # neck is [0,0,0], so this equals pelvis_center
+        vec_a_norm = np.linalg.norm(vec_a)
+
+        if vec_a_norm < 1e-8:
+            # Fallback: use a default direction if pelvis is at neck
+            vec_a_unit = np.array([0, 0, 1], dtype=np.float32)
+        else:
+            vec_a_unit = vec_a / vec_a_norm
+
+        # Project toes onto vector a to find ground reference
+        # Projection: proj = dot(point - neck, vec_a_unit) = dot(point, vec_a_unit)
+        left_toe_proj = np.dot(left_toe, vec_a_unit)
+        right_toe_proj = np.dot(right_toe, vec_a_unit)
+
+        # Ground reference is the farthest toe along vector a
+        ground_ref_proj = max(left_toe_proj, right_toe_proj)
+
+        # Project hands onto vector a
+        left_hand_proj = np.dot(left_hand, vec_a_unit)
+        right_hand_proj = np.dot(right_hand, vec_a_unit)
+
+        return {
+            'vec_a_unit': vec_a_unit,
+            'ground_ref_proj': ground_ref_proj,
+            'left_hand_proj': left_hand_proj,
+            'right_hand_proj': right_hand_proj,
+        }
+
     def __call__(self, results: dict) -> dict:
-        """Enhance HMD info with additional dimensions.
+        """Enhance HMD info with body-relative ground reference.
 
         Args:
             results: Dict containing 'hmd_info' and 'keypoint3d'
@@ -87,37 +143,29 @@ class EnhanceHMDInfo_Mo2Cap2:
 
         # Extract keypoints (root-relative: Neck at origin)
         p3d = keypoint3d[0]  # (15, 3)
-        neck = p3d[self.NECK_IDX]  # Always [0, 0, 0]
-        right_hand = p3d[self.RIGHT_HAND_IDX]
-        left_hand = p3d[self.LEFT_HAND_IDX]
-        right_foot = p3d[self.RIGHT_FOOT_IDX]
-        left_foot = p3d[self.LEFT_FOOT_IDX]
 
-        # Estimate ground from feet positions (lowest Y value)
-        # In root-relative coords, feet Y are negative (below neck)
-        ground_y = min(left_foot[1], right_foot[1])
+        # Compute body-relative ground reference
+        ground_data = self._compute_body_relative_ground(p3d)
+        ground_ref_proj = ground_data['ground_ref_proj']
 
-        # Compute additional features based on mode
+        # Compute ground info based on mode
         if self.mode == 'head_from_ground':
-            # Simplest ground-based feature: only neck height from ground
-            # This is what HMD tracking systems can directly measure
-            # neck_from_ground = 0 - ground_y = -ground_y (positive value)
-            neck_from_ground = -ground_y
+            # Neck height from ground (along body axis)
+            # Since neck is at origin, neck_proj = 0, so height = ground_ref_proj
+            neck_from_ground = ground_ref_proj
             extra = np.array([neck_from_ground], dtype=np.float32)
 
         elif self.mode == 'hand_from_ground':
-            # Hand heights from ground (controller tracking)
-            # Useful for understanding arm/hand positions relative to floor
-            left_hand_from_ground = left_hand[1] - ground_y
-            right_hand_from_ground = right_hand[1] - ground_y
+            # Hand heights from ground (along body axis)
+            left_hand_from_ground = ground_ref_proj - ground_data['left_hand_proj']
+            right_hand_from_ground = ground_ref_proj - ground_data['right_hand_proj']
             extra = np.array([left_hand_from_ground, right_hand_from_ground], dtype=np.float32)
 
         elif self.mode == 'both_from_ground':
             # Complete ground-based info: neck + both hands from ground
-            # Most comprehensive for HMD deployment scenarios
-            neck_from_ground = -ground_y
-            left_hand_from_ground = left_hand[1] - ground_y
-            right_hand_from_ground = right_hand[1] - ground_y
+            neck_from_ground = ground_ref_proj
+            left_hand_from_ground = ground_ref_proj - ground_data['left_hand_proj']
+            right_hand_from_ground = ground_ref_proj - ground_data['right_hand_proj']
             extra = np.array([neck_from_ground, left_hand_from_ground, right_hand_from_ground], dtype=np.float32)
 
         # Concatenate to hmd_info
