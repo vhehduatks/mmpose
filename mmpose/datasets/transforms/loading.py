@@ -162,6 +162,9 @@ class LoadImageFromH5Cache(object):
         to_float32 (bool): Whether to convert to float32. Default: False.
     """
 
+    # Class-level cache for preloaded images (populated by dataset)
+    _preloaded_images = {}
+
     def __init__(self, to_float32: bool = False):
         self.to_float32 = to_float32
         self._h5_cache = {}  # Cache open file handles
@@ -188,11 +191,14 @@ class LoadImageFromH5Cache(object):
             raise KeyError('h5_cache_path and h5_img_idx are required '
                           'for LoadImageFromH5Cache')
 
-        # Open H5 file (cached)
-        hf = self._get_h5_handle(h5_path)
-
         # Load image: (H, W, 3) uint8 RGB
-        img = hf['images'][img_idx]
+        if h5_path in self._preloaded_images:
+            # Fast path: read from preloaded in-memory array
+            img = self._preloaded_images[h5_path][img_idx]
+        else:
+            # Fallback: per-sample H5 random access
+            hf = self._get_h5_handle(h5_path)
+            img = hf['images'][img_idx]
 
         # Convert RGB to BGR (OpenCV format)
         img = img[:, :, ::-1].copy()

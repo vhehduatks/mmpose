@@ -1,39 +1,39 @@
 """
-Cascaded Refinement + Both From Ground V3 (Body-Axis Fix)
-
-Ground Info Ablation: HEAD + HANDS
-- EnhanceHMDInfo mode: 'both_from_ground' (12-dim = 9 base + 3 heights)
-- Uses FIXED body-axis method (not Y-axis)
-
-This experiment tests the full ground reference information.
-
-Comparison:
-- head_from_ground: 10-dim
-- hand_from_ground: 11-dim
-- both_from_ground: 12-dim (this config)
+egodataset_flag_fixed_ver5 - Cascaded Refinement V2b + No-HMD (vision-only) (10 epochs)
+- Dataset: KinectEgoposeDataset (egodataset_flag_fixed_ver5)
+- Split: 32 train batches (632 sessions) / 9 val batches (179 sessions) ~80/20
+- Backbone: ResNet-101 pretrained on COCO
+- Head: CustomEgoposeCascadedRefinementHead_enhanced (hmd_info_size=9)
+- Epochs: 10
 """
 
 import platform
 
 IS_WINDOWS = platform.system() == 'Windows'
 
+# =============================================================================
+# Data paths
+# =============================================================================
 if IS_WINDOWS:
-    data_root = r'F:\egodataset_cache\h5cache'
+    data_root_train = r'C:\placeholder\Train'
+    data_root_test = r'C:\placeholder\Test'
     pretrained_coco = r'F:\egodataset_cache\pose_coco\coco_pose_resnet_101_256x192.pth.tar'
-    cache_file_train = r'F:\egodataset_cache\h5cache\train_cache_with_images.h5'
-    cache_file_val = r'F:\egodataset_cache\h5cache\test_cache_with_images.h5'
 else:
-    data_root = '/mnt/dataset_vol/h5cache'
+    data_root_train = '/mnt/dataset_vol/kinect_v5_split/Train'
+    data_root_test = '/mnt/dataset_vol/kinect_v5_split/Val'
     pretrained_coco = '/mnt/dataset_vol/pretrained/coco_pose_resnet_101_256x192.pth.tar'
-    cache_file_train = '/mnt/dataset_vol/h5cache/train_cache_v2.h5'
-    cache_file_val = '/mnt/dataset_vol/h5cache/test_cache_v2.h5'
 
+# =============================================================================
+# Training Config
+# =============================================================================
 auto_scale_lr = dict(base_batch_size=256)
 backend_args = dict(backend='local')
 
+_max_epochs = 10
+
 train_cfg = dict(
     type='EpochBasedTrainLoop',
-    max_epochs=10,
+    max_epochs=_max_epochs,
     val_interval=1,
 )
 val_cfg = dict()
@@ -47,8 +47,8 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=10,
-        milestones=[4, 7],
+        end=_max_epochs,
+        milestones=[5, 8],
         gamma=0.5,
         by_epoch=True
     ),
@@ -56,24 +56,26 @@ param_scheduler = [
 
 default_hooks = dict(
     checkpoint=dict(
+        type='CheckpointHook',
         interval=1,
         max_keep_ckpts=3,
-        rule='less',
         save_best='xregopose/Full Body_All_mpjpe',
-        type='CheckpointHook',
-        by_epoch=True
+        rule='less',
     ),
     visualization=dict(
         enable=True,
-        interval=100,
+        interval=50,
         kpt_thr=0.3,
-        type='H5CacheVisualizationHook'
+        type='PoseVisualizationHook'
     )
 )
 
 randomness = dict(seed=42, deterministic=False)
 resume = False
 
+# =============================================================================
+# Codec
+# =============================================================================
 codec = dict(
     heatmap_size=(47, 47),
     input_size=(256, 256),
@@ -81,6 +83,9 @@ codec = dict(
     type='Custom_mo2cap2_MSRAHeatmap'
 )
 
+# =============================================================================
+# Custom Hooks
+# =============================================================================
 custom_hooks = [dict(type='SyncBuffersHook')]
 
 model_wrapper_cfg = dict(
@@ -88,6 +93,9 @@ model_wrapper_cfg = dict(
     find_unused_parameters=True
 )
 
+# =============================================================================
+# Environment Config
+# =============================================================================
 default_scope = 'mmpose'
 
 env_cfg = dict(
@@ -105,6 +113,9 @@ log_processor = dict(
     window_size=50
 )
 
+# =============================================================================
+# Model
+# =============================================================================
 model = dict(
     type='TopdownPoseEstimator',
     backbone=dict(
@@ -125,7 +136,7 @@ model = dict(
         type='CustomEgoposeCascadedRefinementHead_enhanced',
         in_channels=2048,
         out_channels=16,
-        hmd_info_size=12,  # 9 base + 3 (head + left_hand + right_hand from ground)
+        hmd_info_size=9,
         heatmap_decoder_type='efficient',
         decoder=codec,
         # Stage 1 losses
@@ -154,67 +165,70 @@ model = dict(
     ),
 )
 
+# =============================================================================
+# Pipeline
+# =============================================================================
 _meta_keys = (
     'id', 'img_id', 'img_path', 'category_id', 'crowd_index',
     'ori_shape', 'img_shape', 'input_size', 'input_center',
     'input_scale', 'flip', 'flip_direction', 'flip_indices',
     'raw_ann_info', 'dataset_name', 'action',
-    'h5_cache_path', 'h5_img_idx'
 )
 
-# BOTH FROM GROUND mode
 train_pipeline = [
-    dict(type='LoadImageFromH5Cache'),
-    dict(padding=1.0, type='GetBBoxCenterScale'),
-    dict(input_size=(256, 256), type='TopdownAffine'),
+    dict(type='LoadImage'),
+    dict(type='EgoImageResize', input_size=(256, 256)),
     dict(encoder=codec, type='GenerateTarget'),
-    dict(type='EnhanceHMDInfo', mode='both_from_ground'),
     dict(type='PackPoseInputs', meta_keys=_meta_keys),
 ]
 
 val_pipeline = [
-    dict(type='LoadImageFromH5Cache'),
-    dict(padding=1.0, type='GetBBoxCenterScale'),
-    dict(input_size=(256, 256), type='TopdownAffine'),
+    dict(type='LoadImage'),
+    dict(type='EgoImageResize', input_size=(256, 256)),
     dict(encoder=codec, type='GenerateTarget'),
-    dict(type='EnhanceHMDInfo', mode='both_from_ground'),
-    dict(type='PackPoseInputs', meta_keys=_meta_keys, pack_transformed=True),
+    dict(type='PackPoseInputs', meta_keys=_meta_keys),
 ]
 
+# =============================================================================
+# Dataset Config
+# =============================================================================
 data_mode = 'topdown'
-dataset_type = 'H5CachedEgoposeDataset'
+dataset_type = 'KinectEgoposeDataset'
 
 dataset_train = dict(
     type=dataset_type,
     data_mode=data_mode,
-    data_root=data_root,
-    cache_file=cache_file_train,
-    rebuild_cache=False,
-    use_cached_images=True,
+    data_root=data_root_train,
+    ground_info_mode=None,
+    use_hmd=False,  # Vision-only: zero HMD info
     filter_cfg=dict(filter_empty_gt=False, min_size=32),
+    use_2d_visible=True,
     pipeline=train_pipeline,
 )
 
 dataset_val = dict(
     type=dataset_type,
     data_mode=data_mode,
-    data_root=data_root,
-    cache_file=cache_file_val,
-    rebuild_cache=False,
-    use_cached_images=True,
+    data_root=data_root_test,
+    ground_info_mode=None,
+    use_hmd=False,  # Vision-only: zero HMD info
     filter_cfg=dict(filter_empty_gt=False, min_size=32),
+    use_2d_visible=True,
     pipeline=val_pipeline,
     test_mode=True,
 )
 
+# =============================================================================
+# DataLoader Config
+# =============================================================================
 if IS_WINDOWS:
     _num_workers = 0
     _persistent_workers = False
-    _batch_size = 48
+    _batch_size = 8
 else:
-    _num_workers = 6
+    _num_workers = 4
     _persistent_workers = True
-    _batch_size = 64
+    _batch_size = 16
 
 train_dataloader = dict(
     batch_size=_batch_size,
@@ -236,29 +250,34 @@ val_dataloader = dict(
     sampler=dict(shuffle=False, type='DefaultSampler')
 )
 
+# =============================================================================
+# Evaluator
+# =============================================================================
 val_evaluator = dict(
     ann_file=None,
     type='CustomxRegoposeMetric',
     use_action=True
 )
 
-test_dataloader = val_dataloader
-test_evaluator = val_evaluator
-test_cfg = dict()
-
+# =============================================================================
+# Visualization
+# =============================================================================
 vis_backends = [
     dict(type='LocalVisBackend'),
     dict(
-        init_kwargs=dict(project='mmpose_xregopose_ground_ablation_v3_both'),
-        type='WandbVisBackend'
+        type='WandbVisBackend',
+        init_kwargs=dict(
+            project='egodataset_flag_fixed_ver5-cascaded-no-hmd',
+            name='HMD_kinect_v5_flag_cascaded_no_hmd_10ep',
+            tags=['kinect_v5_flag', 'cascaded_no_hmd', '10ep'],
+        ),
     ),
 ]
 
 visualizer = dict(
     name='visualizer',
-    type='CustomPose3dLocalVisualizer_xregopose_ground_info',
-    ground_info_mode='both_from_ground',
+    type='CustomPose3dLocalVisualizer_xregopose',
     vis_backends=vis_backends
 )
 
-work_dir = 'work_dirs/HMD_xregopose_cascaded_both_from_ground_v3_full'
+work_dir = 'work_dirs/HMD_kinect_v5_flag_cascaded_no_hmd_10ep'

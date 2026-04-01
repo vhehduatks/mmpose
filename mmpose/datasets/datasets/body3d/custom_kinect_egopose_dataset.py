@@ -107,12 +107,14 @@ class KinectEgoposeDataset(BaseDataset):
                  max_refetch: int = 1000,
                  sample_interval: int = 1,
                  ground_info_mode: Optional[str] = None,
-                 use_hmd: bool = True):
+                 use_hmd: bool = True,
+                 use_2d_visible: bool = False):
         self.data_mode = data_mode
         self.data_root = data_root
         self.sample_interval = sample_interval
         self.ground_info_mode = ground_info_mode
         self.use_hmd = use_hmd
+        self.use_2d_visible = use_2d_visible
         self.hmd_dim = self.GROUND_INFO_MODES.get(ground_info_mode, 9)
 
         if ground_info_mode is not None and ground_info_mode not in self.GROUND_INFO_MODES:
@@ -121,7 +123,8 @@ class KinectEgoposeDataset(BaseDataset):
                 f"Must be one of {list(self.GROUND_INFO_MODES.keys())}")
 
         print_log(f'KinectEgoposeDataset: ground_info_mode={ground_info_mode}, '
-                  f'hmd_dim={self.hmd_dim}, use_hmd={use_hmd}',
+                  f'hmd_dim={self.hmd_dim}, use_hmd={use_hmd}, '
+                  f'use_2d_visible={use_2d_visible}',
                   logger='current', level=logging.INFO)
 
         super().__init__(
@@ -288,6 +291,13 @@ class KinectEgoposeDataset(BaseDataset):
         skel_2d = {j['name']: j for j in data['skeleton_2d']}
         skel_3d = {j['name']: j for j in data['skeleton_3d']}
 
+        # Skip frames flagged as tracking errors (all 2D joints invisible)
+        if self.use_2d_visible:
+            has_any_visible = any(
+                j.get('visible', True) for j in data['skeleton_2d'])
+            if not has_any_visible:
+                return None
+
         # Map 32 Kinect joints → 16 xRegopose joints
         p2d = np.zeros((16, 2), dtype=np.float32)
         p3d = np.zeros((16, 3), dtype=np.float32)
@@ -315,6 +325,7 @@ class KinectEgoposeDataset(BaseDataset):
 
             p2d[xr_idx] = [j2d['u'], j2d['v']]
             p3d[xr_idx] = [j3d['x'], j3d['y'], j3d['z']]
+
             vis[xr_idx] = 1.0 if conf_3d >= 2 else 0.0
 
         # Convert mm → meters
@@ -369,7 +380,7 @@ class KinectEgoposeDataset(BaseDataset):
             'bbox_score': np.ones(1, dtype=np.float32),
             'hmd_info': hmd_info.reshape(1, self.hmd_dim),
             'keypoints_visible': vis.reshape(1, 16),
-            'action': np.array([action]),
+            'action': action,
         }
 
     # ── HMD preprocessing (adapted from H5CachedEgoposeDataset) ────────

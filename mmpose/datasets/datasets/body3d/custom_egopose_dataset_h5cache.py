@@ -427,7 +427,7 @@ class H5CachedEgoposeDataset(BaseDataset):
             hmd_info = hf['hmd_info'][:]
             actions = hf['actions'][:]
 
-            # Check if we can use cached images (lazy loading)
+            # Check if we can use cached images (lazy loading via transform)
             if self.use_cached_images and has_images and 'images' in hf:
                 self._has_cached_images = True
                 self._cached_img_size = img_size
@@ -473,12 +473,11 @@ class H5CachedEgoposeDataset(BaseDataset):
                 'bbox_score': np.ones(1, dtype=np.float32),
                 'hmd_info': hmd_info[idx].copy(),
                 'keypoints_visible': np.ones((1, 16), dtype=np.float32),
-                'action': np.array([action])
+                'action': action
             }
 
-            # Add lazy loading info for cached images (H5 with embedded images)
+            # Add image loading info for cached images
             if self._has_cached_images:
-                # Store H5 cache path and index for LoadImageFromH5Cache transform
                 data_info['h5_cache_path'] = self.cache_file
                 data_info['h5_img_idx'] = idx
 
@@ -628,8 +627,8 @@ class H5CachedEgoposeDataset_SegDepth(H5CachedEgoposeDataset):
                 'bbox_score': np.ones(1, dtype=np.float32),
                 'hmd_info': hmd_info[idx],
                 'keypoints_visible': np.ones((1, 16), dtype=np.float32),
-                'action': np.array([actions[idx] if isinstance(actions[idx], str)
-                                   else actions[idx].decode('utf8')])
+                'action': actions[idx] if isinstance(actions[idx], str)
+                                   else actions[idx].decode('utf8')
             }
             data_list.append(data_info)
 

@@ -307,6 +307,11 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
             Options: 10 (head_height), 11 (torso_reference), 12 (head_hands_y)
         use_hmd_in_refinement (bool): Whether to add HMD info to Stage 2.
             Default: True.
+        use_refinement (bool): Whether to use Stage 2 refinement.
+            When False, only Stage 1 (coarse 3D) is used. Default: True.
+        use_auxiliary_decoders (bool): Whether to use auxiliary decoders
+            (heatmap reconstruction + HMD reconstruction). When False, these
+            auxiliary losses are disabled. Default: True.
     """
 
     _version = 2
@@ -323,6 +328,8 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
                  # HMD configuration (NEW)
                  hmd_info_size: int = 9,
                  use_hmd_in_refinement: bool = True,
+                 use_refinement: bool = True,
+                 use_auxiliary_decoders: bool = True,
                  # Stage 1 losses
                  loss: ConfigType = dict(type='KeypointMSELoss'),
                  loss_pose_l2norm: ConfigType = dict(type='pose_l2norm'),
@@ -357,19 +364,23 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
         self.out_channels = out_channels
         self.hmd_info_size = hmd_info_size
         self.use_hmd_in_refinement = use_hmd_in_refinement
+        self.use_refinement = use_refinement
+        self.use_auxiliary_decoders = use_auxiliary_decoders
 
         # Stage 1 loss modules
         self.loss_module = MODELS.build(loss)
         self.loss_pose_l2norm_module = MODELS.build(loss_pose_l2norm)
         self.loss_cosine_similarity_module = MODELS.build(loss_cosine_similarity)
         self.loss_limb_length_module = MODELS.build(loss_limb_length)
-        self.loss_heatmap_recon_module = MODELS.build(loss_heatmap_recon)
-        self.loss_hmd_module = MODELS.build(loss_hmd)
+        if use_auxiliary_decoders:
+            self.loss_heatmap_recon_module = MODELS.build(loss_heatmap_recon)
+            self.loss_hmd_module = MODELS.build(loss_hmd)
 
-        # Stage 2 loss modules
-        self.loss_pose_l2norm_refined_module = MODELS.build(loss_pose_l2norm_refined)
-        self.loss_bone_length_module = MODELS.build(loss_bone_length)
-        self.loss_symmetry_module = MODELS.build(loss_symmetry)
+        # Stage 2 loss modules (only when refinement is enabled)
+        if use_refinement:
+            self.loss_pose_l2norm_refined_module = MODELS.build(loss_pose_l2norm_refined)
+            self.loss_bone_length_module = MODELS.build(loss_bone_length)
+            self.loss_symmetry_module = MODELS.build(loss_symmetry)
 
         # ---- Stage 1 modules (with configurable hmd_info_size) ----
         self.encoder = EnhancedEncoder(
@@ -379,12 +390,13 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
         )
 
         self.heatmap_decoder_type = heatmap_decoder_type
-        if heatmap_decoder_type == 'efficient':
-            self.heatmap_decoder = EfficientHeatmapDecoder(
-                num_classes=out_channels, heatmap_resolution=47, input_size=64)
-        else:
-            self.heatmap_decoder = HeatmapDecoder(
-                num_classes=out_channels, heatmap_resolution=47, input_size=64)
+        if use_auxiliary_decoders:
+            if heatmap_decoder_type == 'efficient':
+                self.heatmap_decoder = EfficientHeatmapDecoder(
+                    num_classes=out_channels, heatmap_resolution=47, input_size=64)
+            else:
+                self.heatmap_decoder = HeatmapDecoder(
+                    num_classes=out_channels, heatmap_resolution=47, input_size=64)
 
         self.pose_decoder = LinearModel(
             input_size=64,
@@ -453,41 +465,42 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
         )
 
         # ---- Stage 2 modules (with HMD info support) ----
-        self.spatial_proj = nn.Sequential(
-            nn.Linear(self.in_channels, spatial_feat_dim),
-            nn.ReLU(inplace=True),
-        )
-
-        self.pose_encoder_net = nn.Sequential(
-            nn.Linear(out_channels * 3, pose_feat_dim),
-            nn.ReLU(inplace=True),
-        )
-
-        num_bones = len(EGOPOSE_SKELETON)
-        self.kin_encoder = nn.Sequential(
-            nn.Linear(num_bones * 4, kin_feat_dim),
-            nn.ReLU(inplace=True),
-        )
-
-        # HMD encoder for Stage 2 (NEW)
-        if use_hmd_in_refinement:
-            self.hmd_encoder_stage2 = nn.Sequential(
-                nn.Linear(hmd_info_size, 32),
+        if use_refinement:
+            self.spatial_proj = nn.Sequential(
+                nn.Linear(self.in_channels, spatial_feat_dim),
                 nn.ReLU(inplace=True),
             )
-            hmd_stage2_dim = 32
-        else:
-            self.hmd_encoder_stage2 = None
-            hmd_stage2_dim = 0
 
-        # Per-joint input: coarse_xyz(3) + spatial(64) + Z(64) + pose_ctx(128) + kin(64) + hmd(32) = 355
-        refinement_input_size = 3 + spatial_feat_dim + 64 + pose_feat_dim + kin_feat_dim + hmd_stage2_dim
-        self.refinement_mlp = RefinementMLP(
-            input_size=refinement_input_size,
-            hidden_size=refinement_hidden_size,
-            num_stage=refinement_num_stage,
-            p_dropout=refinement_dropout,
-        )
+            self.pose_encoder_net = nn.Sequential(
+                nn.Linear(out_channels * 3, pose_feat_dim),
+                nn.ReLU(inplace=True),
+            )
+
+            num_bones = len(EGOPOSE_SKELETON)
+            self.kin_encoder = nn.Sequential(
+                nn.Linear(num_bones * 4, kin_feat_dim),
+                nn.ReLU(inplace=True),
+            )
+
+            # HMD encoder for Stage 2 (NEW)
+            if use_hmd_in_refinement:
+                self.hmd_encoder_stage2 = nn.Sequential(
+                    nn.Linear(hmd_info_size, 32),
+                    nn.ReLU(inplace=True),
+                )
+                hmd_stage2_dim = 32
+            else:
+                self.hmd_encoder_stage2 = None
+                hmd_stage2_dim = 0
+
+            # Per-joint input: coarse_xyz(3) + spatial(64) + Z(64) + pose_ctx(128) + kin(64) + hmd(32) = 355
+            refinement_input_size = 3 + spatial_feat_dim + 64 + pose_feat_dim + kin_feat_dim + hmd_stage2_dim
+            self.refinement_mlp = RefinementMLP(
+                input_size=refinement_input_size,
+                hidden_size=refinement_hidden_size,
+                num_stage=refinement_num_stage,
+                p_dropout=refinement_dropout,
+            )
 
         self._register_load_state_dict_pre_hook(self._load_state_dict_pre_hook)
 
@@ -659,11 +672,16 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
         z_plus_hmd = z + hmd_info_
 
         batch_3d_keypoints = self.pose_decoder(z_plus_hmd)
-        generated_heatmaps = self.heatmap_decoder(z_plus_hmd)
-        hmd_recons = preprocess_hmd_data_batch(batch_3d_keypoints)
 
-        # Stage 2: refinement with HMD info
-        if backbone_feat is not None:
+        if self.use_auxiliary_decoders:
+            generated_heatmaps = self.heatmap_decoder(z_plus_hmd)
+            hmd_recons = preprocess_hmd_data_batch(batch_3d_keypoints)
+        else:
+            generated_heatmaps = None
+            hmd_recons = None
+
+        # Stage 2: refinement with HMD info (skip if use_refinement=False)
+        if self.use_refinement and backbone_feat is not None:
             coarse_pose = batch_3d_keypoints.reshape(-1, 16, 3)
             refined_pose = self.refine(
                 coarse_pose, batch_outputs, backbone_feat, z,
@@ -675,17 +693,18 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
 
         # Pack results
         preds = []
-        for (keypoints, kp3d, scores, visibility,
-             gen_hm, hmd_rec) in zip(
+        for i, (keypoints, kp3d, scores, visibility) in enumerate(zip(
                 batch_keypoints, output_3d, batch_scores,
-                batch_visibility, generated_heatmaps, hmd_recons):
+                batch_visibility)):
             kp3d = kp3d.unsqueeze(dim=0)
-            hmd_rec = hmd_rec.unsqueeze(dim=0)
-            gen_hm = gen_hm.unsqueeze(dim=0)
-            pred = InstanceData(
+            pred_kwargs = dict(
                 keypoints=keypoints, keypoint_scores=scores,
-                keypoint_3d=kp3d, generated_heatmap=gen_hm,
-                hmd_recon=hmd_rec)
+                keypoint_3d=kp3d)
+            if generated_heatmaps is not None:
+                pred_kwargs['generated_heatmap'] = generated_heatmaps[i].unsqueeze(dim=0)
+            if hmd_recons is not None:
+                pred_kwargs['hmd_recon'] = hmd_recons[i].unsqueeze(dim=0)
+            pred = InstanceData(**pred_kwargs)
             if visibility is not None:
                 pred.keypoints_visible = visibility
             preds.append(pred)
@@ -745,9 +764,6 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
         z_plus_hmd = z + hmd_info_
 
         coarse_pose = self.pose_decoder(z_plus_hmd)
-        recon_heatmap = self.heatmap_decoder(z_plus_hmd)
-        hmd_recon = preprocess_hmd_data_batch(coarse_pose)
-
         coarse_pose = coarse_pose.reshape(-1, 16, 3)
 
         # Stage 1 losses
@@ -757,41 +773,47 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
             coarse_pose, gt_keypoint_3d)
         loss_limb = self.loss_limb_length_module(
             coarse_pose, gt_keypoint_3d)
-        loss_heatmap_recon = self.loss_heatmap_recon_module(
-            recon_heatmap, gt_heatmaps, keypoint_weights)
         loss_kpt = self.loss_module(
             pred_fields, gt_heatmaps, keypoint_weights)
-
-        # HMD loss uses only base 9 dims
-        HMD_info_base = HMD_info[:, :9]
-        loss_hmd = self.loss_hmd_module(
-            hmd_recon.to(torch.double), HMD_info_base.to(torch.double))
-
-        # Stage 2: refinement with HMD info
-        refined_pose = self.refine(
-            coarse_pose, pred_fields, backbone_feat, z,
-            hmd_info=HMD_info  # Pass full HMD info to Stage 2
-        )
-
-        # Stage 2 losses
-        loss_refined = self.loss_pose_l2norm_refined_module(
-            refined_pose, gt_keypoint_3d)
-        loss_bone = self.loss_bone_length_module(
-            refined_pose, gt_keypoint_3d)
-        loss_sym = self.loss_symmetry_module(refined_pose)
 
         # Aggregate losses
         losses = dict()
         losses.update(loss_pose_l2norm=torch.mean(loss_pose_l2norm))
         losses.update(loss_cosine_similarity=torch.mean(loss_cosine))
         losses.update(loss_limb_length=torch.mean(loss_limb))
-        losses.update(loss_heatmap_recon=loss_heatmap_recon)
-        losses.update(loss_hmd=loss_hmd)
         losses.update(loss_kpt=loss_kpt)
-        # Stage 2
-        losses.update(loss_pose_l2norm_refined=torch.mean(loss_refined))
-        losses.update(loss_bone_length=torch.mean(loss_bone))
-        losses.update(loss_symmetry=torch.mean(loss_sym))
+
+        # Auxiliary decoder losses (heatmap reconstruction + HMD reconstruction)
+        if self.use_auxiliary_decoders:
+            recon_heatmap = self.heatmap_decoder(z_plus_hmd)
+            hmd_recon = preprocess_hmd_data_batch(coarse_pose)
+
+            loss_heatmap_recon = self.loss_heatmap_recon_module(
+                recon_heatmap, gt_heatmaps, keypoint_weights)
+            HMD_info_base = HMD_info[:, :9]
+            loss_hmd = self.loss_hmd_module(
+                hmd_recon.to(torch.double), HMD_info_base.to(torch.double))
+
+            losses.update(loss_heatmap_recon=loss_heatmap_recon)
+            losses.update(loss_hmd=loss_hmd)
+
+        # Stage 2: refinement with HMD info (skip if use_refinement=False)
+        if self.use_refinement:
+            refined_pose = self.refine(
+                coarse_pose, pred_fields, backbone_feat, z,
+                hmd_info=HMD_info  # Pass full HMD info to Stage 2
+            )
+
+            # Stage 2 losses
+            loss_refined = self.loss_pose_l2norm_refined_module(
+                refined_pose, gt_keypoint_3d)
+            loss_bone = self.loss_bone_length_module(
+                refined_pose, gt_keypoint_3d)
+            loss_sym = self.loss_symmetry_module(refined_pose)
+
+            losses.update(loss_pose_l2norm_refined=torch.mean(loss_refined))
+            losses.update(loss_bone_length=torch.mean(loss_bone))
+            losses.update(loss_symmetry=torch.mean(loss_sym))
 
         # Accuracy
         if train_cfg.get('compute_acc', True):

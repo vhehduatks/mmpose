@@ -272,12 +272,11 @@ class CustomxRegoposeMetric(BaseMetric):
 
 		wandb_results = OrderedDict()
 		for k, v in mo2cap2_results.items():
-			loss_name = k
 			if k == 'Per Joint':
 				continue
 			for k_, v_ in v.items():
-				loss_name += f'_{k_}_mpjpe'
-				wandb_results.update({loss_name: v_['mpjpe']})
+				metric_name = f'{k}_{k_}_mpjpe'
+				wandb_results.update({metric_name: v_['mpjpe']})
 
 		eval_results = OrderedDict()
 		logger.info(f'Evaluating {self.__class__.__name__}...')

@@ -73,3 +73,41 @@
 [DONE] my_code/custom_config/HMD_kinect_v3_cascaded_ground_info_10ep_config.py
 [DONE] my_code/custom_config/HMD_kinect_v3_cascaded_baseline_10ep_config.py
 [DONE] my_code/custom_config/HMD_kinect_v3_cascaded_no_hmd_10ep_config.py
+# Kinect v3 Blend (preprocessing_egodataset_weightmodify_intrinsic_ver3_blend) 10-epoch Ablation
+# Single-Stage
+[DONE] my_code/custom_config/HMD_kinect_v3_ground_info_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v3_baseline_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v3_no_hmd_10ep_config.py
+# Cascaded Refinement V2b
+[DONE] my_code/custom_config/HMD_kinect_v3_cascaded_ground_info_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v3_cascaded_baseline_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v3_cascaded_no_hmd_10ep_config.py
+# Kinect v3 Blend - Cascaded Re-run
+[FAILED] my_code/custom_config/HMD_kinect_v3_cascaded_ground_info_10ep_config.py
+[FAILED] my_code/custom_config/HMD_kinect_v3_cascaded_baseline_10ep_config.py
+[FAILED] my_code/custom_config/HMD_kinect_v3_cascaded_no_hmd_10ep_config.py
+# Kinect v3 Blend - Cascaded Re-run (fixed symlinks)
+[DONE] my_code/custom_config/HMD_kinect_v3_cascaded_ground_info_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v3_cascaded_baseline_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v3_cascaded_no_hmd_10ep_config.py
+# Kinect v3 Blend - Cascaded 20-epoch (with per-action metrics)
+[DONE] my_code/custom_config/HMD_kinect_v3_cascaded_ground_info_20ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v3_cascaded_baseline_20ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v3_cascaded_no_hmd_20ep_config.py
+# egodataset_flag_fixed_ver5 - 10ep (use_2d_visible=True, skip error frames)
+# Single-Stage
+[FAILED] my_code/custom_config/HMD_kinect_v5_flag_ground_info_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_baseline_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_no_hmd_10ep_config.py
+# Cascaded Refinement V2b
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_ground_info_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_baseline_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_no_hmd_10ep_config.py
+# Re-run ground_info (failed due to DDP vis_data race condition)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_ground_info_10ep_config.py
+# Cascaded Stage 1 Only (for paper ablation: same architecture, no refinement)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_stage1_only_ground_info_10ep_config.py
+# Cascaded No Auxiliary Decoders (ablation: no heatmap recon + no HMD recon losses)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_no_aux_decoder_ground_info_10ep_config.py
+# Single-stage + LHF (9-dim) for paper TABLE V
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_stage1_only_baseline_10ep_config.py

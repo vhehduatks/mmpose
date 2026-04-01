@@ -132,7 +132,27 @@ def map_action_name(name) -> str:
     if suffix:
         name = name.replace(suffix[0], '')
 
-    return name if name in ACTION_SET else 'All'
+    # Check xRegopose action set first
+    if name in ACTION_SET:
+        return name
+
+    # Kinect action grouping: map specific actions to categories
+    # e.g., 'Dancing1', 'Dancing2' -> 'Dancing'
+    # e.g., 'Gaming-Archery', 'Gaming-Boxing' -> 'Gaming'
+    # e.g., 'Workout-BicelCurl', 'Workout-FrontRaise' -> 'Workout'
+    kinect_prefix_map = {
+        'Dancing': 'Dancing',
+        'Gaming': 'Gaming',
+        'Greeting': 'Greeting',
+        'Reacting': 'Reacting',
+        'Workout': 'Workout',
+    }
+    for prefix, category in kinect_prefix_map.items():
+        if name.startswith(prefix):
+            return category
+
+    # Return raw name for other Kinect actions (e.g., Patting, Talking, Walking, UpperStreching)
+    return name if name != '' else 'All'
 
 
 def compute_mpjpe(pred: np.ndarray, gt: np.ndarray,

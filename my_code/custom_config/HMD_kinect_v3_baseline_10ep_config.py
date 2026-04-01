@@ -1,6 +1,6 @@
 """
-preprocessing_egodataset_weightmodify_intrinsic_ver3 - Single-Stage + Baseline 9-dim (10 epochs)
-- Dataset: KinectEgoposeDataset (preprocessing_egodataset_weightmodify_intrinsic_ver3)
+preprocessing_egodataset_weightmodify_intrinsic_ver3_blend - Single-Stage + Baseline 9-dim (10 epochs)
+- Dataset: KinectEgoposeDataset (preprocessing_egodataset_weightmodify_intrinsic_ver3_blend)
 - Split: 32 train batches (632 sessions) / 9 val batches (179 sessions) ~80/20
 - Backbone: ResNet-101 pretrained on COCO
 - Head: CustomxRegoposeBaselinel1 (hmd_info_size=9)
@@ -19,8 +19,8 @@ if IS_WINDOWS:
     data_root_test = r'C:\placeholder\Test'
     pretrained_coco = r'F:\egodataset_cache\pose_coco\coco_pose_resnet_101_256x192.pth.tar'
 else:
-    data_root_train = '/mnt/dataset_vol/kinect_v3_split/Train'
-    data_root_test = '/mnt/dataset_vol/kinect_v3_split/Val'
+    data_root_train = '/mnt/dataset_vol/kinect_v3_blend_split/Train'
+    data_root_test = '/mnt/dataset_vol/kinect_v3_blend_split/Val'
     pretrained_coco = '/mnt/dataset_vol/pretrained/coco_pose_resnet_101_256x192.pth.tar'
 
 # =============================================================================
@@ -256,7 +256,7 @@ vis_backends = [
     dict(
         type='WandbVisBackend',
         init_kwargs=dict(
-            project='kinect_v3-baseline-9dim',
+            project='kinect_v3-blend-baseline-9dim',
             name='HMD_kinect_v3_baseline_10ep',
             tags=['kinect_v3', 'baseline', '10ep'],
         ),
