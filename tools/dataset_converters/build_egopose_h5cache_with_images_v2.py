@@ -15,6 +15,12 @@ Usage:
         --data-root /path/to/xr_egopose/TrainSet \
         --output /mnt/dataset_vol/h5cache/train_cache_with_images_v2.h5 \
         --num-workers 8
+
+    # Include depth maps:
+    python tools/dataset_converters/build_egopose_h5cache_with_images_v2.py \
+        --data-root /path/to/xr_egopose/TrainSet \
+        --output /mnt/dataset_vol/h5cache/train_cache_with_images_depth_v2.h5 \
+        --num-workers 8 --include-depth
 """
 
 import argparse
@@ -61,6 +67,8 @@ def parse_args():
                         help='Image size to resize to')
     parser.add_argument('--max-samples', type=int, default=None,
                         help='Maximum number of samples to include (for smoke test)')
+    parser.add_argument('--include-depth', action='store_true',
+                        help='Include depth maps in the cache')
     return parser.parse_args()
 
 
@@ -134,6 +142,34 @@ def load_and_preprocess_image(img_path: str, img_size: int = 256) -> np.ndarray:
     return img
 
 
+def load_and_preprocess_depth(depth_path: str, img_size: int = 256) -> np.ndarray:
+    """Load and preprocess depth map with the same crop as RGB.
+
+    Depth PNGs are 8-bit grayscale. Same crop and resize as RGB images.
+    Crop: 1280x800 -> remove left 195, right 165 -> 920x800
+    Resize: 920x800 -> 256x256
+    """
+    depth = cv2.imread(depth_path, cv2.IMREAD_GRAYSCALE)
+    if depth is None:
+        return np.zeros((img_size, img_size), dtype=np.uint8)
+
+    h, w = depth.shape[:2]
+
+    # Apply custom crop (same as RGB)
+    if w == ORIG_WIDTH and h == ORIG_HEIGHT:
+        depth = depth[:, CROP_LEFT:w-CROP_RIGHT]  # 920x800
+    else:
+        left = int(CROP_LEFT * w / ORIG_WIDTH)
+        right = int(CROP_RIGHT * w / ORIG_WIDTH)
+        depth = depth[:, left:w-right]
+
+    # Resize to target size (INTER_NEAREST to preserve depth values)
+    depth = cv2.resize(depth, (img_size, img_size),
+                       interpolation=cv2.INTER_NEAREST)
+
+    return depth
+
+
 def transform_keypoints_2d(p2d: np.ndarray, img_size: int = 256) -> np.ndarray:
     """Transform 2D keypoints to match the cropped and resized image.
 
@@ -184,9 +220,10 @@ def parse_single_sample(json_path: str, img_size: int = 256) -> Tuple[np.ndarray
     return p2d, p3d, hmd, action
 
 
-def process_batch(args: Tuple[List[str], List[str], List[int], int]) -> Dict:
-    """Process a batch of samples (images + annotations)."""
-    json_paths, img_paths, indices, img_size = args
+def process_batch(args: Tuple) -> Dict:
+    """Process a batch of samples (images + annotations + optional depth)."""
+    json_paths, img_paths, indices, img_size = args[:4]
+    depth_paths = args[4] if len(args) > 4 else None
 
     results = {
         'indices': indices,
@@ -194,10 +231,13 @@ def process_batch(args: Tuple[List[str], List[str], List[int], int]) -> Dict:
         'keypoint3d': [],
         'hmd_info': [],
         'actions': [],
-        'images': []
+        'images': [],
     }
+    if depth_paths is not None:
+        results['depths'] = []
 
-    for json_path, img_path in zip(json_paths, img_paths):
+    for batch_i, (json_path, img_path) in enumerate(
+            zip(json_paths, img_paths)):
         try:
             p2d, p3d, hmd, action = parse_single_sample(json_path, img_size)
             img = load_and_preprocess_image(img_path, img_size)
@@ -207,13 +247,22 @@ def process_batch(args: Tuple[List[str], List[str], List[int], int]) -> Dict:
             results['hmd_info'].append(hmd)
             results['actions'].append(action)
             results['images'].append(img)
+
+            if depth_paths is not None:
+                depth = load_and_preprocess_depth(
+                    depth_paths[batch_i], img_size)
+                results['depths'].append(depth)
         except Exception as e:
             print(f'Error processing {json_path}: {e}')
             results['keypoints'].append(np.zeros((16, 2), dtype=np.float32))
             results['keypoint3d'].append(np.zeros((16, 3), dtype=np.float32))
             results['hmd_info'].append(np.zeros(9, dtype=np.float32))
             results['actions'].append('unknown')
-            results['images'].append(np.zeros((img_size, img_size, 3), dtype=np.uint8))
+            results['images'].append(
+                np.zeros((img_size, img_size, 3), dtype=np.uint8))
+            if depth_paths is not None:
+                results['depths'].append(
+                    np.zeros((img_size, img_size), dtype=np.uint8))
 
     return results
 
@@ -250,20 +299,35 @@ def build_cache_with_images(data_root: str, output_path: str,
                             num_workers: int = 4,
                             chunk_size: int = 500,
                             img_size: int = 256,
-                            max_samples: int = None):
-    """Build H5 cache with preprocessed images."""
+                            max_samples: int = None,
+                            include_depth: bool = False):
+    """Build H5 cache with preprocessed images and optional depth maps."""
+
+    root_dirs = ['rgba', 'json']
+    if include_depth:
+        root_dirs.append('depth')
 
     print(f'Indexing dataset files from {data_root}...')
-    index = index_directory(data_root, ['rgba', 'json'])
+    index = index_directory(data_root, root_dirs)
 
     n_samples = len(index['json'])
     print(f'Found {n_samples} samples')
+
+    if include_depth:
+        n_depth = len(index['depth'])
+        print(f'Found {n_depth} depth maps')
+        if n_depth != n_samples:
+            print(f'WARNING: depth count ({n_depth}) != sample count '
+                  f'({n_samples}). Using min of both.')
+            n_samples = min(n_samples, n_depth)
 
     # Limit samples if max_samples is specified
     if max_samples is not None and max_samples < n_samples:
         print(f'Limiting to {max_samples} samples (smoke test mode)')
         index['json'] = index['json'][:max_samples]
         index['rgba'] = index['rgba'][:max_samples]
+        if include_depth:
+            index['depth'] = index['depth'][:max_samples]
         n_samples = max_samples
 
     if n_samples == 0:
@@ -276,6 +340,8 @@ def build_cache_with_images(data_root: str, output_path: str,
     print(f'  Crop: left={CROP_LEFT}, right={CROP_RIGHT}')
     print(f'  After crop: {CROP_WIDTH}x{CROP_HEIGHT}')
     print(f'  Output size: {img_size}x{img_size}')
+    if include_depth:
+        print(f'  Depth maps: ENABLED (grayscale, same crop/resize)')
 
     # Create output directory if needed
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -298,17 +364,25 @@ def build_cache_with_images(data_root: str, output_path: str,
         # Images dataset - no compression for maximum read speed
         hf.create_dataset('images', (n_samples, img_size, img_size, 3), dtype=np.uint8,
                          chunks=(10, img_size, img_size, 3))
+        # Depth dataset (optional)
+        if include_depth:
+            hf.create_dataset(
+                'depths', (n_samples, img_size, img_size), dtype=np.uint8,
+                chunks=(10, img_size, img_size))
 
         # Process in chunks
         chunks = []
         for i in range(0, n_samples, chunk_size):
             end_idx = min(i + chunk_size, n_samples)
-            chunks.append((
+            chunk_args = (
                 index['json'][i:end_idx],
                 index['rgba'][i:end_idx],
                 list(range(i, end_idx)),
-                img_size
-            ))
+                img_size,
+            )
+            if include_depth:
+                chunk_args = chunk_args + (index['depth'][i:end_idx],)
+            chunks.append(chunk_args)
 
         if num_workers > 1:
             with ProcessPoolExecutor(max_workers=num_workers) as executor:
@@ -325,6 +399,8 @@ def build_cache_with_images(data_root: str, output_path: str,
                         hf['keypoint3d'][idx, 0] = result['keypoint3d'][i]
                         hf['hmd_info'][idx, 0] = result['hmd_info'][i]
                         hf['images'][idx] = result['images'][i]
+                        if include_depth:
+                            hf['depths'][idx] = result['depths'][i]
         else:
             for chunk in tqdm(chunks, desc='Processing chunks'):
                 result = process_batch(chunk)
@@ -335,11 +411,14 @@ def build_cache_with_images(data_root: str, output_path: str,
                     hf['keypoint3d'][idx, 0] = result['keypoint3d'][i]
                     hf['hmd_info'][idx, 0] = result['hmd_info'][i]
                     hf['images'][idx] = result['images'][i]
+                    if include_depth:
+                        hf['depths'][idx] = result['depths'][i]
 
         # Metadata
         hf.attrs['n_samples'] = n_samples
-        hf.attrs['version'] = '2.1'  # V2.1 with custom crop
+        hf.attrs['version'] = '2.2' if include_depth else '2.1'
         hf.attrs['has_images'] = True
+        hf.attrs['has_depths'] = include_depth
         hf.attrs['img_size'] = img_size
         hf.attrs['crop_left'] = CROP_LEFT
         hf.attrs['crop_right'] = CROP_RIGHT
@@ -362,7 +441,8 @@ def main():
         num_workers=args.num_workers,
         chunk_size=args.chunk_size,
         img_size=args.img_size,
-        max_samples=args.max_samples
+        max_samples=args.max_samples,
+        include_depth=args.include_depth
     )
 
 
