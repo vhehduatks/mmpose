@@ -269,3 +269,27 @@ def get_enhanced_hmd_size(mode: str) -> int:
         'relative_heights': 12,  # 9 + 3
     }
     return sizes.get(mode, 9)
+
+
+@TRANSFORMS.register_module()
+class ZeroHMDInfo:
+    """Replace HMD info with zeros (vision-only ablation).
+
+    Use this transform for fair comparison with methods that do not
+    use HMD/controller tracking input. The HMD info tensor is kept
+    at the same size but filled with zeros, so the model architecture
+    remains unchanged.
+
+    Args:
+        hmd_dim (int): Expected HMD info dimension. Default: 9.
+    """
+
+    def __init__(self, hmd_dim: int = 9):
+        self.hmd_dim = hmd_dim
+
+    def __call__(self, results: dict) -> dict:
+        results['hmd_info'] = np.zeros((1, self.hmd_dim), dtype=np.float32)
+        return results
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}(hmd_dim={self.hmd_dim})'

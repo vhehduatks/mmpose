@@ -47,7 +47,7 @@ from mmpose.registry import MODELS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-DATA_ROOT = '/mnt/express1m2/egodataset_for_paper/0223hyeonghwan_batch_ego'
+DATA_ROOT = '/mnt/express1m2/egodataset_for_paper/Test_batch_ego'
 
 CONFIG_LHF = str(REPO_ROOT / 'my_code/custom_config/HMD_kinect_v5_flag_cascaded_baseline_10ep_config.py')
 CKPT_LHF = str(REPO_ROOT / 'work_dirs/HMD_kinect_v5_flag_cascaded_baseline_10ep/best_xregopose_Full Body_All_mpjpe_epoch_9.pth')
@@ -367,7 +367,7 @@ def draw_3d_pose(ax, pose, title='', color_mode='pred', alpha=1.0):
     ax.set_ylim(center[1] - max_range, center[1] + max_range)
     ax.set_zlim(center[2] - max_range, center[2] + max_range)
 
-    ax.view_init(elev=15, azim=70)
+    ax.view_init(elev=90, azim=-70)
     ax.set_xticklabels([])
     ax.set_yticklabels([])
     ax.set_zticklabels([])

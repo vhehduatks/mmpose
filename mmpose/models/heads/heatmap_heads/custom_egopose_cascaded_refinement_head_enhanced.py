@@ -312,6 +312,11 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
         use_auxiliary_decoders (bool): Whether to use auxiliary decoders
             (heatmap reconstruction + HMD reconstruction). When False, these
             auxiliary losses are disabled. Default: True.
+        fusion_mode (str): How to fuse latent z (64-dim) and HMD embedding.
+            'addition': element-wise add, output 64-dim (default)
+            'concat_128': concatenate [z, hmd] → 128-dim (pose_decoder input=128)
+            'concat_64': concatenate [z, hmd] → 128-dim → Linear → 64-dim
+            'cross_attention': cross-attention z queries hmd, output 64-dim
     """
 
     _version = 2
@@ -330,6 +335,7 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
                  use_hmd_in_refinement: bool = True,
                  use_refinement: bool = True,
                  use_auxiliary_decoders: bool = True,
+                 fusion_mode: str = 'addition',
                  # Stage 1 losses
                  loss: ConfigType = dict(type='KeypointMSELoss'),
                  loss_pose_l2norm: ConfigType = dict(type='pose_l2norm'),
@@ -366,6 +372,7 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
         self.use_hmd_in_refinement = use_hmd_in_refinement
         self.use_refinement = use_refinement
         self.use_auxiliary_decoders = use_auxiliary_decoders
+        self.fusion_mode = fusion_mode
 
         # Stage 1 loss modules
         self.loss_module = MODELS.build(loss)
@@ -390,25 +397,55 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
         )
 
         self.heatmap_decoder_type = heatmap_decoder_type
-        if use_auxiliary_decoders:
-            if heatmap_decoder_type == 'efficient':
-                self.heatmap_decoder = EfficientHeatmapDecoder(
-                    num_classes=out_channels, heatmap_resolution=47, input_size=64)
-            else:
-                self.heatmap_decoder = HeatmapDecoder(
-                    num_classes=out_channels, heatmap_resolution=47, input_size=64)
-
-        self.pose_decoder = LinearModel(
-            input_size=64,
-            num_classes=16,
-            linear_size=512,
-            num_stage=1,
-            p_dropout=0.3
-        )
+        # NOTE: heatmap_decoder input_size set after fusion_mode determines fused_dim
+        self._hmd_info_size_init = hmd_info_size  # store for building heatmap_decoder later
 
         self.hmd_linear = nn.Sequential(
             nn.Linear(hmd_info_size, 64),
             nn.ReLU(inplace=True)
+        )
+
+        # Fusion-mode-dependent modules
+        if fusion_mode == 'addition':
+            # z(64) + hmd(64) → 64-dim
+            fused_dim = 64
+        elif fusion_mode == 'concat_128':
+            # [z(64), hmd(64)] → 128-dim (no projection)
+            fused_dim = 128
+        elif fusion_mode == 'concat_64':
+            # [z(64), hmd(64)] → 128 → Linear → 64-dim
+            self.fusion_proj = nn.Sequential(
+                nn.Linear(128, 64),
+                nn.ReLU(inplace=True),
+            )
+            fused_dim = 64
+        elif fusion_mode == 'cross_attention':
+            # z attends to hmd via multi-head cross-attention → 64-dim
+            self.fusion_cross_attn = nn.MultiheadAttention(
+                embed_dim=64, num_heads=4, batch_first=True)
+            self.fusion_norm = nn.LayerNorm(64)
+            fused_dim = 64
+        else:
+            raise ValueError(f"Unknown fusion_mode: '{fusion_mode}'")
+
+        self.fused_dim = fused_dim
+
+        if use_auxiliary_decoders:
+            if heatmap_decoder_type == 'efficient':
+                self.heatmap_decoder = EfficientHeatmapDecoder(
+                    num_classes=out_channels, heatmap_resolution=47,
+                    input_size=fused_dim)
+            else:
+                self.heatmap_decoder = HeatmapDecoder(
+                    num_classes=out_channels, heatmap_resolution=47,
+                    input_size=fused_dim)
+
+        self.pose_decoder = LinearModel(
+            input_size=fused_dim,
+            num_classes=16,
+            linear_size=512,
+            num_stage=1,
+            p_dropout=0.3
         )
 
         self.avr_pool = nn.AdaptiveAvgPool2d((1, 1))
@@ -503,6 +540,30 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
             )
 
         self._register_load_state_dict_pre_hook(self._load_state_dict_pre_hook)
+
+    def _fuse(self, z, hmd_emb):
+        """Fuse latent z and HMD embedding according to fusion_mode.
+
+        Args:
+            z: (B, 64) encoder latent
+            hmd_emb: (B, 64) HMD linear embedding
+
+        Returns:
+            Fused tensor of shape (B, fused_dim)
+        """
+        if self.fusion_mode == 'addition':
+            return z + hmd_emb
+        elif self.fusion_mode == 'concat_128':
+            return torch.cat([z, hmd_emb], dim=1)
+        elif self.fusion_mode == 'concat_64':
+            return self.fusion_proj(torch.cat([z, hmd_emb], dim=1))
+        elif self.fusion_mode == 'cross_attention':
+            # z as query (B,1,64), hmd as key/value (B,1,64)
+            q = z.unsqueeze(1)
+            kv = hmd_emb.unsqueeze(1)
+            attn_out, _ = self.fusion_cross_attn(q, kv, kv)
+            out = self.fusion_norm(z + attn_out.squeeze(1))
+            return out
 
     def _make_conv_layers(self, in_channels, layer_out_channels, layer_kernel_sizes):
         layers = []
@@ -669,7 +730,7 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
         # Stage 1: encode + predict
         z = self.encoder(batch_outputs.to(torch.float32))
         hmd_info_ = self.hmd_linear(HMD_info.to(torch.float32))
-        z_plus_hmd = z + hmd_info_
+        z_plus_hmd = self._fuse(z, hmd_info_)
 
         batch_3d_keypoints = self.pose_decoder(z_plus_hmd)
 
@@ -761,7 +822,7 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
         # Stage 1: encode, predict
         z = self.encoder(pred_fields.to(torch.float32))
         hmd_info_ = self.hmd_linear(HMD_info.to(torch.float32))
-        z_plus_hmd = z + hmd_info_
+        z_plus_hmd = self._fuse(z, hmd_info_)
 
         coarse_pose = self.pose_decoder(z_plus_hmd)
         coarse_pose = coarse_pose.reshape(-1, 16, 3)

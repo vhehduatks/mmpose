@@ -111,3 +111,11 @@
 [DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_no_aux_decoder_ground_info_10ep_config.py
 # Single-stage + LHF (9-dim) for paper TABLE V
 [DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_stage1_only_baseline_10ep_config.py
+# Fusion mode ablation on xR-EgoPose (Cascaded+GBH, TABLE IV)
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_gbh_fusion_addition_config.py
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_gbh_fusion_concat_128_config.py
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_gbh_fusion_concat_64_config.py
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_gbh_fusion_cross_attention_config.py
+# Vision-only (no HMD) on xR-EgoPose — fair comparison baseline
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_no_hmd_config.py
+[DONE] my_code/custom_config/HMD_xregopose_single_stage_no_hmd_config.py
