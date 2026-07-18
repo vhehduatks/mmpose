@@ -24,8 +24,11 @@ Requirements (already in mmpose env):
 import argparse
 import base64
 import io
+import json as _json
 import os
 import sys
+import threading
+from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -49,7 +52,8 @@ from generate_fig7_qualitative import (
     run_inference, compute_mpjpe,
 )
 
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, send_from_directory
+from werkzeug.utils import secure_filename
 
 # ── Global state ─────────────────────────────────────────────────────────
 
@@ -62,6 +66,11 @@ g_device = 'cuda:0'
 g_cache = {}            # (session, frame_id) → inference results
 g_success = []          # selected success items
 g_failure = []          # selected failure items
+
+# ── Video export config ──────────────────────────────────────────────────
+
+VIDEO_DIR = str(REPO_ROOT / 'my_code/my_paper/videos')
+g_video_lock = threading.Lock()
 
 
 # ── Rendering helpers ────────────────────────────────────────────────────
@@ -278,6 +287,105 @@ def _save_3d_plot(path, gt, pred, elev, azim,
     plt.close(fig)
 
 
+# ── Video rendering ──────────────────────────────────────────────────────
+
+def _render_3d_np(gt, pred, elev, azim, show_gt, show_pred,
+                  line_width, zoom, hide_axes, width, height, dpi=100):
+    """Render a 3D overlay to a BGR numpy array of exact (height, width).
+
+    Physical figsize is kept constant (5"x5") so linewidths and markers scale
+    the same regardless of dpi — dpi then acts as a supersampling/quality
+    knob. The rendered image is resized down to (width, height) with area
+    interpolation for crisp output.
+    """
+    figsize_in = 5.0
+    fig = plt.figure(figsize=(figsize_in, figsize_in), dpi=dpi)
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
+    ax = fig.add_subplot(111, projection='3d')
+
+    all_pts = []
+    if show_gt and gt is not None:
+        all_pts.append(gt)
+    if show_pred and pred is not None:
+        all_pts.append(pred)
+    if not all_pts:
+        plt.close(fig)
+        return np.full((height, width, 3), 255, dtype=np.uint8)
+
+    combined = np.concatenate(all_pts, axis=0)
+    center = combined.mean(axis=0)
+    rng = max(np.abs(combined - center).max(), 0.3) * 1.3 * zoom
+
+    gt_lw = max(line_width * 0.8, 1.0)
+    kpt_s_pred = max(16 * line_width, 20)
+    kpt_s_gt = max(12 * line_width, 15)
+
+    if show_gt and gt is not None:
+        _draw_skeleton(ax, gt,
+                       [(0.55, 0.55, 0.55)] * len(SKELETON),
+                       [(0.45, 0.45, 0.45)] * 16,
+                       gt_lw, kpt_s_gt, 0.5, '--', 'gray', 0.3, 3)
+    if show_pred and pred is not None:
+        _draw_skeleton(ax, pred, LINK_COLORS, KPT_COLORS,
+                       line_width, kpt_s_pred, 1.0, '-', 'white', 0.5, 5)
+
+    ax.set_xlim(center[0] - rng, center[0] + rng)
+    ax.set_ylim(center[1] - rng, center[1] + rng)
+    ax.set_zlim(center[2] - rng, center[2] + rng)
+    ax.view_init(elev=elev, azim=azim)
+    for fn in (ax.set_xticklabels, ax.set_yticklabels, ax.set_zticklabels):
+        fn([])
+    ax.tick_params(axis='both', which='both', length=0)
+    if hide_axes:
+        ax.set_axis_off()
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=dpi, facecolor='white')
+    plt.close(fig)
+    buf.seek(0)
+    arr = np.frombuffer(buf.read(), dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        return np.full((height, width, 3), 255, dtype=np.uint8)
+    if img.shape[:2] != (height, width):
+        img = cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
+    return img
+
+
+def _label_bar(width, title, sub, bar_h=34):
+    bar = np.full((bar_h, width, 3), 30, dtype=np.uint8)
+    cv2.putText(bar, title, (10, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                (255, 255, 255), 1, cv2.LINE_AA)
+    if sub:
+        cv2.putText(bar, sub, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.42,
+                    (200, 200, 200), 1, cv2.LINE_AA)
+    return bar
+
+
+def _make_input_panel(frame, panel_size, show_labels):
+    inp = cv2.imread(frame['img_path'])
+    if inp is None:
+        inp = np.full((panel_size, panel_size, 3), 255, dtype=np.uint8)
+    else:
+        inp = cv2.resize(inp, (panel_size, panel_size),
+                         interpolation=cv2.INTER_AREA)
+    if show_labels:
+        sub = f"{frame['action']}  frame {int(frame['frame_id']):d}"
+        inp = np.vstack([_label_bar(panel_size, 'Input', sub), inp])
+    return inp
+
+
+def _make_3d_panel(gt, pred, elev, azim, show_gt, show_pred,
+                   line_width, zoom, hide_axes, panel_size, dpi,
+                   title, sub_label, show_labels):
+    img = _render_3d_np(gt, pred, elev, azim, show_gt, show_pred,
+                        line_width, zoom, hide_axes,
+                        panel_size, panel_size, dpi)
+    if show_labels:
+        img = np.vstack([_label_bar(panel_size, title, sub_label), img])
+    return img
+
+
 # ── Flask app ────────────────────────────────────────────────────────────
 
 app = Flask(__name__)
@@ -398,8 +506,6 @@ def api_scan():
     Query params: threshold, session (__all__ or name), mode (success|failure|both)
     Streams: progress events, then a final 'done' event with results JSON.
     """
-    import json as _json
-
     threshold = float(request.args.get('threshold', 10))
     target_session = request.args.get('session', '__all__')
     mode = request.args.get('mode', 'both')
@@ -452,6 +558,72 @@ def api_scan():
     return Response(generate(), mimetype='text/event-stream')
 
 
+@app.route('/api/session_avg')
+def api_session_avg():
+    """Compute per-session mean MPJPE (LHF vs GBH) across every frame.
+
+    Streams progress then a final 'done' event with one row per session plus
+    a weighted 'overall' aggregate across all sessions.
+    """
+    total = sum(len(g_session_frames.get(s, [])) for s in g_sessions)
+
+    def generate():
+        results = []
+        done = 0
+        for sess in g_sessions:
+            frames = g_session_frames.get(sess, [])
+            if not frames:
+                continue
+            sums = {k: 0.0 for k in (
+                'full_lhf', 'up_lhf', 'lo_lhf',
+                'full_gbh', 'up_gbh', 'lo_gbh')}
+            for fi in range(len(frames)):
+                data = get_predictions(sess, fi)
+                for k in sums:
+                    sums[k] += float(data[k])
+                done += 1
+                if done % 10 == 0 or done == total:
+                    yield f"data: {_json.dumps({'type':'progress','done':done,'total':total,'sessions':len(results)})}\n\n"
+            n = len(frames)
+            avg = {k: v / n for k, v in sums.items()}
+            action = '_'.join(sess.split('_')[:-2])
+            results.append(dict(
+                session=sess, action=action, n_frames=n,
+                full_lhf=round(avg['full_lhf'], 1),
+                up_lhf=round(avg['up_lhf'], 1),
+                lo_lhf=round(avg['lo_lhf'], 1),
+                full_gbh=round(avg['full_gbh'], 1),
+                up_gbh=round(avg['up_gbh'], 1),
+                lo_gbh=round(avg['lo_gbh'], 1),
+                full_delta=round(avg['full_lhf'] - avg['full_gbh'], 1),
+                up_delta=round(avg['up_lhf'] - avg['up_gbh'], 1),
+                lo_delta=round(avg['lo_lhf'] - avg['lo_gbh'], 1),
+            ))
+
+        overall = None
+        if results:
+            tot_n = sum(r['n_frames'] for r in results)
+            if tot_n > 0:
+                def wavg(key):
+                    return sum(r[key] * r['n_frames'] for r in results) / tot_n
+                overall = dict(
+                    session='__overall__', action='OVERALL', n_frames=tot_n,
+                    full_lhf=round(wavg('full_lhf'), 1),
+                    up_lhf=round(wavg('up_lhf'), 1),
+                    lo_lhf=round(wavg('lo_lhf'), 1),
+                    full_gbh=round(wavg('full_gbh'), 1),
+                    up_gbh=round(wavg('up_gbh'), 1),
+                    lo_gbh=round(wavg('lo_gbh'), 1),
+                )
+                overall['full_delta'] = round(overall['full_lhf'] - overall['full_gbh'], 1)
+                overall['up_delta'] = round(overall['up_lhf'] - overall['up_gbh'], 1)
+                overall['lo_delta'] = round(overall['lo_lhf'] - overall['lo_gbh'], 1)
+
+        yield f"data: {_json.dumps({'type':'done','results':results,'overall':overall})}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream')
+
+
 @app.route('/api/export', methods=['POST'])
 def api_export():
     body = request.get_json(force=True)
@@ -465,6 +637,149 @@ def api_export():
     if out_dir is None:
         return jsonify(error='Lists are empty'), 400
     return jsonify(out_dir=out_dir, files=files, count=len(files), dpi=dpi)
+
+
+@app.route('/api/video_render')
+def api_video_render():
+    """Stream MP4 rendering progress over SSE for [start, end] frame range.
+
+    Produces one MP4 per panel (input / lhf / gbh) reflecting the current
+    view settings (azim, elev, line_width, zoom, dpi, show_gt, show_pred,
+    hide_axes).
+    """
+    session = request.args.get('session', g_sessions[0] if g_sessions else '')
+    try:
+        start = int(request.args.get('start', 0))
+        end = int(request.args.get('end', 0))
+    except ValueError:
+        return Response(
+            f"data: {_json.dumps({'type':'error','msg':'Invalid start/end'})}\n\n",
+            mimetype='text/event-stream')
+    fps = float(request.args.get('fps', 15))
+    panel_size = int(request.args.get('panel_size', 480))
+    azim = int(request.args.get('azim', 70))
+    elev = int(request.args.get('elev', 15))
+    show_gt = request.args.get('show_gt', 'true') == 'true'
+    show_pred = request.args.get('show_pred', 'true') == 'true'
+    line_width = float(request.args.get('line_width', 2.5))
+    zoom = float(request.args.get('zoom', 1.0))
+    hide_axes = request.args.get('hide_axes', 'false') == 'true'
+    show_labels = request.args.get('show_labels', 'true') == 'true'
+    dpi = max(50, min(int(request.args.get('dpi', 200)), 600))
+    raw_name = (request.args.get('filename', '') or '').strip()
+
+    def err_stream(msg):
+        return Response(
+            f"data: {_json.dumps({'type':'error','msg':msg})}\n\n",
+            mimetype='text/event-stream')
+
+    if session not in g_session_frames:
+        return err_stream('Session not found')
+
+    n = len(g_session_frames[session])
+    if n == 0:
+        return err_stream('Session has no frames')
+    start = max(0, min(start, n - 1))
+    end = max(start, min(end, n - 1))
+
+    os.makedirs(VIDEO_DIR, exist_ok=True)
+    if raw_name:
+        prefix = raw_name
+        if prefix.lower().endswith('.mp4'):
+            prefix = prefix[:-4]
+        prefix = secure_filename(prefix)
+    else:
+        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        prefix = secure_filename(f'lhf_gbh_{session}_{start}-{end}_{stamp}')
+    if not prefix:
+        prefix = f'video_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
+
+    panel_keys = ('input', 'lhf', 'gbh')
+    panel_titles = {'input': 'Input', 'lhf': 'LHF + GT', 'gbh': 'GBH + GT'}
+    paths = {k: os.path.join(VIDEO_DIR, f'{prefix}_{k}.mp4') for k in panel_keys}
+
+    total = end - start + 1
+
+    def build_panels(idx):
+        frame = g_session_frames[session][idx]
+        data = get_predictions(session, idx)
+        sub_lhf = (f"{frame['action']}  f{int(frame['frame_id']):d}  "
+                   f"full={data['full_lhf']:.0f}mm  lo={data['lo_lhf']:.0f}mm")
+        sub_gbh = (f"{frame['action']}  f{int(frame['frame_id']):d}  "
+                   f"full={data['full_gbh']:.0f}mm  lo={data['lo_gbh']:.0f}mm")
+        return {
+            'input': _make_input_panel(frame, panel_size, show_labels),
+            'lhf': _make_3d_panel(frame['p3d'], data['pred_lhf'],
+                                  elev, azim, show_gt, show_pred,
+                                  line_width, zoom, hide_axes,
+                                  panel_size, dpi,
+                                  panel_titles['lhf'], sub_lhf, show_labels),
+            'gbh': _make_3d_panel(frame['p3d'], data['pred_gbh'],
+                                  elev, azim, show_gt, show_pred,
+                                  line_width, zoom, hide_axes,
+                                  panel_size, dpi,
+                                  panel_titles['gbh'], sub_gbh, show_labels),
+        }
+
+    def generate():
+        with g_video_lock:
+            try:
+                probe = build_panels(start)
+            except Exception as ex:
+                yield f"data: {_json.dumps({'type':'error','msg':f'Frame render failed: {ex}'})}\n\n"
+                return
+
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writers = {}
+            for k in panel_keys:
+                h, w = probe[k].shape[:2]
+                wr = cv2.VideoWriter(paths[k], fourcc, fps, (w, h))
+                if not wr.isOpened():
+                    for other in writers.values():
+                        other.release()
+                    yield f"data: {_json.dumps({'type':'error','msg':f'VideoWriter failed to open for {k} (codec unavailable?)'})}\n\n"
+                    return
+                writers[k] = wr
+
+            try:
+                for k in panel_keys:
+                    writers[k].write(probe[k])
+                yield f"data: {_json.dumps({'type':'progress','done':1,'total':total})}\n\n"
+
+                for i in range(start + 1, end + 1):
+                    try:
+                        frames = build_panels(i)
+                    except Exception as ex:
+                        yield f"data: {_json.dumps({'type':'error','msg':f'Frame {i} failed: {ex}'})}\n\n"
+                        return
+                    for k in panel_keys:
+                        writers[k].write(frames[k])
+                    done = i - start + 1
+                    if done % 3 == 0 or done == total:
+                        yield f"data: {_json.dumps({'type':'progress','done':done,'total':total})}\n\n"
+            finally:
+                for wr in writers.values():
+                    wr.release()
+
+        files = []
+        for k in panel_keys:
+            p = paths[k]
+            try:
+                size_mb = round(os.path.getsize(p) / (1024 * 1024), 2)
+            except OSError:
+                size_mb = 0.0
+            files.append(dict(key=k, title=panel_titles[k],
+                              filename=os.path.basename(p),
+                              path=p, size_mb=size_mb))
+        yield f"data: {_json.dumps({'type':'done','files':files,'frames':total,'fps':fps,'dpi':dpi})}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream')
+
+
+@app.route('/api/video_file/<path:filename>')
+def api_video_file(filename):
+    return send_from_directory(VIDEO_DIR, filename, mimetype='video/mp4',
+                               as_attachment=False)
 
 
 def _fmt_list(lst):
@@ -721,6 +1036,81 @@ table.mpjpe td:first-child, table.mpjpe th:first-child { text-align: left; }
       </div>
     </div>
 
+    <div class="card">
+      <h3>Per-Session Average MPJPE</h3>
+      <div style="font-size:11px; color:#666; margin-bottom:6px;">
+        Mean MPJPE (LHF vs GBH) per session across every frame. Click a row to jump.
+      </div>
+      <button class="btn" id="avgBtn"
+              style="background:#555; width:100%; margin-bottom:6px;"
+              onclick="doSessionAvg()">Compute Session Averages</button>
+      <div id="avgProgress" style="display:none; margin-bottom:6px;">
+        <div style="background:#e0e0e0; border-radius:4px; height:18px; overflow:hidden; position:relative;">
+          <div id="avgBar" style="background:#555; height:100%; width:0%; transition:width 0.15s; border-radius:4px;"></div>
+          <span id="avgBarText" style="position:absolute; top:0; left:0; right:0; text-align:center;
+                font-size:11px; line-height:18px; color:#333; font-weight:600;"></span>
+        </div>
+      </div>
+      <div id="avgStatus" style="font-size:11px; color:#666; margin-bottom:4px;"></div>
+      <div id="avgResults" style="max-height:280px; overflow:auto; border:1px solid #eee; border-radius:4px;">
+        <div class="empty">Click "Compute Session Averages" to scan all frames.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Video Export (MP4)</h3>
+      <div style="display:flex; gap:6px; align-items:end; margin-bottom:6px;">
+        <div class="ctrl-group" style="flex:1">
+          <label>Start Frame</label>
+          <div style="display:flex; gap:4px;">
+            <input type="number" id="vidStart" value="0" min="0"
+                   style="flex:1; padding:4px; border:1px solid #ccc; border-radius:4px;">
+            <button class="btn btn-sm" onclick="vidSetCur('start')">now</button>
+          </div>
+        </div>
+        <div class="ctrl-group" style="flex:1">
+          <label>End Frame</label>
+          <div style="display:flex; gap:4px;">
+            <input type="number" id="vidEnd" value="0" min="0"
+                   style="flex:1; padding:4px; border:1px solid #ccc; border-radius:4px;">
+            <button class="btn btn-sm" onclick="vidSetCur('end')">now</button>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex; gap:6px; align-items:end; margin-bottom:6px;">
+        <div class="ctrl-group" style="flex:1">
+          <label>FPS</label>
+          <input type="number" id="vidFps" value="15" min="1" max="60" step="1"
+                 style="width:100%; padding:4px; border:1px solid #ccc; border-radius:4px;">
+        </div>
+        <div class="ctrl-group" style="flex:1">
+          <label>Panel (px)</label>
+          <input type="number" id="vidPanel" value="480" min="128" max="1024" step="32"
+                 style="width:100%; padding:4px; border:1px solid #ccc; border-radius:4px;">
+        </div>
+        <div class="ctrl-group" style="padding-bottom:4px;">
+          <label style="font-size:12px;"><input type="checkbox" id="vidLabels" checked> Labels</label>
+        </div>
+      </div>
+      <div class="ctrl-group" style="margin-bottom:6px;">
+        <label>Filename (optional, .mp4)</label>
+        <input type="text" id="vidName" placeholder="auto-generated if empty"
+               style="width:100%; padding:4px; border:1px solid #ccc; border-radius:4px;">
+      </div>
+      <button class="btn" id="vidBtn"
+              style="background:#663399; width:100%; margin-bottom:6px;"
+              onclick="doVideo()">Render Video</button>
+      <div id="vidProgress" style="display:none; margin-bottom:6px;">
+        <div style="background:#e0e0e0; border-radius:4px; height:18px; overflow:hidden; position:relative;">
+          <div id="vidBar" style="background:#663399; height:100%; width:0%; transition:width 0.15s; border-radius:4px;"></div>
+          <span id="vidBarText" style="position:absolute; top:0; left:0; right:0; text-align:center;
+                font-size:11px; line-height:18px; color:#333; font-weight:600;"></span>
+        </div>
+      </div>
+      <div id="vidStatus" style="font-size:11px; color:#666; margin-bottom:4px; word-break:break-all;"></div>
+      <div id="vidResult"></div>
+    </div>
+
     <button class="btn btn-export" onclick="doExport()">Export Figure (PNG + PDF)</button>
     <div class="export-msg" id="exportMsg"></div>
   </div>
@@ -749,6 +1139,7 @@ async function init() {
     curSession = sessions[0].name;
     maxFrame = sessions[0].n_frames - 1;
     document.getElementById('frameSlider').max = maxFrame;
+    vidInitRange();
     render();
   }
 }
@@ -760,6 +1151,7 @@ document.getElementById('session').addEventListener('change', e => {
   curFrame = 0;
   document.getElementById('frameSlider').max = maxFrame;
   document.getElementById('frameSlider').value = 0;
+  vidInitRange();
   render();
 });
 
@@ -916,6 +1308,114 @@ async function doExport() {
   }
 }
 
+function vidSetCur(which) {
+  document.getElementById(which === 'start' ? 'vidStart' : 'vidEnd').value = curFrame;
+}
+
+function vidInitRange() {
+  // Default end to maxFrame whenever session changes or on init.
+  document.getElementById('vidStart').value = 0;
+  document.getElementById('vidEnd').value = maxFrame;
+  document.getElementById('vidStart').max = maxFrame;
+  document.getElementById('vidEnd').max = maxFrame;
+}
+
+function doVideo() {
+  const start = parseInt(document.getElementById('vidStart').value);
+  const end = parseInt(document.getElementById('vidEnd').value);
+  const fps = parseFloat(document.getElementById('vidFps').value);
+  const panel = parseInt(document.getElementById('vidPanel').value);
+  const labels = document.getElementById('vidLabels').checked;
+  const name = document.getElementById('vidName').value;
+  const statusEl = document.getElementById('vidStatus');
+  const resultEl = document.getElementById('vidResult');
+  resultEl.innerHTML = '';
+
+  if (isNaN(start) || isNaN(end) || end < start) {
+    statusEl.textContent = 'Invalid range: end must be >= start.';
+    return;
+  }
+  if (start < 0 || end > maxFrame) {
+    statusEl.textContent = `Range out of bounds (0-${maxFrame}).`;
+    return;
+  }
+  if (isNaN(fps) || fps <= 0) {
+    statusEl.textContent = 'FPS must be positive.';
+    return;
+  }
+
+  const btn = document.getElementById('vidBtn');
+  btn.disabled = true; btn.style.opacity = '0.5';
+  const prog = document.getElementById('vidProgress');
+  const bar = document.getElementById('vidBar');
+  const barText = document.getElementById('vidBarText');
+  prog.style.display = 'block';
+  bar.style.width = '0%';
+  barText.textContent = `0 / ${end - start + 1}`;
+  statusEl.textContent = 'Rendering...';
+
+  const params = new URLSearchParams({
+    session: curSession, start, end, fps,
+    panel_size: panel,
+    show_labels: labels,
+    filename: name,
+    azim: document.getElementById('azim').value,
+    elev: document.getElementById('elev').value,
+    show_gt: document.getElementById('showGT').checked,
+    show_pred: document.getElementById('showPred').checked,
+    line_width: document.getElementById('lineWidth').value,
+    zoom: document.getElementById('zoom').value,
+    hide_axes: document.getElementById('hideAxes').checked,
+    dpi: document.getElementById('exportDpi').value,
+  });
+  const es = new EventSource('/api/video_render?' + params);
+  es.onmessage = function(event) {
+    const d = JSON.parse(event.data);
+    if (d.type === 'progress') {
+      const pct = Math.round(d.done / d.total * 100);
+      bar.style.width = pct + '%';
+      barText.textContent = `${d.done} / ${d.total} frames`;
+    } else if (d.type === 'done') {
+      es.close();
+      bar.style.width = '100%';
+      barText.textContent = 'Done';
+      setTimeout(() => { prog.style.display = 'none'; }, 800);
+      btn.disabled = false; btn.style.opacity = '1';
+      const totalMb = d.files.reduce((a,f) => a + f.size_mb, 0).toFixed(2);
+      statusEl.textContent =
+        `Saved ${d.files.length} videos (${d.frames} frames @ ${d.fps} fps, ${d.dpi} DPI, ${totalMb} MB total).`;
+      resultEl.innerHTML = d.files.map(f => {
+        const url = '/api/video_file/' + encodeURIComponent(f.filename);
+        return `<div style="margin-top:8px; padding:6px; background:#fafafa; border:1px solid #eee; border-radius:4px;">
+          <div style="font-size:11px; font-weight:600; margin-bottom:4px;">
+            ${f.title} &nbsp;<span style="color:#888; font-weight:400;">(${f.size_mb} MB)</span>
+          </div>
+          <video src="${url}" controls preload="metadata"
+                 style="width:100%; border-radius:4px; background:#000;"></video>
+          <div style="margin-top:4px; font-size:11px; word-break:break-all;">
+            <a href="${url}" download="${f.filename}" style="color:#663399; font-weight:600;">Download</a>
+            &nbsp;—&nbsp; <span style="color:#666;">${f.path}</span>
+          </div>
+        </div>`;
+      }).join('');
+    } else if (d.type === 'error') {
+      es.close();
+      prog.style.display = 'none';
+      btn.disabled = false; btn.style.opacity = '1';
+      statusEl.textContent = 'Error: ' + d.msg;
+    }
+  };
+  es.onerror = function() {
+    es.close();
+    prog.style.display = 'none';
+    btn.disabled = false; btn.style.opacity = '1';
+    if (!statusEl.textContent.startsWith('Error:') &&
+        !statusEl.textContent.startsWith('Saved')) {
+      statusEl.textContent = 'Video render connection failed.';
+    }
+  };
+}
+
 function doScan() {
   const threshold = parseFloat(document.getElementById('scanThresh').value);
   const mode = document.getElementById('scanMode').value;
@@ -977,6 +1477,75 @@ function doScan() {
   };
 }
 
+function doSessionAvg() {
+  const btn = document.getElementById('avgBtn');
+  btn.disabled = true; btn.style.opacity = '0.5';
+  const prog = document.getElementById('avgProgress');
+  const bar = document.getElementById('avgBar');
+  const barText = document.getElementById('avgBarText');
+  prog.style.display = 'block';
+  bar.style.width = '0%';
+  barText.textContent = '0%';
+  document.getElementById('avgStatus').textContent = '';
+  document.getElementById('avgResults').innerHTML = '<div class="empty">Computing... first run also populates the prediction cache.</div>';
+
+  const es = new EventSource('/api/session_avg');
+  es.onmessage = function(event) {
+    const d = JSON.parse(event.data);
+    if (d.type === 'progress') {
+      const pct = d.total ? Math.round(d.done / d.total * 100) : 0;
+      bar.style.width = pct + '%';
+      barText.textContent = `${d.done}/${d.total} frames  (${d.sessions} sessions done)`;
+    } else if (d.type === 'done') {
+      es.close();
+      bar.style.width = '100%';
+      barText.textContent = 'Done';
+      setTimeout(() => { prog.style.display = 'none'; }, 800);
+      btn.disabled = false; btn.style.opacity = '1';
+      renderAvgTable(d.results, d.overall);
+    }
+  };
+  es.onerror = function() {
+    es.close();
+    prog.style.display = 'none';
+    btn.disabled = false; btn.style.opacity = '1';
+    document.getElementById('avgStatus').textContent = 'Scan failed or disconnected.';
+  };
+}
+
+function renderAvgTable(results, overall) {
+  const el = document.getElementById('avgResults');
+  if (!results || !results.length) {
+    el.innerHTML = '<div class="empty">No sessions.</div>';
+    return;
+  }
+  const th = t => `<th style="padding:4px 6px; background:#f0f0f0; position:sticky; top:0; font-size:10px; white-space:nowrap;">${t}</th>`;
+  const deltaCell = v => {
+    const sign = v > 0 ? '+' : '';
+    const color = v > 0 ? '#2a7a3a' : (v < 0 ? '#c44' : '#333');
+    return `<td style="padding:3px 6px; text-align:right; color:${color}; font-weight:600;">${sign}${v}</td>`;
+  };
+  const num = v => `<td style="padding:3px 6px; text-align:right;">${v}</td>`;
+  const row = r => `
+    <tr onclick="jumpToFrame('${r.session}', 0)" style="cursor:pointer;" onmouseover="this.style.background='#f9f9f9'" onmouseout="this.style.background=''">
+      <td style="padding:3px 6px; text-align:left; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${r.session}">${r.action}</td>
+      ${num(r.n_frames)}${num(r.full_lhf)}${num(r.lo_lhf)}${num(r.full_gbh)}${num(r.lo_gbh)}${deltaCell(r.full_delta)}${deltaCell(r.lo_delta)}
+    </tr>`;
+  const overallRow = overall ? `
+    <tr style="font-weight:700; background:#eef;">
+      <td style="padding:3px 6px; text-align:left;">${overall.action}</td>
+      ${num(overall.n_frames)}${num(overall.full_lhf)}${num(overall.lo_lhf)}${num(overall.full_gbh)}${num(overall.lo_gbh)}${deltaCell(overall.full_delta)}${deltaCell(overall.lo_delta)}
+    </tr>` : '';
+  el.innerHTML = `
+    <table style="width:100%; border-collapse:collapse; font-size:11px;">
+      <thead><tr>${th('Session')}${th('N')}${th('LHF-F')}${th('LHF-L')}${th('GBH-F')}${th('GBH-L')}${th('ΔF')}${th('ΔL')}</tr></thead>
+      <tbody>${results.map(row).join('')}${overallRow}</tbody>
+    </table>`;
+  const total = overall ? overall.n_frames : results.reduce((a, r) => a + r.n_frames, 0);
+  document.getElementById('avgStatus').textContent =
+    `${results.length} sessions, ${total} frames.  ΔF,ΔL = LHF − GBH (positive means GBH is better).`;
+}
+
 function jumpToFrame(session, frameIdx) {
   // Switch session dropdown
   const sel = document.getElementById('session');
@@ -987,6 +1556,7 @@ function jumpToFrame(session, frameIdx) {
   curFrame = frameIdx;
   document.getElementById('frameSlider').max = maxFrame;
   document.getElementById('frameSlider').value = curFrame;
+  vidInitRange();
   render();
 }
 

@@ -47,13 +47,13 @@ from mmpose.registry import MODELS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-DATA_ROOT = '/mnt/express1m2/egodataset_for_paper/Test_batch_ego'
+DATA_ROOT = '/mnt/dataset_vol/kinect_v5_split/Val/022343'
 
 CONFIG_LHF = str(REPO_ROOT / 'my_code/custom_config/HMD_kinect_v5_flag_cascaded_baseline_10ep_config.py')
-CKPT_LHF = str(REPO_ROOT / 'work_dirs/HMD_kinect_v5_flag_cascaded_baseline_10ep/best_xregopose_Full Body_All_mpjpe_epoch_9.pth')
+CKPT_LHF = str(REPO_ROOT / '/mnt/dataset_vol/work_dir_260408/HMD_kinect_v5_flag_cascaded_baseline_10ep/best_xregopose_Full Body_All_mpjpe_epoch_9.pth')
 
 CONFIG_GBH = str(REPO_ROOT / 'my_code/custom_config/HMD_kinect_v5_flag_cascaded_ground_info_10ep_config.py')
-CKPT_GBH = str(REPO_ROOT / 'work_dirs/HMD_kinect_v5_flag_cascaded_ground_info_10ep/best_xregopose_Full Body_All_mpjpe_epoch_10.pth')
+CKPT_GBH = str(REPO_ROOT / '/mnt/dataset_vol/work_dir_260408/HMD_kinect_v5_flag_cascaded_ground_info_10ep/best_xregopose_Full Body_All_mpjpe_epoch_10.pth')
 
 # Kinect 32 → xRegopose 16 joint mapping
 KINECT_TO_XREGOPOSE = [

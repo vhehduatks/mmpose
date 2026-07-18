@@ -207,6 +207,10 @@ class PackPoseInputs(BaseTransform):
                     gt_instance_labels.set_field(_labels, packed_key)
                 else:
                     gt_instance_labels.set_field(results[key], packed_key)
+        # Pack depth map if available (for depth-enhanced head)
+        if 'depth_map' in results:
+            gt_instance_labels.set_field(results['depth_map'], 'depth_map')
+
         data_sample.gt_instance_labels = gt_instance_labels.to_tensor()
 
         # pack fields

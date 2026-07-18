@@ -221,6 +221,69 @@ class LoadImageFromH5Cache(object):
 
 
 @TRANSFORMS.register_module()
+class LoadDepthFromH5Cache(object):
+    """Load a depth map from H5 cache file (for EgoPose dataset with cached depth).
+
+    Loads single-channel depth stored as uint8 (256x256) from the 'depths'
+    dataset in the H5 cache. Normalizes to float32 [0, 1].
+
+    Required Keys:
+        - h5_cache_path: Path to H5 cache file
+        - h5_img_idx: Index of the sample within the cache
+
+    Modified Keys:
+        - depth_map: (1, H, W) float32 tensor-ready array
+
+    Args:
+        normalize (bool): Whether to normalize uint8 to [0, 1]. Default: True.
+    """
+
+    _preloaded_depths = {}
+
+    def __init__(self, normalize: bool = True):
+        self.normalize = normalize
+        self._h5_cache = {}
+
+    def _get_h5_handle(self, h5_path: str):
+        if h5_path not in self._h5_cache:
+            self._h5_cache[h5_path] = h5py.File(h5_path, 'r')
+        return self._h5_cache[h5_path]
+
+    def transform(self, results: dict) -> Optional[dict]:
+        h5_path = results.get('h5_cache_path')
+        img_idx = results.get('h5_img_idx')
+
+        if h5_path is None or img_idx is None:
+            raise KeyError('h5_cache_path and h5_img_idx are required')
+
+        if h5_path in self._preloaded_depths:
+            depth = self._preloaded_depths[h5_path][img_idx]
+        else:
+            hf = self._get_h5_handle(h5_path)
+            if 'depths' not in hf:
+                # No depth available — provide zeros
+                h, w = results.get('img_shape', (256, 256))
+                results['depth_map'] = np.zeros((1, h, w), dtype=np.float32)
+                return results
+            depth = hf['depths'][img_idx]
+
+        # depth: (H, W) uint8
+        depth = depth.astype(np.float32)
+        if self.normalize:
+            depth = depth / 255.0
+
+        # Add channel dim: (1, H, W)
+        results['depth_map'] = depth[np.newaxis, :, :]
+        return results
+
+    def __call__(self, results: dict) -> Optional[dict]:
+        return self.transform(results)
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}(normalize={self.normalize})'
+
+
+@TRANSFORMS.register_module()
 class LoadImage(LoadImageFromFile):
     """Load an image from file or from the np.ndarray in ``results['img']``.
 

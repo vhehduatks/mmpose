@@ -119,3 +119,54 @@
 # Vision-only (no HMD) on xR-EgoPose — fair comparison baseline
 [DONE] my_code/custom_config/HMD_xregopose_cascaded_no_hmd_config.py
 [DONE] my_code/custom_config/HMD_xregopose_single_stage_no_hmd_config.py
+# Depth-enhanced cascaded (GBH + depth grid-sampling in Stage 2)
+# Fixed: test_cfg=None → test_cfg=dict() (MMEngine requires all three set)
+[DONE] my_code/custom_config/HMD_xregopose_cascaded_gbh_depth_config.py
+# Image-only baselines for Kinect Table 5 (apples-to-apples, no HMD input)
+# R1: Single-Stage Image-only (cascaded class, use_refinement=False, use_hmd=False) — pairs with 70.24mm LHF row
+[FAILED] my_code/custom_config/HMD_kinect_v5_flag_cascaded_stage1_only_no_hmd_10ep_config.py
+# R2: Cascaded Image-only (re-run for fresh seed) — pairs with 70.97mm LHF row; prior result was 71.79/65.40/78.19 (ep9)
+[FAILED] my_code/custom_config/HMD_kinect_v5_flag_cascaded_no_hmd_10ep_config.py
+# Image-only re-run (prior FAILED was a USB cable I/O error, not a config issue)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_stage1_only_no_hmd_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_no_hmd_10ep_config.py
+# GBH-only baselines for Kinect Table 5 (LHF dims zeroed via use_lhf=False, GBH heights kept)
+# A1: Single-Stage GBH-only — pairs with 70.24mm LHF row
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_stage1_only_gbh_only_10ep_config.py
+# A2: Cascaded GBH-only — pairs with 70.97mm LHF row
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_gbh_only_10ep_config.py
+# Table 5 sibling configs with consistent naming (parallel to gbh_only/stage1_only_gbh_only)
+# Cascaded + LHF+GBH (full 12-dim HMD) — pairs with 70.97mm Cascaded LHF row
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_lhf_gbh_10ep_config.py
+# Single-stage + Image-only (renamed sibling of stage1_only_no_hmd) — pairs with 70.24mm Single-stage LHF row
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_stage1_only_image_only_10ep_config.py
+# Cascaded + Image-only (sibling of cascaded_gbh_only) — pairs with 70.97mm Cascaded LHF row
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_image_only_10ep_config.py
+# Apples-to-apples re-runs of Table 5 LHF / LHF+GBH cells under current code state
+# (existing 70.24/69.33/70.97 numbers may have drifted vs. new image_only/gbh_only siblings)
+# R1: Single-Stage + LHF (re-run, parallel to gbh_only/image_only naming)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_stage1_only_lhf_only_10ep_config.py
+# R2: Single-Stage + LHF+GBH (re-run, parallel naming)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_stage1_only_lhf_gbh_10ep_config.py
+# R3: Cascaded + LHF (re-run, parallel naming)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_lhf_only_10ep_config.py
+# R3 RUN 2: re-run of cascaded + LHF (variance check; same seed, fresh work_dir)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_lhf_only_run2_10ep_config.py
+# R3 RUN 3: re-run of cascaded + LHF (variance check; same seed, fresh work_dir)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_lhf_only_run3_10ep_config.py
+# Cascaded + Image-only RUN 2: variance check (same seed, fresh work_dir)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_image_only_run2_10ep_config.py
+# Cascaded + Image-only RUN 3: variance check (same seed, fresh work_dir)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_image_only_run3_10ep_config.py
+# Cascaded + Image-only RUN 4 (variance check)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_image_only_run4_10ep_config.py
+# R3 RUN 4: re-run of cascaded + LHF (variance check)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_lhf_only_run4_10ep_config.py
+# Cascaded + Image-only RUNS 5-7 (variance estimate, +3 seeds)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_image_only_run5_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_image_only_run6_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_image_only_run7_10ep_config.py
+# Cascaded + LHF RUNS 5-7 (variance estimate, +3 seeds; run4 still training)
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_lhf_only_run5_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_lhf_only_run6_10ep_config.py
+[DONE] my_code/custom_config/HMD_kinect_v5_flag_cascaded_lhf_only_run7_10ep_config.py

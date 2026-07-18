@@ -82,6 +82,12 @@ class KinectEgoposeDataset(BaseDataset):
                 right_y from CSV). Uses Unity Y-axis as ground height.
         use_hmd (bool): Whether to include real HMD data. Default: True.
             When False, hmd_info is filled with zeros (vision-only ablation).
+        use_lhf (bool): Whether to include the 9-dim Localized HMD Feature
+            (head/hand local coords + distances). Default: True. When False,
+            the first 9 dims of hmd_info are zeroed while any GBH ground
+            heights (dims 9-11, when ground_info_mode='both_from_ground') are
+            preserved. Used for the GBH-only ablation. Has no effect when
+            use_hmd is False (which already zeros everything).
     """
 
     MM_TO_M = 1000.0
@@ -108,12 +114,14 @@ class KinectEgoposeDataset(BaseDataset):
                  sample_interval: int = 1,
                  ground_info_mode: Optional[str] = None,
                  use_hmd: bool = True,
+                 use_lhf: bool = True,
                  use_2d_visible: bool = False):
         self.data_mode = data_mode
         self.data_root = data_root
         self.sample_interval = sample_interval
         self.ground_info_mode = ground_info_mode
         self.use_hmd = use_hmd
+        self.use_lhf = use_lhf
         self.use_2d_visible = use_2d_visible
         self.hmd_dim = self.GROUND_INFO_MODES.get(ground_info_mode, 9)
 
@@ -124,6 +132,7 @@ class KinectEgoposeDataset(BaseDataset):
 
         print_log(f'KinectEgoposeDataset: ground_info_mode={ground_info_mode}, '
                   f'hmd_dim={self.hmd_dim}, use_hmd={use_hmd}, '
+                  f'use_lhf={use_lhf}, '
                   f'use_2d_visible={use_2d_visible}',
                   logger='current', level=logging.INFO)
 
@@ -368,6 +377,10 @@ class KinectEgoposeDataset(BaseDataset):
                     [head_from_ground, left_from_ground, right_from_ground],
                     dtype=np.float32)
                 hmd_info = np.concatenate([hmd_info, ground_extra])
+
+            if not self.use_lhf:
+                # GBH-only ablation: zero the first 9 LHF dims, keep GBH heights
+                hmd_info[:9] = 0.0
         else:
             # Vision-only ablation: zero HMD info
             hmd_info = np.zeros(self.hmd_dim, dtype=np.float32)

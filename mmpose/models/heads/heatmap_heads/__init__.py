@@ -33,6 +33,7 @@ from .custom_egopose_cascaded_refinement_head import CustomEgoposeCascadedRefine
 from .custom_egopose_cascaded_refinement_head_v2 import CustomEgoposeCascadedRefinementHeadV2
 from .custom_egopose_baselinel1_head_enhanced_hmd import CustomxRegoposeBaselinel1_enhanced_hmd
 from .custom_egopose_cascaded_refinement_head_enhanced import CustomEgoposeCascadedRefinementHead_enhanced
+from .custom_egopose_cascaded_refinement_head_depth import CustomEgoposeCascadedRefinementHead_depth
 from .custom_egopose_hmd_attention_fusion_head import CustomEgoposeHMDAttentionFusionHead
 from .custom_mo2cap2_cascaded_refinement_head_enhanced import CustomMo2Cap2CascadedRefinementHead_enhanced
 from .custom_mo2cap2_baseline_head import CustomMo2Cap2BaselineHead
@@ -60,6 +61,7 @@ __all__ = [
 	'CustomEgoposeCascadedRefinementHeadV2',
 	'CustomxRegoposeBaselinel1_enhanced_hmd',
 	'CustomEgoposeCascadedRefinementHead_enhanced',
+	'CustomEgoposeCascadedRefinementHead_depth',
 	'CustomEgoposeHMDAttentionFusionHead',
 	'CustomMo2Cap2CascadedRefinementHead_enhanced',
 	'CustomMo2Cap2BaselineHead'
