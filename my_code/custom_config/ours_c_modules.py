@@ -164,3 +164,73 @@ class OursFusedCoarseHead(CustomEgoposeCascadedRefinementHead_enhanced):
             preds.append(pred)
 
         return preds, output_3d
+
+    def loss(self, feats, batch_data_samples, train_cfg={}):
+        """Task 15.3c — parent loss with the SUBSTITUTED coarse feeding
+        stage 2 (stage-1 losses stay on the original coarse; run with
+        FreezeStage1Hook so only stage 2 trains)."""
+        from mmpose.evaluation.functional import pose_pck_accuracy
+
+        backbone_feat = feats[-1]
+        pred_fields = self.forward(feats)
+
+        gt_heatmaps = torch.stack(
+            [d.gt_fields.heatmaps for d in batch_data_samples])
+        labels = [d.gt_instance_labels for d in batch_data_samples]
+        keypoint_weights = torch.cat([l.keypoint_weights for l in labels])
+        gt_keypoint_3d = torch.cat([l.keypoint3d for l in labels])
+        HMD_info = torch.cat([l.hmd_info for l in labels])
+        device = pred_fields.device
+        fused = torch.cat([l.fused_coarse for l in labels]).to(device).float()
+        fmask = torch.cat([l.fused_mask for l in labels]).to(device).float()
+
+        z = self.encoder(pred_fields.to(torch.float32))
+        hmd_info_ = self.hmd_linear(HMD_info.to(torch.float32))
+        z_plus_hmd = self._fuse(z, hmd_info_)
+        coarse_orig = self.pose_decoder(z_plus_hmd).reshape(-1, 16, 3)
+
+        loss_pose_l2norm = self.loss_pose_l2norm_module(
+            coarse_orig, gt_keypoint_3d)
+        loss_cosine = self.loss_cosine_similarity_module(
+            coarse_orig, gt_keypoint_3d)
+        loss_limb = self.loss_limb_length_module(coarse_orig, gt_keypoint_3d)
+        loss_kpt = self.loss_module(pred_fields, gt_heatmaps, keypoint_weights)
+
+        losses = dict(
+            loss_pose_l2norm=torch.mean(loss_pose_l2norm),
+            loss_cosine_similarity=torch.mean(loss_cosine),
+            loss_limb_length=torch.mean(loss_limb),
+            loss_kpt=loss_kpt)
+
+        if self.use_auxiliary_decoders:
+            recon_heatmap = self.heatmap_decoder(z_plus_hmd)
+            hmd_recon = preprocess_hmd_data_batch(coarse_orig)
+            loss_heatmap_recon = self.loss_heatmap_recon_module(
+                recon_heatmap, gt_heatmaps, keypoint_weights)
+            loss_hmd = self.loss_hmd_module(
+                hmd_recon.to(torch.double), HMD_info[:, :9].to(torch.double))
+            losses.update(loss_heatmap_recon=loss_heatmap_recon,
+                          loss_hmd=loss_hmd)
+
+        coarse_pose = torch.where(
+            fmask.reshape(-1, 1, 1) > 0, fused, coarse_orig.detach())
+        refined_pose = self.refine(
+            coarse_pose, pred_fields, backbone_feat, z, hmd_info=HMD_info)
+        loss_refined = self.loss_pose_l2norm_refined_module(
+            refined_pose, gt_keypoint_3d)
+        loss_bone = self.loss_bone_length_module(refined_pose, gt_keypoint_3d)
+        loss_sym = self.loss_symmetry_module(refined_pose)
+        losses.update(loss_pose_l2norm_refined=torch.mean(loss_refined),
+                      loss_bone_length=torch.mean(loss_bone),
+                      loss_symmetry=torch.mean(loss_sym))
+
+        if train_cfg.get("compute_acc", True):
+            _, avg_acc, _ = pose_pck_accuracy(
+                output=to_numpy(pred_fields),
+                target=to_numpy(gt_heatmaps),
+                mask=to_numpy(keypoint_weights) > 0)
+            losses.update(acc_pose=torch.tensor(
+                avg_acc, device=gt_heatmaps.device))
+
+        self.hm_iteration += 1
+        return losses
