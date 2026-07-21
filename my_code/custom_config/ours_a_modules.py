@@ -53,6 +53,30 @@ from my_code.custom_config.ours_t_modules import (  # noqa: F401  (registers dat
     compute_relpose_to_floor, invert_se3)
 
 
+def hard_local_argmax_2d(heatmaps):
+    """Task 19.1(b): hard-argmax cell + value-weighted local mean over its
+    3x3 neighbourhood (border-clamped). Removes the global-tail bias that
+    drags the T=1 softmax centroid toward the image centre (GATE 19.0:
+    median soft-vs-hard displacement 120-660 px; hard is 36-97 px from GT
+    2D vs soft's 123-672). Returns [0,1]-normalized coords like
+    soft_argmax_2d."""
+    B, K, H, W = heatmaps.shape
+    flat = heatmaps.reshape(B, K, -1)
+    idx = flat.argmax(dim=-1)
+    y0, x0 = idx // W, idx % W
+    offs = torch.arange(-1, 2, device=heatmaps.device)
+    ys = (y0[..., None] + offs).clamp(0, H - 1)              # (B,K,3)
+    xs = (x0[..., None] + offs).clamp(0, W - 1)
+    yy = ys[..., :, None].expand(B, K, 3, 3).reshape(B, K, 9)
+    xx = xs[..., None, :].expand(B, K, 3, 3).reshape(B, K, 9)
+    v = torch.gather(flat, 2, yy * W + xx)
+    w = v.clamp_min(0) + 1e-6
+    w = w / w.sum(dim=-1, keepdim=True)
+    x = (w * xx.to(heatmaps.dtype)).sum(-1) / max(W - 1, 1)
+    y = (w * yy.to(heatmaps.dtype)).sum(-1) / max(H - 1, 1)
+    return torch.stack([x, y], dim=-1)
+
+
 class JointAttnBlock(nn.Module):
     """Transformer-decoder-style block over 16 joint tokens."""
 
@@ -124,10 +148,18 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
 
     def __init__(self, *args, attn_mode: str = "full",
                  use_hmd_token: bool = True, attn_dim: int = 64,
-                 attn_heads: int = 4, use_canon: bool = True, **kwargs):
+                 attn_heads: int = 4, use_canon: bool = True,
+                 sample_mode: str = "soft", sample_temp: float = 0.1,
+                 **kwargs):
         super().__init__(*args, **kwargs)
         assert attn_mode in ("full", "self_only", "cross_only",
                              "mlp_matched", "replace"), attn_mode
+        # Task 19.1 sampling variants (param-free): 'soft' = parent behavior
+        # (T=1 softmax centroid), 'temp' = sharpened softmax at sample_temp,
+        # 'hard_local' = hard-argmax + 3x3 value-weighted local mean.
+        assert sample_mode in ("soft", "temp", "hard_local"), sample_mode
+        self.sample_mode = sample_mode
+        self.sample_temp = float(sample_temp)
         self.attn_mode = attn_mode
         # ablation: feed RAW ego-cam joint tokens instead of floor-frame
         # canonicalized ones (attributes canonicalization vs attention).
@@ -181,7 +213,12 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                hmd_info=None):
         B, K = coarse_pose.shape[0], coarse_pose.shape[1]
 
-        coords_2d, _ = soft_argmax_2d(heatmap.detach())
+        hm_det = heatmap.detach()
+        if self.sample_mode == "hard_local":
+            coords_2d = hard_local_argmax_2d(hm_det)
+        else:
+            t = self.sample_temp if self.sample_mode == "temp" else 1.0
+            coords_2d, _ = soft_argmax_2d(hm_det, temperature=t)
         grid = (coords_2d * 2 - 1).unsqueeze(1)
         sampled = F.grid_sample(backbone_feat, grid, mode="bilinear",
                                 align_corners=True, padding_mode="border")
