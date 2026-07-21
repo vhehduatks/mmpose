@@ -150,10 +150,27 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                  use_hmd_token: bool = True, attn_dim: int = 64,
                  attn_heads: int = 4, use_canon: bool = True,
                  sample_mode: str = "soft", sample_temp: float = 0.1,
+                 ms_mode: str = "off",
                  **kwargs):
         super().__init__(*args, **kwargs)
         assert attn_mode in ("full", "self_only", "cross_only",
                              "mlp_matched", "replace"), attn_mode
+        # Task 20.1 multi-scale spatial feature: 'off' = parent 8x8 sample;
+        # 'fused' = 8x8 (2048) + per-joint 47x47 deconv sample (256) -> proj;
+        # 'fused_ctrl' = EXACT param match, the 256-d slot filled with the
+        # globally-pooled deconv map (same tensor, no per-joint location
+        # info) -> isolates per-joint hi-res sampling; 'hi_only' = 47x47
+        # sample alone (fewer params).
+        assert ms_mode in ("off", "fused", "fused_ctrl", "hi_only"), ms_mode
+        self.ms_mode = ms_mode
+        self._hi_feat = None
+        if ms_mode != "off":
+            sf_dim = self.spatial_proj[0].out_features
+            hi_ch = 256                        # add_deconv_layers output
+            in_dim = hi_ch if ms_mode == "hi_only" \
+                else self.spatial_proj[0].in_features + hi_ch
+            self.spatial_proj_ms = nn.Sequential(
+                nn.Linear(in_dim, sf_dim), nn.ReLU(inplace=True))
         # Task 19.1 sampling variants (param-free): 'soft' = parent behavior
         # (T=1 softmax centroid), 'temp' = sharpened softmax at sample_temp,
         # 'hard_local' = hard-argmax + 3x3 value-weighted local mean.
@@ -208,6 +225,15 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
         finally:
             self._canon = None
 
+    def forward(self, feats):
+        # parent forward with the 47x47 add_deconv output stashed for the
+        # multi-scale sample (frozen stage-1 tensor; detached in refine()).
+        x = self.deconv_layers(feats[-1])
+        x = self.add_deconv_layers(x)
+        self._hi_feat = x
+        x = self.conv_layers(x)
+        return self.final_layer(x)
+
     # -- stage 2: parent body + gated attention residual --------------------
     def refine(self, coarse_pose, heatmap, backbone_feat, z_latent,
                hmd_info=None):
@@ -223,7 +249,22 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
         sampled = F.grid_sample(backbone_feat, grid, mode="bilinear",
                                 align_corners=True, padding_mode="border")
         sampled = sampled.squeeze(2).permute(0, 2, 1)
-        spatial_feat = self.spatial_proj(sampled)
+        if self.ms_mode == "off":
+            spatial_feat = self.spatial_proj(sampled)
+        else:
+            hi_map = self._hi_feat.detach()
+            if self.ms_mode == "fused_ctrl":
+                hi_vec = hi_map.mean(dim=(2, 3)).unsqueeze(1).expand(
+                    B, K, -1)
+            else:
+                hi_vec = F.grid_sample(
+                    hi_map, grid, mode="bilinear", align_corners=True,
+                    padding_mode="border").squeeze(2).permute(0, 2, 1)
+            if self.ms_mode == "hi_only":
+                spatial_feat = self.spatial_proj_ms(hi_vec)
+            else:
+                spatial_feat = self.spatial_proj_ms(
+                    torch.cat([sampled, hi_vec], dim=-1))
 
         pose_feat = self.pose_encoder_net(coarse_pose.reshape(B, -1))
         kin_feat = self.kin_encoder(compute_kinematic_features(coarse_pose))
