@@ -257,6 +257,66 @@ class JointAttnBlock(nn.Module):
         return self.out(q)                                   # (B, 16, 3)
 
 
+class FactoredAttnBlock(nn.Module):
+    """Task 21.3 — the user's intended routing topology.
+
+    Pure-geometry query: joint token = embed(canon_xyz) + joint PE (no
+    welded appearance) -> self-attn on kinematics alone. Image evidence is
+    CONSULTED, not welded: cross-attn K/V = 16 per-joint spatial_feat
+    tokens (each carrying its joint PE, so an occluded joint can attend
+    DIRECTLY to a neighbour's image evidence) + [z, pose, kin] globals +
+    3 floor-frame sensor tokens = 22 keys — the first many-keys regime
+    for cross-attn in this program (Task 17's null was at 3 keys).
+    Token-type embedding separates spatial/global/sensor keys (17.1
+    lesson). Retrained 18b-style (query embed changes shape 67->3, so no
+    zero-init scheme reproduces pesens at init; precedent: 18b replace).
+    """
+
+    def __init__(self, d=64, heads=4, dropout=0.1, spatial_dim=64,
+                 z_dim=64, pose_dim=128, kin_dim=64):
+        super().__init__()
+        self.joint_embed = nn.Linear(3, d)
+        self.joint_pe = nn.Parameter(torch.zeros(16, d))
+        self.self_attn = nn.MultiheadAttention(d, heads, dropout=dropout,
+                                               batch_first=True)
+        self.ln1 = nn.LayerNorm(d)
+        self.spat_embed = nn.Linear(spatial_dim, d)
+        self.mod_z = nn.Linear(z_dim, d)
+        self.mod_pose = nn.Linear(pose_dim, d)
+        self.mod_kin = nn.Linear(kin_dim, d)
+        self.sens_embed = nn.Linear(3, d)
+        self.sens_type = nn.Parameter(torch.zeros(3, d))
+        self.type_emb = nn.Parameter(torch.zeros(3, d))  # spatial/glob/sens
+        self.cross_attn = nn.MultiheadAttention(d, heads, dropout=dropout,
+                                                batch_first=True)
+        self.ln2 = nn.LayerNorm(d)
+        self.ffn = nn.Sequential(nn.Linear(d, 2 * d), nn.GELU(),
+                                 nn.Linear(2 * d, d))
+        self.ln3 = nn.LayerNorm(d)
+        self.out = nn.Linear(d, 3)
+        with torch.no_grad():
+            self.out.weight.zero_()
+            self.out.bias.zero_()
+
+    def forward(self, canon_xyz, spatial_feat, z, pose_feat, kin_feat,
+                hmd_feat=None, sens_toks=None):
+        q = self.joint_embed(canon_xyz) + self.joint_pe
+        a, _ = self.self_attn(q, q, q)
+        q = self.ln1(q + a)
+        kv_sp = self.spat_embed(spatial_feat) + self.joint_pe \
+            + self.type_emb[0]                                # (B,16,d)
+        kv_gl = torch.stack([self.mod_z(z), self.mod_pose(pose_feat),
+                             self.mod_kin(kin_feat)], dim=1) \
+            + self.type_emb[1]                                # (B,3,d)
+        kv_se = self.sens_embed(sens_toks) + self.sens_type \
+            + self.type_emb[2]                                # (B,3,d)
+        kv = torch.cat([kv_sp, kv_gl, kv_se], dim=1)          # (B,22,d)
+        a, _ = self.cross_attn(q, kv, kv)
+        q = self.ln2(q + a)
+        q = self.ln3(q + self.ffn(q))
+        return self.out(q)
+
+
 class MatchedMLPBlock(nn.Module):
     """Parameter-matched plain residual control: per-joint flat input ->
     h -> 3, zero-init output. h=204 -> 359*204+3 = 73,239 params vs the
@@ -286,7 +346,7 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                  **kwargs):
         super().__init__(*args, **kwargs)
         assert attn_mode in ("full", "self_only", "cross_only",
-                             "mlp_matched", "replace"), attn_mode
+                             "mlp_matched", "replace", "factored"), attn_mode
         # Task 20.1 multi-scale spatial feature: 'off' = parent 8x8 sample;
         # 'fused' = 8x8 (2048) + per-joint 47x47 deconv sample (256) -> proj;
         # 'fused_ctrl' = EXACT param match, the 256-d slot filled with the
@@ -317,6 +377,8 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
         self.attn_gate = nn.Parameter(torch.zeros(16, 1))
         if attn_mode == "mlp_matched":
             self.attn_block = MatchedMLPBlock()
+        elif attn_mode == "factored":
+            self.attn_block = FactoredAttnBlock(d=attn_dim, heads=attn_heads)
         else:
             # 18b "replace": the decoder block IS stage 2 (full self+cross,
             # no MLP path, replicated globals dropped); retrained, no
@@ -437,7 +499,7 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             sens_toks = torch.stack(
                 [h[:, 0:3], h[:, 3:6], h[:, 9:12]], dim=1)   # (B,3,3)
 
-        if self.attn_mode == "replace":
+        if self.attn_mode in ("replace", "factored"):
             if self.use_canon and self._canon is not None:
                 R, t = self._canon[:, :3, :3], self._canon[:, :3, 3]
                 canon = torch.einsum(
