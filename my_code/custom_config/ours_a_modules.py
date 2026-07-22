@@ -39,18 +39,101 @@ the device pose is already consumed geometrically by the canonicalization).
 Codebase rules honored: .reshape() only, new files only.
 """
 
+import os
+import re
+from pathlib import Path
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from mmengine.hooks import Hook
 
 from mmpose.models.heads.heatmap_heads.custom_egopose_cascaded_refinement_head_enhanced import (  # noqa: E501
     CustomEgoposeCascadedRefinementHead_enhanced, compute_kinematic_features,
     soft_argmax_2d)
-from mmpose.registry import MODELS
+from mmpose.registry import DATASETS, HOOKS, KEYPOINT_CODECS, MODELS
 
 from my_code.custom_config.ours_t_modules import (  # noqa: F401  (registers dataset/codec/hook)
     FreezeStage1Hook, KinectEgoposeTemporalDataset, OursTemporalCodec,
     compute_relpose_to_floor, invert_se3)
+
+
+# ---------------------------------------------------------------------------
+# Task 21.2 — per-frame device sensor positions in the labels
+# ---------------------------------------------------------------------------
+
+@DATASETS.register_module()
+class KinectEgoposeSensorDataset(KinectEgoposeTemporalDataset):
+    """Temporal dataset + per-sample raw sensor world positions.
+
+    Adds `sensor_world` (1,9) float32 = [ctrl_left, ctrl_right, hmd] xyz in
+    the y-up FRAME world, read from the per-session sensors_v2.npz built by
+    ours/frame_adapt/gen_sensors_v2.py (controllers bridged C = M @ S, HMD
+    from egocam_middle translations; cross-validated in GATE 17.1a).
+    Missing session/frame -> zeros (the zero-init sensor path is a no-op).
+    """
+
+    def __init__(self, *, sensors_file: str = "sensors_v2.npz", **kwargs):
+        self.sensors_file = sensors_file
+        super().__init__(**kwargs)
+
+    def load_data_list(self):
+        data_list = super().load_data_list()
+        pat = re.compile(r"frame_(\d+)\.jpg$")
+        per_session = {}
+        n_missing = 0
+        for d in data_list:
+            img = d["img_path"]
+            fid = int(pat.search(img).group(1))
+            sess_dir = os.path.dirname(os.path.dirname(os.path.dirname(img)))
+            participant = os.path.basename(os.path.dirname(sess_dir))
+            session = os.path.basename(sess_dir)
+            key = (participant, session)
+            if key not in per_session:
+                p = (Path(self.frame_export_root) / participant / "actions"
+                     / session / self.sensors_file)
+                per_session[key] = (np.load(p)["sensors"].astype(np.float32)
+                                    if p.is_file() else None)
+            arr = per_session[key]
+            if arr is not None and fid < len(arr):
+                d["sensor_world"] = arr[fid].reshape(1, 9)
+            else:
+                d["sensor_world"] = np.zeros((1, 9), dtype=np.float32)
+                n_missing += 1
+        print(f"[KinectEgoposeSensorDataset] sensors_file={self.sensors_file}, "
+              f"{n_missing} samples without sensors")
+        return data_list
+
+
+@KEYPOINT_CODECS.register_module()
+class OursSensorCodec(OursTemporalCodec):
+    label_mapping_table = dict(
+        OursTemporalCodec.label_mapping_table,
+        sensor_world="sensor_world",
+    )
+
+
+@HOOKS.register_module()
+class FreezeBackboneHook(Hook):
+    """Task 21.2 arm B: stage-1 inputs change (use_hmd=False), so stage 1
+    must retrain — freeze ONLY the backbone (grads + BN stats)."""
+
+    def _mods(self, runner):
+        model = runner.model
+        model = model.module if hasattr(model, "module") else model
+        return [model.backbone]
+
+    def before_train(self, runner):
+        n = 0
+        for m in self._mods(runner):
+            m.requires_grad_(False)
+            n += sum(p.numel() for p in m.parameters())
+        runner.logger.info(f"[FreezeBackboneHook] froze {n / 1e6:.1f}M params")
+
+    def before_train_epoch(self, runner):
+        for m in self._mods(runner):
+            m.eval()
 
 
 def hard_local_argmax_2d(heatmaps):
@@ -82,10 +165,45 @@ class JointAttnBlock(nn.Module):
 
     def __init__(self, attn_mode="full", d=64, heads=4, dropout=0.1,
                  spatial_dim=64, z_dim=64, pose_dim=128, kin_dim=64,
-                 hmd_dim=32, use_hmd_token=True):
+                 hmd_dim=32, use_hmd_token=True, pe_mode="off",
+                 sensor_mode="off", sens_subset="all"):
         super().__init__()
         self.attn_mode = attn_mode
         self.use_hmd_token = use_hmd_token
+        # Task 21.2: 3 sensor K/V tokens via a SEPARATE cross-attention
+        # whose out_proj is zero-init -> contribution exactly 0 at init
+        # (digit-identical warm start). 'floor' = floor-frame xyz (the
+        # claim); 'baked' = the existing relative hmd_info parametrization
+        # re-tokenized (representation control, same params/tokens);
+        # 'const' = learned constant values (capacity control).
+        assert sensor_mode in ("off", "floor", "baked", "const"), sensor_mode
+        # sens_subset: which floor tokens enter the K/V ('all' | 'ctrl' |
+        # 'hmd') — the Task 21.2 attribution ablation. Token order is
+        # [ctrl_L, ctrl_R, hmd].
+        assert sens_subset in ("all", "ctrl", "hmd"), sens_subset
+        self.sensor_mode = sensor_mode
+        self.sens_subset = sens_subset
+        self._sens_idx = {"all": [0, 1, 2], "ctrl": [0, 1],
+                          "hmd": [2]}[sens_subset]
+        if sensor_mode != "off":
+            self.sens_embed = nn.Linear(3, d)
+            self.sens_type = nn.Parameter(torch.zeros(3, d))
+            self.sens_attn = nn.MultiheadAttention(d, heads, dropout=dropout,
+                                                   batch_first=True)
+            with torch.no_grad():
+                self.sens_attn.out_proj.weight.zero_()
+                self.sens_attn.out_proj.bias.zero_()
+            if sensor_mode == "const":
+                self.sens_const = nn.Parameter(torch.zeros(3, 3))
+        # Task 21.1: learnable joint positional embedding. 'fixed' = the
+        # claim (fixed per-joint identity, zero-init => init == t01);
+        # 'shuffled' = the control — SAME parameter, fresh random
+        # permutation every forward, destroying only the fixed-identity
+        # function while holding capacity.
+        assert pe_mode in ("off", "fixed", "shuffled"), pe_mode
+        self.pe_mode = pe_mode
+        if pe_mode != "off":
+            self.joint_pe = nn.Parameter(torch.zeros(16, d))
         self.joint_embed = nn.Linear(3 + spatial_dim, d)
         if attn_mode in ("full", "self_only"):
             self.self_attn = nn.MultiheadAttention(
@@ -109,8 +227,12 @@ class JointAttnBlock(nn.Module):
             self.out.bias.zero_()
 
     def forward(self, canon_xyz, spatial_feat, z, pose_feat, kin_feat,
-                hmd_feat):
+                hmd_feat, sens_toks=None):
         q = self.joint_embed(torch.cat([canon_xyz, spatial_feat], dim=-1))
+        if self.pe_mode == "fixed":
+            q = q + self.joint_pe
+        elif self.pe_mode == "shuffled":
+            q = q + self.joint_pe[torch.randperm(16, device=q.device)]
         if self.attn_mode in ("full", "self_only"):
             a, _ = self.self_attn(q, q, q)
             q = self.ln1(q + a)
@@ -122,6 +244,15 @@ class JointAttnBlock(nn.Module):
             kv = torch.stack(toks, dim=1)                    # (B, 3|4, d)
             a, _ = self.cross_attn(q, kv, kv)
             q = self.ln2(q + a)
+        if self.sensor_mode != "off":
+            if self.sensor_mode == "const":
+                sens_toks = self.sens_const.unsqueeze(0).expand(
+                    q.shape[0], -1, -1)
+            idx = self._sens_idx
+            kv_s = self.sens_embed(sens_toks[:, idx]) \
+                + self.sens_type[idx]                            # (B,n,d)
+            a2, _ = self.sens_attn(q, kv_s, kv_s)
+            q = q + a2                        # zero-init out_proj: 0 at init
         q = self.ln3(q + self.ffn(q))
         return self.out(q)                                   # (B, 16, 3)
 
@@ -150,7 +281,8 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                  use_hmd_token: bool = True, attn_dim: int = 64,
                  attn_heads: int = 4, use_canon: bool = True,
                  sample_mode: str = "soft", sample_temp: float = 0.1,
-                 ms_mode: str = "off",
+                 ms_mode: str = "off", pe_mode: str = "off",
+                 sensor_mode: str = "off", sens_subset: str = "all",
                  **kwargs):
         super().__init__(*args, **kwargs)
         assert attn_mode in ("full", "self_only", "cross_only",
@@ -192,7 +324,11 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             block_mode = "full" if attn_mode == "replace" else attn_mode
             self.attn_block = JointAttnBlock(
                 attn_mode=block_mode, d=attn_dim, heads=attn_heads,
-                use_hmd_token=use_hmd_token)
+                use_hmd_token=use_hmd_token, pe_mode=pe_mode,
+                sensor_mode=sensor_mode, sens_subset=sens_subset)
+        self.sensor_mode = sensor_mode
+        self._sens = None
+        self._w2f = None
 
     # -- canonical transform from the per-sample device poses --------------
     def _canon_from_samples(self, batch_data_samples, device):
@@ -203,8 +339,16 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                         ).to(device).float()                 # (B,4,4)
         mask = torch.cat([l.temporal_mask for l in labels]
                          ).to(device).float()                # (B,)
-        T = compute_relpose_to_floor(m2w) @ invert_se3(m2w) @ c2w
+        w2f = compute_relpose_to_floor(m2w) @ invert_se3(m2w)
+        T = w2f @ c2w
         eye = torch.eye(4, device=device).expand_as(T)
+        if self.sensor_mode != "off":
+            self._w2f = torch.where(mask.reshape(-1, 1, 1) > 0, w2f, eye)
+            if hasattr(labels[0], "sensor_world"):
+                self._sens = torch.cat(
+                    [l.sensor_world for l in labels]).to(device).float()
+            else:
+                self._sens = torch.zeros(len(labels), 9, device=device)
         return torch.where(mask.reshape(-1, 1, 1) > 0, T, eye)
 
     def decode(self, batch_outputs, batch_data_samples, backbone_feat=None):
@@ -283,6 +427,16 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             parts.append(hmd_exp)
         joint_input = torch.cat(parts, dim=-1)
 
+        sens_toks = None
+        if self.sensor_mode == "floor" and self._sens is not None:
+            p = self._sens.reshape(B, 3, 3)              # ctrl_l, ctrl_r, hmd
+            Rf, tf = self._w2f[:, :3, :3], self._w2f[:, :3, 3]
+            sens_toks = torch.einsum("bij,bkj->bki", Rf, p) + tf[:, None]
+        elif self.sensor_mode == "baked" and hmd_info is not None:
+            h = hmd_info.to(torch.float32)
+            sens_toks = torch.stack(
+                [h[:, 0:3], h[:, 3:6], h[:, 9:12]], dim=1)   # (B,3,3)
+
         if self.attn_mode == "replace":
             if self.use_canon and self._canon is not None:
                 R, t = self._canon[:, :3, :3], self._canon[:, :3, 3]
@@ -291,7 +445,8 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             else:
                 canon = coarse_pose
             delta = self.attn_block(canon, spatial_feat, z_latent,
-                                    pose_feat, kin_feat, hmd_feat)
+                                    pose_feat, kin_feat, hmd_feat,
+                                    sens_toks=sens_toks)
             return coarse_pose + delta
 
         delta = self.refinement_mlp(
@@ -309,7 +464,8 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             else:
                 canon = coarse_pose
             extra = self.attn_block(canon, spatial_feat, z_latent,
-                                    pose_feat, kin_feat, hmd_feat)
+                                    pose_feat, kin_feat, hmd_feat,
+                                    sens_toks=sens_toks)
         delta = delta + torch.sigmoid(self.attn_gate) * extra
 
         return coarse_pose + delta
