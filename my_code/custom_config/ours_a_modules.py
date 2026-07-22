@@ -166,10 +166,14 @@ class JointAttnBlock(nn.Module):
     def __init__(self, attn_mode="full", d=64, heads=4, dropout=0.1,
                  spatial_dim=64, z_dim=64, pose_dim=128, kin_dim=64,
                  hmd_dim=32, use_hmd_token=True, pe_mode="off",
-                 sensor_mode="off", sens_subset="all"):
+                 sensor_mode="off", sens_subset="all",
+                 spatial_in_query=True):
         super().__init__()
         self.attn_mode = attn_mode
         self.use_hmd_token = use_hmd_token
+        # Task 21.5 E1-nospat: query = canon_xyz + PE only (no welded
+        # appearance anywhere) — measures the pure worth of welding.
+        self.spatial_in_query = bool(spatial_in_query)
         # Task 21.2: 3 sensor K/V tokens via a SEPARATE cross-attention
         # whose out_proj is zero-init -> contribution exactly 0 at init
         # (digit-identical warm start). 'floor' = floor-frame xyz (the
@@ -204,7 +208,8 @@ class JointAttnBlock(nn.Module):
         self.pe_mode = pe_mode
         if pe_mode != "off":
             self.joint_pe = nn.Parameter(torch.zeros(16, d))
-        self.joint_embed = nn.Linear(3 + spatial_dim, d)
+        self.joint_embed = nn.Linear(
+            (3 + spatial_dim) if self.spatial_in_query else 3, d)
         if attn_mode in ("full", "self_only"):
             self.self_attn = nn.MultiheadAttention(
                 d, heads, dropout=dropout, batch_first=True)
@@ -228,7 +233,9 @@ class JointAttnBlock(nn.Module):
 
     def forward(self, canon_xyz, spatial_feat, z, pose_feat, kin_feat,
                 hmd_feat, sens_toks=None):
-        q = self.joint_embed(torch.cat([canon_xyz, spatial_feat], dim=-1))
+        q = self.joint_embed(
+            torch.cat([canon_xyz, spatial_feat], dim=-1)
+            if self.spatial_in_query else canon_xyz)
         if self.pe_mode == "fixed":
             q = q + self.joint_pe
         elif self.pe_mode == "shuffled":
@@ -343,10 +350,12 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                  sample_mode: str = "soft", sample_temp: float = 0.1,
                  ms_mode: str = "off", pe_mode: str = "off",
                  sensor_mode: str = "off", sens_subset: str = "all",
+                 sensor_frame: str = "floor", spatial_in_query: bool = True,
                  **kwargs):
         super().__init__(*args, **kwargs)
         assert attn_mode in ("full", "self_only", "cross_only",
-                             "mlp_matched", "replace", "factored"), attn_mode
+                             "mlp_matched", "replace", "replace_self",
+                             "factored"), attn_mode
         # Task 20.1 multi-scale spatial feature: 'off' = parent 8x8 sample;
         # 'fused' = 8x8 (2048) + per-joint 47x47 deconv sample (256) -> proj;
         # 'fused_ctrl' = EXACT param match, the 256-d slot filled with the
@@ -383,11 +392,18 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             # 18b "replace": the decoder block IS stage 2 (full self+cross,
             # no MLP path, replicated globals dropped); retrained, no
             # warm-start guarantee.
-            block_mode = "full" if attn_mode == "replace" else attn_mode
+            block_mode = {"replace": "full",
+                          "replace_self": "self_only"}.get(attn_mode,
+                                                           attn_mode)
             self.attn_block = JointAttnBlock(
                 attn_mode=block_mode, d=attn_dim, heads=attn_heads,
                 use_hmd_token=use_hmd_token, pe_mode=pe_mode,
-                sensor_mode=sensor_mode, sens_subset=sens_subset)
+                sensor_mode=sensor_mode, sens_subset=sens_subset,
+                spatial_in_query=spatial_in_query)
+        # Task 21.5 E2: sensor tokens expressed in 'floor' (canonical) or
+        # 'egocam' (shared metric frame only — inv(cam2world) @ p_world).
+        assert sensor_frame in ("floor", "egocam"), sensor_frame
+        self.sensor_frame = sensor_frame
         self.sensor_mode = sensor_mode
         self._sens = None
         self._w2f = None
@@ -405,7 +421,8 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
         T = w2f @ c2w
         eye = torch.eye(4, device=device).expand_as(T)
         if self.sensor_mode != "off":
-            self._w2f = torch.where(mask.reshape(-1, 1, 1) > 0, w2f, eye)
+            base_T = w2f if self.sensor_frame == "floor" else invert_se3(c2w)
+            self._w2f = torch.where(mask.reshape(-1, 1, 1) > 0, base_T, eye)
             if hasattr(labels[0], "sensor_world"):
                 self._sens = torch.cat(
                     [l.sensor_world for l in labels]).to(device).float()
@@ -499,7 +516,7 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             sens_toks = torch.stack(
                 [h[:, 0:3], h[:, 3:6], h[:, 9:12]], dim=1)   # (B,3,3)
 
-        if self.attn_mode in ("replace", "factored"):
+        if self.attn_mode in ("replace", "replace_self", "factored"):
             if self.use_canon and self._canon is not None:
                 R, t = self._canon[:, :3, :3], self._canon[:, :3, 3]
                 canon = torch.einsum(
