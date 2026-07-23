@@ -115,6 +115,38 @@ class OursSensorCodec(OursTemporalCodec):
 
 
 @HOOKS.register_module()
+class FreezeLiftPathHook(Hook):
+    """Task 23.1: retrain the LIFTER (encoder + pose_decoder + aux) on
+    rotated heatmaps — freeze backbone AND the heatmap-production path
+    (deconv/add_deconv/conv/final_layer) so the heatmaps the rotation acts
+    on stay fixed."""
+
+    NAMES = ("deconv_layers", "add_deconv_layers", "conv_layers",
+             "final_layer")
+
+    def _mods(self, runner):
+        model = runner.model
+        model = model.module if hasattr(model, "module") else model
+        mods = [model.backbone]
+        for n in self.NAMES:
+            m = getattr(model.head, n, None)
+            if isinstance(m, nn.Module):
+                mods.append(m)
+        return mods
+
+    def before_train(self, runner):
+        n = 0
+        for m in self._mods(runner):
+            m.requires_grad_(False)
+            n += sum(p.numel() for p in m.parameters())
+        runner.logger.info(f"[FreezeLiftPathHook] froze {n / 1e6:.1f}M params")
+
+    def before_train_epoch(self, runner):
+        for m in self._mods(runner):
+            m.eval()
+
+
+@HOOKS.register_module()
 class FreezeBackboneHook(Hook):
     """Task 21.2 arm B: stage-1 inputs change (use_hmd=False), so stage 1
     must retrain — freeze ONLY the backbone (grads + BN stats)."""
@@ -352,6 +384,7 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                  sensor_mode: str = "off", sens_subset: str = "all",
                  sensor_frame: str = "floor", spatial_in_query: bool = True,
                  film_mode: str = "off",
+                 lift_roll_align: bool = False, lift_roll_zero: bool = False,
                  **kwargs):
         super().__init__(*args, **kwargs)
         assert attn_mode in ("full", "self_only", "cross_only",
@@ -416,6 +449,39 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
         assert film_mode in ("off", "gravity", "const"), film_mode
         self.film_mode = film_mode
         self._gvec = None
+        # Task 23.1: rotate the ENCODER'S heatmap input by -roll (gravity
+        # image-plane angle) before lifting; heatmap losses / codec / refine
+        # still see the raw heatmap. lift_roll_zero=True is the identity-
+        # roll CONTROL: same wrap, same interpolation blur, angle forced 0.
+        # The wrap patches the encoder INSTANCE forward so checkpoint keys
+        # are unchanged (warm start intact).
+        self.lift_roll_align = bool(lift_roll_align)
+        self.lift_roll_zero = bool(lift_roll_zero)
+        self._roll = None
+        if self.lift_roll_align:
+            enc = self.encoder
+            orig_fwd = enc.forward
+
+            def _rot_hm(hm, roll):
+                B = hm.shape[0]
+                c, si = torch.cos(-roll), torch.sin(-roll)
+                theta = torch.zeros(B, 2, 3, device=hm.device,
+                                    dtype=hm.dtype)
+                theta[:, 0, 0], theta[:, 0, 1] = c, -si
+                theta[:, 1, 0], theta[:, 1, 1] = si, c
+                grid = F.affine_grid(theta, list(hm.shape),
+                                     align_corners=True)
+                return F.grid_sample(hm, grid, mode="bilinear",
+                                     align_corners=True,
+                                     padding_mode="zeros")
+
+            def fwd(hm, hmd=None):
+                r = self._roll
+                if r is not None:
+                    hm = _rot_hm(hm, r.to(hm.dtype))
+                return orig_fwd(hm) if hmd is None else orig_fwd(hm, hmd)
+
+            enc.forward = fwd
         if film_mode != "off":
             def _film_mlp():
                 m = nn.Sequential(nn.Linear(3, 32), nn.GELU(),
@@ -446,6 +512,15 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             g = torch.einsum("bji,j->bi", c2w[:, :3, :3], up)
             g_fallback = up.expand_as(g)
             self._gvec = torch.where(mask.reshape(-1, 1) > 0, g, g_fallback)
+        if self.lift_roll_align:
+            if self.lift_roll_zero:
+                self._roll = torch.zeros(c2w.shape[0], device=device)
+            else:
+                up_l = torch.tensor([0.0, 1.0, 0.0], device=device)
+                g_l = torch.einsum("bji,j->bi", c2w[:, :3, :3], up_l)
+                roll = torch.atan2(g_l[:, 0], g_l[:, 1])
+                self._roll = torch.where(mask > 0, roll,
+                                         torch.zeros_like(roll))
         if self.sensor_mode != "off":
             base_T = w2f if self.sensor_frame == "floor" else invert_se3(c2w)
             self._w2f = torch.where(mask.reshape(-1, 1, 1) > 0, base_T, eye)
@@ -465,6 +540,7 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                                   backbone_feat)
         finally:
             self._canon = None
+            self._roll = None
 
     def loss(self, feats, batch_data_samples, train_cfg={}):
         self._canon = self._canon_from_samples(
@@ -473,6 +549,7 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             return super().loss(feats, batch_data_samples, train_cfg)
         finally:
             self._canon = None
+            self._roll = None
 
     def forward(self, feats):
         # parent forward with the 47x47 add_deconv output stashed for the
