@@ -351,6 +351,7 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                  ms_mode: str = "off", pe_mode: str = "off",
                  sensor_mode: str = "off", sens_subset: str = "all",
                  sensor_frame: str = "floor", spatial_in_query: bool = True,
+                 film_mode: str = "off",
                  **kwargs):
         super().__init__(*args, **kwargs)
         assert attn_mode in ("full", "self_only", "cross_only",
@@ -407,6 +408,26 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
         self.sensor_mode = sensor_mode
         self._sens = None
         self._w2f = None
+        # Task 22a: FiLM-condition spatial_feat on measured ego-cam gravity
+        # g_ec = R(cam2world)^T @ [0,1,0] (rotation-only). 'const' control:
+        # same MLPs fed a learned constant (capacity without gravity).
+        # Zero-init last layers => gamma=1, beta=0 => init == base
+        # digit-for-digit.
+        assert film_mode in ("off", "gravity", "const"), film_mode
+        self.film_mode = film_mode
+        self._gvec = None
+        if film_mode != "off":
+            def _film_mlp():
+                m = nn.Sequential(nn.Linear(3, 32), nn.GELU(),
+                                  nn.Linear(32, 64))
+                with torch.no_grad():
+                    m[2].weight.zero_()
+                    m[2].bias.zero_()
+                return m
+            self.film_gamma = _film_mlp()
+            self.film_beta = _film_mlp()
+            if film_mode == "const":
+                self.film_in = nn.Parameter(torch.zeros(3))
 
     # -- canonical transform from the per-sample device poses --------------
     def _canon_from_samples(self, batch_data_samples, device):
@@ -420,6 +441,11 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
         w2f = compute_relpose_to_floor(m2w) @ invert_se3(m2w)
         T = w2f @ c2w
         eye = torch.eye(4, device=device).expand_as(T)
+        if self.film_mode == "gravity":
+            up = torch.tensor([0.0, 1.0, 0.0], device=device)
+            g = torch.einsum("bji,j->bi", c2w[:, :3, :3], up)
+            g_fallback = up.expand_as(g)
+            self._gvec = torch.where(mask.reshape(-1, 1) > 0, g, g_fallback)
         if self.sensor_mode != "off":
             base_T = w2f if self.sensor_frame == "floor" else invert_se3(c2w)
             self._w2f = torch.where(mask.reshape(-1, 1, 1) > 0, base_T, eye)
@@ -488,6 +514,12 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             else:
                 spatial_feat = self.spatial_proj_ms(
                     torch.cat([sampled, hi_vec], dim=-1))
+        if self.film_mode != "off":
+            gin = self._gvec if self.film_mode == "gravity" \
+                else self.film_in.unsqueeze(0).expand(B, -1)
+            gamma = 1 + self.film_gamma(gin).unsqueeze(1)
+            beta = self.film_beta(gin).unsqueeze(1)
+            spatial_feat = gamma * spatial_feat + beta
 
         pose_feat = self.pose_encoder_net(coarse_pose.reshape(B, -1))
         kin_feat = self.kin_encoder(compute_kinematic_features(coarse_pose))
