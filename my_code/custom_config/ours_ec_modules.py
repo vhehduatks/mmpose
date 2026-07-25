@@ -42,7 +42,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from mmpose.models.heads.heatmap_heads.custom_egopose_cascaded_refinement_head_enhanced import (  # noqa: E501
-    CustomEgoposeCascadedRefinementHead_enhanced, soft_argmax_2d)
+    CustomEgoposeCascadedRefinementHead_enhanced, compute_kinematic_features,
+    soft_argmax_2d)
 from mmpose.registry import DATASETS, KEYPOINT_CODECS, MODELS
 
 from my_code.custom_config.ours_t_modules import (  # noqa: F401
@@ -160,6 +161,8 @@ class OursEgoCamHead(CustomEgoposeCascadedRefinementHead_enhanced):
                  use_bias: bool = True,
                  use_sensor_ego: bool = True,
                  use_sensor_rot: bool = True,
+                 restore_fusion: bool = False,
+                 restore_globals: bool = False,
                  d: int = 64, heads: int = 4, **kwargs):
         super().__init__(*args, **kwargs)
         assert stage2_frame in ("egocam", "floor"), stage2_frame
@@ -167,10 +170,25 @@ class OursEgoCamHead(CustomEgoposeCascadedRefinementHead_enhanced):
         self.use_bias = bool(use_bias)
         self.use_sensor_ego = bool(use_sensor_ego)
         self.use_sensor_rot = bool(use_sensor_rot)
+        self.restore_globals = bool(restore_globals)
         self.d = d
 
-        # stage-1 fusion removal: z_plus_hmd = z  (Task 21.4 B-none)
-        self._fuse = lambda z, hmd_emb: z
+        # Task 26.1b: restore the global K/V tokens arm A deleted (the lifting
+        # latent z, pose context, kinematic features — all reach pesens's
+        # cross-attn but nothing in arm A). Merged into the same cross-attn as
+        # the sensor tokens; their bias columns are 0 (no position). Reuses the
+        # inherited pose_encoder_net (48->pose) / kin_encoder (kin_raw->kin).
+        if restore_globals:
+            self.mod_z = nn.Linear(64, d)
+            self.mod_pose = nn.Linear(self.pose_encoder_net[0].out_features, d)
+            self.mod_kin = nn.Linear(self.kin_encoder[0].out_features, d)
+
+        # Task 26: stage-1 fusion removal z_plus_hmd = z (Task 21.4 B-none).
+        # Task 26.1a: on a FROZEN stage 1 the removal is not required (the
+        # ego-cam design never needed it) — restore the addition fusion so the
+        # frozen coarse is the deployed 67.19, making A-vs-pesens single-variable.
+        if not restore_fusion:
+            self._fuse = lambda z, hmd_emb: z
 
         # spatial feature: sample backbone_feat (2048ch) at soft-argmax joints
         self.spatial_proj = nn.Sequential(
@@ -285,16 +303,45 @@ class OursEgoCamHead(CustomEgoposeCascadedRefinementHead_enhanced):
         kv = self.sens_embed(tok) + self.sens_type.unsqueeze(0)
         return kv, p_ego, h_s
 
-    def refine(self, coarse_pose, heatmap, backbone_feat, z_latent,
-               hmd_info=None):
-        B, K = coarse_pose.shape[0], coarse_pose.shape[1]
+    def _prep_from_geom(self, c2w, m2w, mask, sens_world, sens_rot_world):
+        """Task 27-FULL: set the per-batch geometry stashes from cached
+        tensors (mirrors _prep, which reads them from data samples)."""
+        device = c2w.device
+        B = c2w.shape[0]
+        eye4 = torch.eye(4, device=device).expand(B, 4, 4)
+        m = mask.reshape(-1, 1, 1) > 0
+        w2f = compute_relpose_to_floor(m2w) @ invert_se3(m2w)
+        w2c = invert_se3(c2w)
+        self._w2f = torch.where(m, w2f, eye4)
+        self._w2c = torch.where(m, w2c, eye4)
+        self._canon = torch.where(m, w2f @ c2w, eye4)
+        up = torch.tensor([0.0, 1.0, 0.0], device=device)
+        g = torch.einsum("bji,j->bi", c2w[:, :3, :3], up)
+        self._g = torch.where(mask.reshape(-1, 1) > 0, g, up.expand(B, 3))
+        self._sens_world = sens_world
+        self._sens_rot_world = sens_rot_world
 
+    def sample_backbone(self, heatmap, backbone_feat):
+        """The (frozen-stage-1 ⇒ fixed) soft-argmax sampling — cacheable."""
         hm = heatmap.detach()
         coords, _ = soft_argmax_2d(hm, temperature=0.1)
         grid = (coords * 2 - 1).unsqueeze(1)
         sampled = F.grid_sample(backbone_feat, grid, mode="bilinear",
                                 align_corners=True, padding_mode="border")
-        spatial = self.spatial_proj(sampled.squeeze(2).permute(0, 2, 1))
+        return sampled.squeeze(2).permute(0, 2, 1)         # (B,16,2048)
+
+    def refine(self, coarse_pose, heatmap, backbone_feat, z_latent,
+               hmd_info=None):
+        sampled = self.sample_backbone(heatmap, backbone_feat)
+        refined, _ = self._refine_core(coarse_pose, sampled, z_latent)
+        return refined
+
+    def _refine_core(self, coarse_pose, sampled, z_latent):
+        """Everything after backbone sampling. Returns (refined, q) — q is
+        the 16×64 feature the Task 27-FULL temporal module consumes.
+        Requires the geometry stashes (_prep or _prep_from_geom) to be set."""
+        B, K = coarse_pose.shape[0], coarse_pose.shape[1]
+        spatial = self.spatial_proj(sampled)
 
         g = self._g                                            # (B,3)
         h_i = torch.einsum("bkj,bj->bk", coarse_pose, g)       # (B,16)
@@ -320,6 +367,17 @@ class OursEgoCamHead(CustomEgoposeCascadedRefinementHead_enhanced):
             bias_cross = self.mlp_relx(
                 torch.stack([d_is, dh_is], dim=-1)).permute(0, 3, 1, 2)
 
+        if self.restore_globals:                               # Task 26.1b
+            pose_feat = self.pose_encoder_net(coarse_pose.reshape(B, -1))
+            kin_feat = self.kin_encoder(compute_kinematic_features(coarse_pose))
+            glob = torch.stack([self.mod_z(z_latent), self.mod_pose(pose_feat),
+                                self.mod_kin(kin_feat)], dim=1)  # (B,3,d)
+            kv = torch.cat([kv, glob], dim=1)                  # (B, 2+3, d)
+            if bias_cross is not None:                         # 0 bias for globals
+                pad = bias_cross.new_zeros(
+                    bias_cross.shape[0], bias_cross.shape[1], K, glob.shape[1])
+                bias_cross = torch.cat([bias_cross, pad], dim=-1)
+
         q = self.ln1(q + self.self_attn(q, q, bias_self))
         q = self.ln2(q + self.cross_attn(q, kv, bias_cross))
         q = self.ln3(q + self.ffn(q))
@@ -327,4 +385,4 @@ class OursEgoCamHead(CustomEgoposeCascadedRefinementHead_enhanced):
 
         if self.stage2_frame == "floor":                       # floor -> ego
             delta = torch.einsum("bji,bkj->bki", R, delta)     # R^T @ delta
-        return coarse_pose + delta
+        return coarse_pose + delta, q
