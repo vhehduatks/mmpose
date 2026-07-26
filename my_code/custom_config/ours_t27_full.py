@@ -288,6 +288,9 @@ class T27Full(nn.Module):
             use_q=arm not in ("Fcoord", "Ffrozencoord"),
             dual_frame=dual_frame, use_sensors=use_sensors,
             use_rel9=use_rel9, **kw)
+        if head is None:                 # Task 31: coords straight from cache
+            assert arm == "Ffrozencoord", "no head => coords-only arm"
+            return
         for p in head.parameters():
             p.requires_grad_(False)
         if not self.frozen:
@@ -330,7 +333,9 @@ class T27Full(nn.Module):
         return n * self.jscale
 
     def forward(self, b):
-        if self.frozen:
+        if self.head is None:            # Task 31: cached refined, no q
+            refined, q = b["refined"], None
+        elif self.frozen:
             with torch.no_grad():
                 refined, q = self.stage2(b)
         else:
@@ -427,18 +432,25 @@ def main():
     ap.add_argument("--seed", type=int, default=None)      # Task 30: init+shuffle
     ap.add_argument("--cache", default=CACHE)              # Task 30 B: alt cache
     ap.add_argument("--tag-prefix", default="")            # Task 30 B: run tag
+    ap.add_argument("--cfg", default=CFG)                  # Task 30 B: alt head
+    ap.add_argument("--ckpt", default=CKPT)
+    ap.add_argument("--coords-from-cache", action="store_true")  # Task 31
     args = ap.parse_args()
     device = "cuda"
     if args.seed is not None:
         torch.manual_seed(args.seed)   # varies module init (pre-build)
 
     init_default_scope("mmpose")
-    cfg = Config.fromfile(CFG)
-    head = MODELS.build(cfg.model["head"])
-    sd = torch.load(CKPT, map_location="cpu")["state_dict"]
-    head.load_state_dict({k[5:]: v for k, v in sd.items()
-                          if k.startswith("head.")}, strict=True)
-    model = T27Full(head.to(device), args.arm,
+    if args.coords_from_cache:           # Task 31: no stage-2 head at all
+        head = None
+    else:
+        cfg = Config.fromfile(args.cfg)
+        head = MODELS.build(cfg.model["head"])
+        sd = torch.load(args.ckpt, map_location="cpu")["state_dict"]
+        head.load_state_dict({k[5:]: v for k, v in sd.items()
+                              if k.startswith("head.")}, strict=True)
+        head = head.to(device)
+    model = T27Full(head, args.arm,
                     noise_sigma=args.noise_sigma, noise_mode=args.noise_mode,
                     dual_frame=args.dual_frame, use_sensors=args.sensors,
                     globals_mode=args.globals_mode,
