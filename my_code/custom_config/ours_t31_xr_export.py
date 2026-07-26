@@ -38,6 +38,12 @@ def main(split):
     h = model.head
 
     lc = cfg.train_dataloader if split == "Train" else cfg.val_dataloader
+    # Pin the cache file: the config's "val" is the official TESTSET
+    # (test_cache_v2, 115k — the single-touch set, NOT for internal val),
+    # and its train file is the V2 format whose row order is not guaranteed
+    # to match the V1 file used for sequence grouping below. Always read
+    # the exact file that img_paths grouping uses.
+    lc["dataset"]["cache_file"] = H5[split]
     lc["dataset"]["pipeline"] = cfg.val_pipeline
     lc["sampler"]["shuffle"] = False
     lc["batch_size"] = 64
@@ -71,6 +77,8 @@ def main(split):
 
     with h5py.File(H5[split], "r") as f:
         paths = [p.decode() for p in f["img_paths"][:]]
+    assert max(r[0] for r in rows) < len(paths), \
+        "h5_img_idx exceeds grouping file — dataset/grouping cache mismatch"
     seqs = {}
     for idx, coarse, refined, gt in rows:
         key = paths[idx].rsplit("/rgba/", 1)[0]
