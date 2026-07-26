@@ -161,6 +161,7 @@ class OursEgoCamHead(CustomEgoposeCascadedRefinementHead_enhanced):
                  use_bias: bool = True,
                  use_sensor_ego: bool = True,
                  use_sensor_rot: bool = True,
+                 use_sensor_tokens: bool = True,   # Task 30 Part B
                  restore_fusion: bool = False,
                  restore_globals: bool = False,
                  d: int = 64, heads: int = 4, **kwargs):
@@ -170,6 +171,7 @@ class OursEgoCamHead(CustomEgoposeCascadedRefinementHead_enhanced):
         self.use_bias = bool(use_bias)
         self.use_sensor_ego = bool(use_sensor_ego)
         self.use_sensor_rot = bool(use_sensor_rot)
+        self.use_sensor_tokens = bool(use_sensor_tokens)
         self.restore_globals = bool(restore_globals)
         self.d = d
 
@@ -202,22 +204,30 @@ class OursEgoCamHead(CustomEgoposeCascadedRefinementHead_enhanced):
         nn.init.normal_(self.joint_pe, std=0.02)
 
         # sensor token embedding (2 controllers; HMD dropped)
-        s_in = (3 if use_sensor_ego else 0) + 3 + 1 + (6 if use_sensor_rot else 0)
-        self.sens_embed = nn.Sequential(nn.Linear(s_in, d),
-                                        nn.ReLU(inplace=True))
-        self.sens_type = nn.Parameter(torch.zeros(2, d))
-        nn.init.normal_(self.sens_type, std=0.02)
+        # Task 30 Part B: use_sensor_tokens=False removes the controller
+        # consultation entirely — in this family the cross-attn K/V is the
+        # controllers (globals deleted), so the cross-attn block goes with it
+        # (unless restore_globals keeps a K/V alive).
+        if self.use_sensor_tokens:
+            s_in = ((3 if use_sensor_ego else 0) + 3 + 1
+                    + (6 if use_sensor_rot else 0))
+            self.sens_embed = nn.Sequential(nn.Linear(s_in, d),
+                                            nn.ReLU(inplace=True))
+            self.sens_type = nn.Parameter(torch.zeros(2, d))
+            nn.init.normal_(self.sens_type, std=0.02)
 
         # invariant relational bias
         if use_bias:
             self.mlp_rel = _rel_mlp(heads)
-            self.mlp_relx = _rel_mlp(heads)
+            if self.use_sensor_tokens:
+                self.mlp_relx = _rel_mlp(heads)
 
         # attention block
         self.self_attn = BiasedMHA(d, heads)
-        self.cross_attn = BiasedMHA(d, heads)
+        if self.use_sensor_tokens or restore_globals:
+            self.cross_attn = BiasedMHA(d, heads)
+            self.ln2 = nn.LayerNorm(d)
         self.ln1 = nn.LayerNorm(d)
-        self.ln2 = nn.LayerNorm(d)
         self.ln3 = nn.LayerNorm(d)
         self.ffn = nn.Sequential(nn.Linear(d, 4 * d), nn.ReLU(inplace=True),
                                  nn.Linear(4 * d, d))
@@ -354,32 +364,35 @@ class OursEgoCamHead(CustomEgoposeCascadedRefinementHead_enhanced):
             feats = [canon_xyz, h_i.unsqueeze(-1), spatial]
         q = self.joint_embed(torch.cat(feats, dim=-1)) + self.joint_pe
 
-        kv, p_ego, h_s = self._sensor_tokens(coarse_pose)
-
+        kv = None
         bias_self = bias_cross = None
+        if self.use_sensor_tokens:
+            kv, p_ego, h_s = self._sensor_tokens(coarse_pose)
         if self.use_bias:
             d_ij = torch.cdist(coarse_pose, coarse_pose)       # (B,16,16)
             dh_ij = h_i[:, :, None] - h_i[:, None, :]
             bias_self = self.mlp_rel(
                 torch.stack([d_ij, dh_ij], dim=-1)).permute(0, 3, 1, 2)
-            d_is = torch.cdist(coarse_pose, p_ego)             # (B,16,2)
-            dh_is = h_i[:, :, None] - h_s[:, None, :]
-            bias_cross = self.mlp_relx(
-                torch.stack([d_is, dh_is], dim=-1)).permute(0, 3, 1, 2)
+            if self.use_sensor_tokens:
+                d_is = torch.cdist(coarse_pose, p_ego)         # (B,16,2)
+                dh_is = h_i[:, :, None] - h_s[:, None, :]
+                bias_cross = self.mlp_relx(
+                    torch.stack([d_is, dh_is], dim=-1)).permute(0, 3, 1, 2)
 
         if self.restore_globals:                               # Task 26.1b
             pose_feat = self.pose_encoder_net(coarse_pose.reshape(B, -1))
             kin_feat = self.kin_encoder(compute_kinematic_features(coarse_pose))
             glob = torch.stack([self.mod_z(z_latent), self.mod_pose(pose_feat),
                                 self.mod_kin(kin_feat)], dim=1)  # (B,3,d)
-            kv = torch.cat([kv, glob], dim=1)                  # (B, 2+3, d)
+            kv = glob if kv is None else torch.cat([kv, glob], dim=1)
             if bias_cross is not None:                         # 0 bias for globals
                 pad = bias_cross.new_zeros(
                     bias_cross.shape[0], bias_cross.shape[1], K, glob.shape[1])
                 bias_cross = torch.cat([bias_cross, pad], dim=-1)
 
         q = self.ln1(q + self.self_attn(q, q, bias_self))
-        q = self.ln2(q + self.cross_attn(q, kv, bias_cross))
+        if kv is not None:
+            q = self.ln2(q + self.cross_attn(q, kv, bias_cross))
         q = self.ln3(q + self.ffn(q))
         delta = self.out(q)                                    # (B,16,3)
 

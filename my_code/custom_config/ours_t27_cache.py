@@ -33,10 +33,11 @@ CKPT = ("work_dirs/t26_ecA/"
 OUT_ROOT = Path("/mnt/dataset_vol/t27_feat_cache")
 
 
-def main(split):
+def main(split, cfg_path=CFG, ckpt_path=CKPT, out_root=OUT_ROOT):
+    out_root = Path(out_root)
     init_default_scope("mmpose")
-    cfg = Config.fromfile(CFG)
-    model = init_model(CFG, CKPT, device="cuda").eval()
+    cfg = Config.fromfile(cfg_path)
+    model = init_model(cfg_path, ckpt_path, device="cuda").eval()
     h = model.head
 
     lc = cfg.train_dataloader if split == "Train" else cfg.val_dataloader
@@ -93,7 +94,7 @@ def main(split):
             if n % 6400 < 32:
                 print(f"[{split}] {n} frames", flush=True)
 
-    out_dir = OUT_ROOT / split
+    out_dir = out_root / split
     out_dir.mkdir(parents=True, exist_ok=True)
     for (part, sess), rows in acc.items():
         rows.sort(key=lambda r: r[0])
@@ -109,4 +110,5 @@ def main(split):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    # ours_t27_cache.py <split> [cfg] [ckpt] [out_root]
+    main(*sys.argv[1:5])

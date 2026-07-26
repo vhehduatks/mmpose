@@ -67,9 +67,9 @@ STAGE2_PARAMS = ("joint_pe", "sens_type")
 # ---------------------------------------------------------------------------
 
 class WindowData:
-    def __init__(self, split):
+    def __init__(self, split, root=CACHE):
         self.sessions = []
-        for f in sorted(glob.glob(os.path.join(CACHE, split, "*.npz"))):
+        for f in sorted(glob.glob(os.path.join(root, split, "*.npz"))):
             z = np.load(f)
             self.sessions.append({k: z[k] for k in z.files})
         self.index = []
@@ -118,12 +118,13 @@ class AttnBlock(nn.Module):
 class TemporalMixSTE(nn.Module):
     def __init__(self, use_q=True, q_dim=64, d=128, heads=8, pairs=4,
                  dropout=0.1, dual_frame=False, use_sensors=False,
-                 globals_mode=None):
+                 globals_mode=None, use_rel9=True):
         super().__init__()
         self.use_q = use_q
         self.dual_frame = dual_frame
         self.use_sensors = use_sensors
         self.globals_mode = globals_mode
+        self.use_rel9 = use_rel9
         if globals_mode:
             # Task 29: pesens global K/V restored (minus mod_hmd) as extra
             # tokens in the SAME weight-tied per-STB cross-attn; zero-init
@@ -159,8 +160,9 @@ class TemporalMixSTE(nn.Module):
         self.time_pe = nn.Parameter(torch.zeros(T, d))
         nn.init.normal_(self.joint_pe, std=0.02)
         nn.init.normal_(self.time_pe, std=0.02)
-        self.rel_embed = nn.Sequential(nn.Linear(9, d), nn.GELU(),
-                                       nn.Linear(d, d))
+        if use_rel9:
+            self.rel_embed = nn.Sequential(nn.Linear(9, d), nn.GELU(),
+                                           nn.Linear(d, d))
         self.stb = nn.ModuleList(AttnBlock(d, heads, dropout)
                                  for _ in range(pairs))
         self.ttb = nn.ModuleList(AttnBlock(d, heads, dropout)
@@ -178,7 +180,9 @@ class TemporalMixSTE(nn.Module):
         if self.use_q:
             x = x + self.q_proj(q)
         x = x + self.joint_pe + self.time_pe[None, :, None]
-        cond = self.rel_embed(rel9)[:, :, None]              # (B,T,1,d)
+        # Task 30 A6: rel9 conditioning ablatable
+        cond = (self.rel_embed(rel9)[:, :, None]             # (B,T,1,d)
+                if self.use_rel9 else 0.0)
         kv = None
         if self.use_sensors and sens_tok is not None:
             kv = self.sens_embed(sens_tok)                   # (B,T,2,d)
@@ -202,13 +206,70 @@ class TemporalMixSTE(nn.Module):
         return self.out(x)                             # (B,T,16,3) all-step
 
 
+class FlattenTemporal(nn.Module):
+    """Task 30 A7 — param-matched flatten control (PoseFormer-style temporal
+    stage): the 16 joints collapse to ONE token per step, so ONLY the joint
+    axis differs from TemporalMixSTE. 8 temporal AttnBlocks at the same d as
+    the 4 STB+4 TTB pairs (same block count => params match within ~5%);
+    weight-tied sensor cross-attn (single query token) after every 2nd block
+    = 4 applications, matching A0; rel9 added before each block; zero-init
+    out => identity gate holds."""
+
+    def __init__(self, use_q=True, q_dim=64, d=128, heads=8, blocks=8,
+                 dropout=0.1, dual_frame=False, use_sensors=False,
+                 use_rel9=True):
+        super().__init__()
+        self.use_q = use_q
+        self.use_sensors = use_sensors
+        self.use_rel9 = use_rel9
+        in_dim = 16 * (7 if dual_frame else 3) + (q_dim if use_q else 0)
+        self.step_embed = nn.Linear(in_dim, d)
+        self.time_pe = nn.Parameter(torch.zeros(T, d))
+        nn.init.normal_(self.time_pe, std=0.02)
+        if use_rel9:
+            self.rel_embed = nn.Sequential(nn.Linear(9, d), nn.GELU(),
+                                           nn.Linear(d, d))
+        if use_sensors:
+            self.sens_embed = nn.Linear(7, d)
+            self.sens_type = nn.Parameter(torch.zeros(2, d))
+            nn.init.normal_(self.sens_type, std=0.02)
+            self.sens_attn = nn.MultiheadAttention(d, heads, dropout=dropout,
+                                                   batch_first=True)
+            nn.init.zeros_(self.sens_attn.out_proj.weight)
+            nn.init.zeros_(self.sens_attn.out_proj.bias)
+        self.blocks = nn.ModuleList(AttnBlock(d, heads, dropout)
+                                    for _ in range(blocks))
+        self.out = nn.Linear(d, 48)
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
+
+    def forward(self, q, p_tok, rel9, sens_tok=None, glob=None):
+        B, Tn = p_tok.shape[:2]
+        feats = p_tok.reshape(B, Tn, -1)                 # (B,T,16*pd)
+        if self.use_q:
+            feats = torch.cat([feats, q.mean(dim=2)], dim=-1)  # + q-bar
+        x = self.step_embed(feats) + self.time_pe[None]
+        cond = self.rel_embed(rel9) if self.use_rel9 else 0.0
+        kv = None
+        if self.use_sensors and sens_tok is not None:
+            kv = (self.sens_embed(sens_tok) + self.sens_type
+                  ).reshape(B * Tn, 2, -1)
+        for i, blk in enumerate(self.blocks):
+            x = blk(x + cond)
+            if kv is not None and i % 2 == 1:
+                a, _ = self.sens_attn(x.reshape(B * Tn, 1, -1), kv, kv)
+                x = x + a.reshape(B, Tn, -1)
+        return self.out(x).reshape(B, Tn, 16, 3)
+
+
 # ---------------------------------------------------------------------------
 # Full model
 # ---------------------------------------------------------------------------
 
 class T27Full(nn.Module):
     def __init__(self, head, arm, noise_sigma=0.0, noise_mode="white_legacy",
-                 dual_frame=False, use_sensors=False, globals_mode=None):
+                 dual_frame=False, use_sensors=False, globals_mode=None,
+                 use_rel9=True, flatten=False):
         super().__init__()
         self.head = head
         self.arm = arm
@@ -221,10 +282,12 @@ class T27Full(nn.Module):
             self.register_buffer("jscale", torch.tensor(
                 JOINT_SCALE).reshape(1, 1, 16, 1))
         self.frozen = arm in ("Ffrozen", "Ffrozencoord")
-        self.temporal = TemporalMixSTE(
+        cls = FlattenTemporal if flatten else TemporalMixSTE
+        kw = {} if flatten else {"globals_mode": globals_mode}
+        self.temporal = cls(
             use_q=arm not in ("Fcoord", "Ffrozencoord"),
             dual_frame=dual_frame, use_sensors=use_sensors,
-            globals_mode=globals_mode)
+            use_rel9=use_rel9, **kw)
         for p in head.parameters():
             p.requires_grad_(False)
         if not self.frozen:
@@ -359,8 +422,15 @@ def main():
     ap.add_argument("--vel-loss", action="store_true")
     ap.add_argument("--globals", dest="globals_mode", default=None,
                     choices=["all", "z", "const"])
+    ap.add_argument("--no-rel9", action="store_true")      # Task 30 A6
+    ap.add_argument("--flatten", action="store_true")      # Task 30 A7
+    ap.add_argument("--seed", type=int, default=None)      # Task 30: init+shuffle
+    ap.add_argument("--cache", default=CACHE)              # Task 30 B: alt cache
+    ap.add_argument("--tag-prefix", default="")            # Task 30 B: run tag
     args = ap.parse_args()
     device = "cuda"
+    if args.seed is not None:
+        torch.manual_seed(args.seed)   # varies module init (pre-build)
 
     init_default_scope("mmpose")
     cfg = Config.fromfile(CFG)
@@ -371,9 +441,14 @@ def main():
     model = T27Full(head.to(device), args.arm,
                     noise_sigma=args.noise_sigma, noise_mode=args.noise_mode,
                     dual_frame=args.dual_frame, use_sensors=args.sensors,
-                    globals_mode=args.globals_mode).to(device)
+                    globals_mode=args.globals_mode,
+                    use_rel9=not args.no_rel9,
+                    flatten=args.flatten).to(device)
+    n_tmp = sum(p.numel() for p in model.temporal.parameters())
+    print(f"temporal params: {n_tmp/1e6:.3f}M "
+          f"({type(model.temporal).__name__})", flush=True)
 
-    val = WindowData("Val")
+    val = WindowData("Val", args.cache)
     print(f"val windows: {len(val)}", flush=True)
 
     if args.gate == "identity":
@@ -402,7 +477,7 @@ def main():
               f"at bs={args.bs}")
         return
 
-    train = WindowData("Train")
+    train = WindowData("Train", args.cache)
     print(f"train windows: {len(train)}", flush=True)
     groups = [{"params": [p for p in model.temporal.parameters()],
                "lr": args.lr_temporal}]
@@ -412,17 +487,20 @@ def main():
     opt = torch.optim.AdamW(groups, weight_decay=0.01)
     sched = torch.optim.lr_scheduler.MultiStepLR(opt, [6, 8], 0.5)
 
-    tag = (f"{args.arm}"
+    tag = (args.tag_prefix + f"{args.arm}"
            + (f"_{args.noise_mode}{args.noise_sigma:g}"
               if args.noise_sigma else "")
            + ("_df" if args.dual_frame else "")
            + ("_sens" if args.sensors else "")
            + ("_vel" if args.vel_loss else "")
-           + (f"_glob{args.globals_mode}" if args.globals_mode else ""))
+           + (f"_glob{args.globals_mode}" if args.globals_mode else "")
+           + ("_norel9" if args.no_rel9 else "")
+           + ("_flat" if args.flatten else "")
+           + (f"_s{args.seed}" if args.seed is not None else ""))
     out_dir = f"work_dirs/t27_full_{tag}"
     os.makedirs(out_dir, exist_ok=True)
     best = math.inf
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(42 if args.seed is None else args.seed)
     for ep in range(1, args.epochs + 1):
         model.train()
         perm = rng.permutation(len(train))
