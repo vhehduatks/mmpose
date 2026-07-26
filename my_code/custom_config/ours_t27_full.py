@@ -435,6 +435,8 @@ def main():
     ap.add_argument("--cfg", default=CFG)                  # Task 30 B: alt head
     ap.add_argument("--ckpt", default=CKPT)
     ap.add_argument("--coords-from-cache", action="store_true")  # Task 31
+    ap.add_argument("--eval-ckpt", default=None)   # Task 31: eval-only mode
+    ap.add_argument("--eval-split", default="Val")
     args = ap.parse_args()
     device = "cuda"
     if args.seed is not None:
@@ -459,6 +461,18 @@ def main():
     n_tmp = sum(p.numel() for p in model.temporal.parameters())
     print(f"temporal params: {n_tmp/1e6:.3f}M "
           f"({type(model.temporal).__name__})", flush=True)
+
+    if args.eval_ckpt:                 # Task 31: single predefined eval pass
+        data = WindowData(args.eval_split, args.cache)
+        print(f"{args.eval_split} windows: {len(data)}", flush=True)
+        ck = torch.load(args.eval_ckpt, map_location="cpu")
+        model.load_state_dict(ck["model"])
+        mp, bp = run_val(model, data, device, args.bs)
+        print(f"EVAL[{args.eval_split}] {args.eval_ckpt} "
+              f"(train-best ep{ck.get('epoch')}, {ck.get('val_mpjpe'):.2f}): "
+              f"MPJPE {mp:.2f} mm, base {bp:.2f} mm, "
+              f"extracted {mp-bp:+.2f}", flush=True)
+        return
 
     val = WindowData("Val", args.cache)
     print(f"val windows: {len(val)}", flush=True)

@@ -28,7 +28,9 @@ CKPT = ("/mnt/linux_hdd_a/mmpose_work_dirs/HMD_xregopose_cascaded_no_hmd/"
         "best_xregopose_Full Body_All_mpjpe_epoch_8.pth")
 OUT_ROOT = Path("/mnt/linux_hdd_a/t31_xr_cache")
 H5 = {"Train": "/mnt/dataset_vol/h5cache/train_cache_with_images.h5",
-      "Val": "/mnt/dataset_vol/h5cache/val_cache_with_images.h5"}
+      "Val": "/mnt/dataset_vol/h5cache/val_cache_with_images.h5",
+      # official TestSet — export/eval ONCE, at the end, predefined
+      "Test": "/mnt/dataset_vol/h5cache/test_cache_with_images.h5"}
 
 
 def main(split):
