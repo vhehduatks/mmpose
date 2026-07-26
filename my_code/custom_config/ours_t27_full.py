@@ -36,7 +36,15 @@ from mmengine.registry import init_default_scope
 from mmpose.registry import MODELS
 
 from my_code.custom_config.ours_ec_modules import OursEgoCamHead  # noqa: F401
-from my_code.custom_config.ours_t_modules import invert_se3
+from my_code.custom_config.ours_t_modules import (compute_relpose_to_floor,
+                                                  invert_se3)
+
+# Task 28: the deployed cached_noise recipe (framevision cached_noise.yaml,
+# fitted from fold-vs-pilot residuals): AR(1) rho=0.961, per-axis std =
+# sigma_3DRMS/sqrt(3), wrist-heavy per-joint scales (mean ~1).
+AR1_RHO = 0.961
+JOINT_SCALE = [0.62, 0.62, 0.62, 1.09, 1.66, 0.66, 1.11, 1.44,
+               0.68, 0.92, 1.20, 1.31, 0.69, 0.91, 1.13, 1.34]
 
 CFG = "my_code/custom_config/HMD_kinect_v5_t26_ecA_config.py"
 CKPT = ("work_dirs/t26_ecA/"
@@ -105,12 +113,26 @@ class AttnBlock(nn.Module):
 
 class TemporalMixSTE(nn.Module):
     def __init__(self, use_q=True, q_dim=64, d=128, heads=8, pairs=4,
-                 dropout=0.1):
+                 dropout=0.1, dual_frame=False, use_sensors=False):
         super().__init__()
         self.use_q = use_q
+        self.dual_frame = dual_frame
+        self.use_sensors = use_sensors
         if use_q:
             self.q_proj = nn.Linear(q_dim, d)
-        self.coord_embed = nn.Linear(3, d)
+        # Task 28 lever 0: dual-frame token [p_ego, p_common, h] (7-d)
+        self.coord_embed = nn.Linear(7 if dual_frame else 3, d)
+        if use_sensors:
+            # Task 28 lever 2: per-step controller K/V [s_ego, s_common, h],
+            # ONE weight-tied cross-attn applied after each STB; zero-init
+            # out_proj => no-op at init (identity gate preserved).
+            self.sens_embed = nn.Linear(7, d)
+            self.sens_type = nn.Parameter(torch.zeros(2, d))
+            nn.init.normal_(self.sens_type, std=0.02)
+            self.sens_attn = nn.MultiheadAttention(d, heads, dropout=dropout,
+                                                   batch_first=True)
+            nn.init.zeros_(self.sens_attn.out_proj.weight)
+            nn.init.zeros_(self.sens_attn.out_proj.bias)
         self.joint_pe = nn.Parameter(torch.zeros(16, d))
         self.time_pe = nn.Parameter(torch.zeros(T, d))
         nn.init.normal_(self.joint_pe, std=0.02)
@@ -125,20 +147,28 @@ class TemporalMixSTE(nn.Module):
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
 
-    def forward(self, q, p, rel9):
-        # q (B,T,16,qd) or None, p (B,T,16,3), rel9 (B,T,9)
-        B = p.shape[0]
-        x = self.coord_embed(p)
+    def forward(self, q, p_tok, rel9, sens_tok=None):
+        # q (B,T,16,qd) or None; p_tok (B,T,16,3|7); rel9 (B,T,9);
+        # sens_tok (B,T,2,7) or None
+        B = p_tok.shape[0]
+        x = self.coord_embed(p_tok)
         if self.use_q:
             x = x + self.q_proj(q)
         x = x + self.joint_pe + self.time_pe[None, :, None]
         cond = self.rel_embed(rel9)[:, :, None]              # (B,T,1,d)
+        kv = None
+        if self.use_sensors and sens_tok is not None:
+            kv = (self.sens_embed(sens_tok) + self.sens_type
+                  ).reshape(B * T, 2, -1)
         for stb, ttb in zip(self.stb, self.ttb):
-            x = stb(x.reshape(B * T, 16, -1)).reshape(B, T, 16, -1)
-            x = x + cond
+            xf = stb(x.reshape(B * T, 16, -1))
+            if kv is not None:
+                a, _ = self.sens_attn(xf, kv, kv)
+                xf = xf + a                    # zero-init out_proj: 0 at init
+            x = xf.reshape(B, T, 16, -1) + cond
             x = ttb(x.permute(0, 2, 1, 3).reshape(B * 16, T, -1)
                     ).reshape(B, 16, T, -1).permute(0, 2, 1, 3)
-        return self.out(x[:, -1])                            # (B,16,3) delta
+        return self.out(x)                             # (B,T,16,3) all-step
 
 
 # ---------------------------------------------------------------------------
@@ -146,14 +176,22 @@ class TemporalMixSTE(nn.Module):
 # ---------------------------------------------------------------------------
 
 class T27Full(nn.Module):
-    def __init__(self, head, arm, noise_sigma=0.0):
+    def __init__(self, head, arm, noise_sigma=0.0, noise_mode="white_legacy",
+                 dual_frame=False, use_sensors=False):
         super().__init__()
         self.head = head
         self.arm = arm
         self.noise_sigma = noise_sigma          # mm, train-time input noise
+        self.noise_mode = noise_mode  # white_legacy | white | ar1
+        self.dual_frame = dual_frame
+        self.use_sensors = use_sensors
+        if noise_mode == "ar1":
+            self.register_buffer("jscale", torch.tensor(
+                JOINT_SCALE).reshape(1, 1, 16, 1))
         self.frozen = arm in ("Ffrozen", "Ffrozencoord")
         self.temporal = TemporalMixSTE(
-            use_q=arm not in ("Fcoord", "Ffrozencoord"))
+            use_q=arm not in ("Fcoord", "Ffrozencoord"),
+            dual_frame=dual_frame, use_sensors=use_sensors)
         for p in head.parameters():
             p.requires_grad_(False)
         if not self.frozen:
@@ -176,6 +214,25 @@ class T27Full(nn.Module):
                                             flat(b["sampled"]), flat(b["z"]))
         return (refined.reshape(B, T, 16, 3), q.reshape(B, T, 16, -1))
 
+    def _make_noise(self, refined):
+        """Train-time input noise, deployed cached_noise conventions:
+        sigma = 3D-RMS mm => per-axis std sigma/sqrt(3); 'ar1' adds rho=0.961
+        temporal correlation + wrist-heavy per-joint scales. 'white_legacy'
+        keeps the 27-full probe convention (per-axis sigma mm) for
+        reproducibility of the recorded 55.44."""
+        if self.noise_mode == "white_legacy":
+            return torch.randn_like(refined) * (self.noise_sigma / 1000.0)
+        s = self.noise_sigma / 1000.0 / math.sqrt(3.0)
+        eps = torch.randn_like(refined) * s              # (B,T,16,3)
+        if self.noise_mode == "white":
+            return eps
+        n = torch.empty_like(eps)
+        n[:, 0] = eps[:, 0]
+        c = math.sqrt(1.0 - AR1_RHO ** 2)
+        for t in range(1, refined.shape[1]):
+            n[:, t] = AR1_RHO * n[:, t - 1] + c * eps[:, t]
+        return n * self.jscale
+
     def forward(self, b):
         if self.frozen:
             with torch.no_grad():
@@ -184,23 +241,50 @@ class T27Full(nn.Module):
             refined, q = self.stage2(b)
         anchor = refined
         if self.training and self.noise_sigma > 0:
-            # deployed-STF2-style train-time input noise (cached_noise
-            # analog): noisy tokens AND noisy residual base, clean targets;
-            # test-time inputs stay clean.
-            refined = refined + torch.randn_like(refined) \
-                * (self.noise_sigma / 1000.0)
+            # noisy tokens AND noisy residual base, clean targets; test-time
+            # inputs stay clean (noise-to-test, deployed STF2 discipline).
+            refined = refined + self._make_noise(refined)
         B = refined.shape[0]
         c2w = b["c2w"]
+        eye = torch.eye(4, device=c2w.device)
+        m = b["mask"].reshape(B, T, 1, 1) > 0
         rel = torch.matmul(invert_se3(
             c2w[:, -1].reshape(B, 4, 4)).unsqueeze(1), c2w)    # (B,T,4,4)
-        m = b["mask"].reshape(B, T, 1, 1) > 0
-        rel = torch.where(m & m[:, -1:], rel,
-                          torch.eye(4, device=rel.device).expand_as(rel))
+        rel = torch.where(m & m[:, -1:], rel, eye.expand_as(rel))
         rel9 = torch.cat([rel[..., :3, :2].reshape(B, T, 6),
                           rel[..., :3, 3]], dim=-1)
-        delta = self.temporal(q, refined, rel9)
+
+        p_tok, sens_tok = refined, None
+        if self.dual_frame or self.use_sensors:
+            # T_t = w2f_last @ c2w_t maps step-t ego-cam -> last-step floor
+            m2w_l = b["m2w"][:, -1].reshape(B, 4, 4)
+            w2f_l = compute_relpose_to_floor(m2w_l) @ invert_se3(m2w_l)
+            Tt = torch.matmul(w2f_l.unsqueeze(1), c2w)         # (B,T,4,4)
+            Tt = torch.where(m & m[:, -1:], Tt, eye.expand_as(Tt))
+            up = torch.tensor([0.0, 1.0, 0.0], device=c2w.device)
+            g = torch.einsum("btji,j->bti", c2w[..., :3, :3], up)
+            g = torch.where(m.reshape(B, T, 1) > 0, g,
+                            up.expand(B, T, 3))                # (B,T,3)
+        if self.dual_frame:
+            p_com = torch.einsum("btij,btkj->btki", Tt[..., :3, :3],
+                                 refined) + Tt[..., None, :3, 3]
+            h = torch.einsum("btkj,btj->btk", refined, g)
+            p_tok = torch.cat([refined, p_com, h.unsqueeze(-1)], dim=-1)
+        if self.use_sensors:
+            sw = b["sens"]                                     # (B,T,2,3) wrld
+            w2c = invert_se3(c2w.reshape(B * T, 4, 4)).reshape(B, T, 4, 4)
+            s_ego = torch.einsum("btij,btsj->btsi", w2c[..., :3, :3],
+                                 sw) + w2c[..., None, :3, 3]
+            s_com = torch.einsum("btij,btsj->btsi",
+                                 w2f_l[:, None, :3, :3].expand(B, T, 3, 3),
+                                 sw) + w2f_l[:, None, None, :3, 3]
+            h_s = torch.einsum("btsj,btj->bts", s_ego, g)
+            sens_tok = torch.cat([s_ego, s_com, h_s.unsqueeze(-1)], dim=-1)
+
+        delta_all = self.temporal(q, p_tok, rel9, sens_tok)    # (B,T,16,3)
+        final_all = refined + delta_all
         # anchor (2nd return) stays the CLEAN refined for the aux loss
-        return refined[:, -1] + delta, anchor
+        return final_all[:, -1], anchor, final_all
 
 
 def run_val(model, data, device, bs):
@@ -210,7 +294,7 @@ def run_val(model, data, device, bs):
         for i in range(0, len(data), bs):
             ids = range(i, min(i + bs, len(data)))
             b = data.batch(list(ids), device)
-            final, _ = model(b)
+            final, _, _ = model(b)
             gt = b["gt"][:, -1]
             errs.append((final - gt).norm(dim=-1).mean(-1).cpu() * 1000)
             base.append((b["refined"][:, -1] - gt
@@ -228,6 +312,11 @@ def main():
     ap.add_argument("--lr-temporal", type=float, default=3e-4)
     ap.add_argument("--lr-stage2", type=float, default=1e-4)
     ap.add_argument("--noise-sigma", type=float, default=0.0)
+    ap.add_argument("--noise-mode", default="white_legacy",
+                    choices=["white_legacy", "white", "ar1"])
+    ap.add_argument("--dual-frame", action="store_true")
+    ap.add_argument("--sensors", action="store_true")
+    ap.add_argument("--vel-loss", action="store_true")
     args = ap.parse_args()
     device = "cuda"
 
@@ -238,7 +327,9 @@ def main():
     head.load_state_dict({k[5:]: v for k, v in sd.items()
                           if k.startswith("head.")}, strict=True)
     model = T27Full(head.to(device), args.arm,
-                    noise_sigma=args.noise_sigma).to(device)
+                    noise_sigma=args.noise_sigma, noise_mode=args.noise_mode,
+                    dual_frame=args.dual_frame,
+                    use_sensors=args.sensors).to(device)
 
     val = WindowData("Val")
     print(f"val windows: {len(val)}", flush=True)
@@ -247,7 +338,7 @@ def main():
         b = val.batch(list(range(64)), device)
         model.eval()
         with torch.no_grad():
-            final, refined = model(b)
+            final, refined, _ = model(b)
         d1 = float((final - refined[:, -1]).abs().max())
         d2 = float((refined[:, -1] - b["refined"][:, -1]).abs().max()) * 1000
         print(f"IDENTITY: |final-refined_last| = {d1:.3e} (want 0); "
@@ -258,9 +349,12 @@ def main():
     if args.gate == "mem":
         train = val                                    # shape-equivalent
         b = train.batch(list(range(args.bs)), device)
-        final, refined = model(b)
+        final, refined, fall = model(b)
         loss = (final - b["gt"][:, -1]).norm(dim=-1).mean() \
-            + 0.5 * (refined - b["gt"]).norm(dim=-1).mean()
+            + 0.5 * (refined - b["gt"]).norm(dim=-1).mean() \
+            + 0.5 * ((fall[:, 1:] - fall[:, :-1])
+                     - (b["gt"][:, 1:] - b["gt"][:, :-1])
+                     ).norm(dim=-1).mean()
         loss.backward()
         print(f"MEM: peak {torch.cuda.max_memory_allocated()/2**30:.2f} GiB "
               f"at bs={args.bs}")
@@ -276,7 +370,12 @@ def main():
     opt = torch.optim.AdamW(groups, weight_decay=0.01)
     sched = torch.optim.lr_scheduler.MultiStepLR(opt, [6, 8], 0.5)
 
-    tag = f"{args.arm}" + (f"_s{args.noise_sigma:g}" if args.noise_sigma else "")
+    tag = (f"{args.arm}"
+           + (f"_{args.noise_mode}{args.noise_sigma:g}"
+              if args.noise_sigma else "")
+           + ("_df" if args.dual_frame else "")
+           + ("_sens" if args.sensors else "")
+           + ("_vel" if args.vel_loss else ""))
     out_dir = f"work_dirs/t27_full_{tag}"
     os.makedirs(out_dir, exist_ok=True)
     best = math.inf
@@ -287,9 +386,14 @@ def main():
         tot, nb = 0.0, 0
         for i in range(0, len(perm) - args.bs + 1, args.bs):
             b = train.batch(perm[i:i + args.bs].tolist(), device)
-            final, refined = model(b)
+            final, refined, fall = model(b)
             loss = (final - b["gt"][:, -1]).norm(dim=-1).mean() \
                 + 0.5 * (refined - b["gt"]).norm(dim=-1).mean()
+            if args.vel_loss:
+                loss = loss + 0.5 * (
+                    (fall[:, 1:] - fall[:, :-1])
+                    - (b["gt"][:, 1:] - b["gt"][:, :-1])
+                ).norm(dim=-1).mean()
             opt.zero_grad()
             loss.backward()
             opt.step()
