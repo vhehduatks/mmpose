@@ -493,7 +493,8 @@ def main():
     print(f"train windows: {len(train)}", flush=True)
     groups = [{"params": [p for p in model.temporal.parameters()],
                "lr": args.lr_temporal}]
-    s2 = [p for p in model.head.parameters() if p.requires_grad]
+    s2 = ([] if model.head is None else
+          [p for p in model.head.parameters() if p.requires_grad])
     if s2:
         groups.append({"params": s2, "lr": args.lr_stage2})
     opt = torch.optim.AdamW(groups, weight_decay=0.01)
