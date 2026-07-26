@@ -35,6 +35,10 @@ from mmengine.config import Config
 from mmengine.registry import init_default_scope
 from mmpose.registry import MODELS
 
+from mmpose.models.heads.heatmap_heads.\
+    custom_egopose_cascaded_refinement_head_enhanced import (
+        compute_kinematic_features)
+
 from my_code.custom_config.ours_ec_modules import OursEgoCamHead  # noqa: F401
 from my_code.custom_config.ours_t_modules import (compute_relpose_to_floor,
                                                   invert_se3)
@@ -113,11 +117,28 @@ class AttnBlock(nn.Module):
 
 class TemporalMixSTE(nn.Module):
     def __init__(self, use_q=True, q_dim=64, d=128, heads=8, pairs=4,
-                 dropout=0.1, dual_frame=False, use_sensors=False):
+                 dropout=0.1, dual_frame=False, use_sensors=False,
+                 globals_mode=None):
         super().__init__()
         self.use_q = use_q
         self.dual_frame = dual_frame
         self.use_sensors = use_sensors
+        self.globals_mode = globals_mode
+        if globals_mode:
+            # Task 29: pesens global K/V restored (minus mod_hmd) as extra
+            # tokens in the SAME weight-tied per-STB cross-attn; zero-init
+            # out_proj keeps the identity gate. NEW encoders (the head's
+            # pose_encoder_net/kin_encoder are headline-era, stale).
+            assert use_sensors, "globals ride the sensor cross-attn K/V"
+            self.n_glob = 1 if globals_mode == "z" else 3
+            if globals_mode == "const":
+                self.glob_const = nn.Parameter(torch.zeros(3, d))
+                nn.init.normal_(self.glob_const, std=0.02)
+            else:
+                self.glob_z = nn.Linear(64, d)
+                if globals_mode == "all":
+                    self.glob_pose = nn.Linear(48, d)
+                    self.glob_kin = nn.Linear(60, d)
         if use_q:
             self.q_proj = nn.Linear(q_dim, d)
         # Task 28 lever 0: dual-frame token [p_ego, p_common, h] (7-d)
@@ -127,7 +148,8 @@ class TemporalMixSTE(nn.Module):
             # ONE weight-tied cross-attn applied after each STB; zero-init
             # out_proj => no-op at init (identity gate preserved).
             self.sens_embed = nn.Linear(7, d)
-            self.sens_type = nn.Parameter(torch.zeros(2, d))
+            n_kv = 2 + (self.n_glob if globals_mode else 0)
+            self.sens_type = nn.Parameter(torch.zeros(n_kv, d))
             nn.init.normal_(self.sens_type, std=0.02)
             self.sens_attn = nn.MultiheadAttention(d, heads, dropout=dropout,
                                                    batch_first=True)
@@ -147,9 +169,10 @@ class TemporalMixSTE(nn.Module):
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
 
-    def forward(self, q, p_tok, rel9, sens_tok=None):
+    def forward(self, q, p_tok, rel9, sens_tok=None, glob=None):
         # q (B,T,16,qd) or None; p_tok (B,T,16,3|7); rel9 (B,T,9);
-        # sens_tok (B,T,2,7) or None
+        # sens_tok (B,T,2,7) or None; glob = (z(B,T,64), pflat(B,T,48),
+        # kin(B,T,60)) or None
         B = p_tok.shape[0]
         x = self.coord_embed(p_tok)
         if self.use_q:
@@ -158,8 +181,16 @@ class TemporalMixSTE(nn.Module):
         cond = self.rel_embed(rel9)[:, :, None]              # (B,T,1,d)
         kv = None
         if self.use_sensors and sens_tok is not None:
-            kv = (self.sens_embed(sens_tok) + self.sens_type
-                  ).reshape(B * T, 2, -1)
+            kv = self.sens_embed(sens_tok)                   # (B,T,2,d)
+            if self.globals_mode == "const":
+                kv = torch.cat([kv, self.glob_const.expand(
+                    B, T, 3, -1)], dim=2)
+            elif self.globals_mode:
+                g = [self.glob_z(glob[0])]
+                if self.globals_mode == "all":
+                    g += [self.glob_pose(glob[1]), self.glob_kin(glob[2])]
+                kv = torch.cat([kv, torch.stack(g, dim=2)], dim=2)
+            kv = (kv + self.sens_type).reshape(B * T, kv.shape[2], -1)
         for stb, ttb in zip(self.stb, self.ttb):
             xf = stb(x.reshape(B * T, 16, -1))
             if kv is not None:
@@ -177,7 +208,7 @@ class TemporalMixSTE(nn.Module):
 
 class T27Full(nn.Module):
     def __init__(self, head, arm, noise_sigma=0.0, noise_mode="white_legacy",
-                 dual_frame=False, use_sensors=False):
+                 dual_frame=False, use_sensors=False, globals_mode=None):
         super().__init__()
         self.head = head
         self.arm = arm
@@ -185,13 +216,15 @@ class T27Full(nn.Module):
         self.noise_mode = noise_mode  # white_legacy | white | ar1
         self.dual_frame = dual_frame
         self.use_sensors = use_sensors
+        self.globals_mode = globals_mode
         if noise_mode == "ar1":
             self.register_buffer("jscale", torch.tensor(
                 JOINT_SCALE).reshape(1, 1, 16, 1))
         self.frozen = arm in ("Ffrozen", "Ffrozencoord")
         self.temporal = TemporalMixSTE(
             use_q=arm not in ("Fcoord", "Ffrozencoord"),
-            dual_frame=dual_frame, use_sensors=use_sensors)
+            dual_frame=dual_frame, use_sensors=use_sensors,
+            globals_mode=globals_mode)
         for p in head.parameters():
             p.requires_grad_(False)
         if not self.frozen:
@@ -281,7 +314,14 @@ class T27Full(nn.Module):
             h_s = torch.einsum("btsj,btj->bts", s_ego, g)
             sens_tok = torch.cat([s_ego, s_com, h_s.unsqueeze(-1)], dim=-1)
 
-        delta_all = self.temporal(q, p_tok, rel9, sens_tok)    # (B,T,16,3)
+        glob = None
+        if self.globals_mode and self.globals_mode != "const":
+            # globals see the NOISED stream (same as the joint tokens; the
+            # noise discipline must not leak clean coords through g_pose/kin)
+            glob = (b["z"], refined.reshape(B, T, 48),
+                    compute_kinematic_features(
+                        refined.reshape(B * T, 16, 3)).reshape(B, T, 60))
+        delta_all = self.temporal(q, p_tok, rel9, sens_tok, glob)  # (B,T,16,3)
         final_all = refined + delta_all
         # anchor (2nd return) stays the CLEAN refined for the aux loss
         return final_all[:, -1], anchor, final_all
@@ -317,6 +357,8 @@ def main():
     ap.add_argument("--dual-frame", action="store_true")
     ap.add_argument("--sensors", action="store_true")
     ap.add_argument("--vel-loss", action="store_true")
+    ap.add_argument("--globals", dest="globals_mode", default=None,
+                    choices=["all", "z", "const"])
     args = ap.parse_args()
     device = "cuda"
 
@@ -328,8 +370,8 @@ def main():
                           if k.startswith("head.")}, strict=True)
     model = T27Full(head.to(device), args.arm,
                     noise_sigma=args.noise_sigma, noise_mode=args.noise_mode,
-                    dual_frame=args.dual_frame,
-                    use_sensors=args.sensors).to(device)
+                    dual_frame=args.dual_frame, use_sensors=args.sensors,
+                    globals_mode=args.globals_mode).to(device)
 
     val = WindowData("Val")
     print(f"val windows: {len(val)}", flush=True)
@@ -375,7 +417,8 @@ def main():
               if args.noise_sigma else "")
            + ("_df" if args.dual_frame else "")
            + ("_sens" if args.sensors else "")
-           + ("_vel" if args.vel_loss else ""))
+           + ("_vel" if args.vel_loss else "")
+           + (f"_glob{args.globals_mode}" if args.globals_mode else ""))
     out_dir = f"work_dirs/t27_full_{tag}"
     os.makedirs(out_dir, exist_ok=True)
     best = math.inf
