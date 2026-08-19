@@ -67,11 +67,17 @@ STAGE2_PARAMS = ("joint_pe", "sens_type")
 # ---------------------------------------------------------------------------
 
 class WindowData:
-    def __init__(self, split, root=CACHE):
+    def __init__(self, split, root=CACHE, hmd_root=None):
         self.sessions = []
         for f in sorted(glob.glob(os.path.join(root, split, "*.npz"))):
             z = np.load(f)
-            self.sessions.append({k: z[k] for k in z.files})
+            s = {k: z[k] for k in z.files}
+            if hmd_root:   # Task 35-D: fid-aligned pseudo-HMD side-channel
+                h = np.load(os.path.join(hmd_root, split, os.path.basename(f)))
+                assert np.array_equal(h["fid"], s["fid"]), \
+                    f"hmd12 fid mismatch for {f}"
+                s["hmd12"] = h["hmd12"].astype(np.float32)
+            self.sessions.append(s)
         self.index = []
         for si, s in enumerate(self.sessions):
             n = len(s["fid"])
@@ -84,11 +90,14 @@ class WindowData:
     def batch(self, ids, device):
         rows = [self.index[i] for i in ids]
         out = {}
-        for key, dt in (("sampled", torch.float32), ("z", torch.float32),
-                        ("coarse", torch.float32), ("refined", torch.float32),
-                        ("gt", torch.float32), ("c2w", torch.float32),
-                        ("m2w", torch.float32), ("mask", torch.float32),
-                        ("sens", torch.float32), ("srot", torch.float32)):
+        keys = [("sampled", torch.float32), ("z", torch.float32),
+                ("coarse", torch.float32), ("refined", torch.float32),
+                ("gt", torch.float32), ("c2w", torch.float32),
+                ("m2w", torch.float32), ("mask", torch.float32),
+                ("sens", torch.float32), ("srot", torch.float32)]
+        if "hmd12" in self.sessions[0]:
+            keys.append(("hmd12", torch.float32))
+        for key, dt in keys:
             arr = np.stack([self.sessions[si][key][end - T + 1:end + 1]
                             for si, end in rows])
             out[key] = torch.from_numpy(arr).to(device).to(dt)
@@ -217,11 +226,18 @@ class FlattenTemporal(nn.Module):
 
     def __init__(self, use_q=True, q_dim=64, d=128, heads=8, blocks=8,
                  dropout=0.1, dual_frame=False, use_sensors=False,
-                 use_rel9=True):
+                 use_rel9=True, use_hmd12=False):
         super().__init__()
         self.use_q = use_q
         self.use_sensors = use_sensors
         self.use_rel9 = use_rel9
+        self.use_hmd12 = use_hmd12
+        if use_hmd12:
+            # Task 35-D: per-step pseudo-HMD conditioning; zero-init keeps
+            # the identity gate at init
+            self.hmd_embed = nn.Linear(12, d)
+            nn.init.zeros_(self.hmd_embed.weight)
+            nn.init.zeros_(self.hmd_embed.bias)
         in_dim = 16 * (7 if dual_frame else 3) + (q_dim if use_q else 0)
         self.step_embed = nn.Linear(in_dim, d)
         self.time_pe = nn.Parameter(torch.zeros(T, d))
@@ -243,12 +259,14 @@ class FlattenTemporal(nn.Module):
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
 
-    def forward(self, q, p_tok, rel9, sens_tok=None, glob=None):
+    def forward(self, q, p_tok, rel9, sens_tok=None, glob=None, hmd12=None):
         B, Tn = p_tok.shape[:2]
         feats = p_tok.reshape(B, Tn, -1)                 # (B,T,16*pd)
         if self.use_q:
             feats = torch.cat([feats, q.mean(dim=2)], dim=-1)  # + q-bar
         x = self.step_embed(feats) + self.time_pe[None]
+        if self.use_hmd12:
+            x = x + self.hmd_embed(hmd12)                # (B,T,12) -> (B,T,d)
         cond = self.rel_embed(rel9) if self.use_rel9 else 0.0
         kv = None
         if self.use_sensors and sens_tok is not None:
@@ -269,7 +287,7 @@ class FlattenTemporal(nn.Module):
 class T27Full(nn.Module):
     def __init__(self, head, arm, noise_sigma=0.0, noise_mode="white_legacy",
                  dual_frame=False, use_sensors=False, globals_mode=None,
-                 use_rel9=True, flatten=False):
+                 use_rel9=True, flatten=False, use_hmd12=False):
         super().__init__()
         self.head = head
         self.arm = arm
@@ -278,12 +296,15 @@ class T27Full(nn.Module):
         self.dual_frame = dual_frame
         self.use_sensors = use_sensors
         self.globals_mode = globals_mode
+        self.use_hmd12 = use_hmd12
+        assert not (use_hmd12 and not flatten), "hmd12 tokens: flatten only"
         if noise_mode == "ar1":
             self.register_buffer("jscale", torch.tensor(
                 JOINT_SCALE).reshape(1, 1, 16, 1))
         self.frozen = arm in ("Ffrozen", "Ffrozencoord")
         cls = FlattenTemporal if flatten else TemporalMixSTE
-        kw = {} if flatten else {"globals_mode": globals_mode}
+        kw = ({"use_hmd12": use_hmd12} if flatten
+              else {"globals_mode": globals_mode})
         self.temporal = cls(
             use_q=arm not in ("Fcoord", "Ffrozencoord"),
             dual_frame=dual_frame, use_sensors=use_sensors,
@@ -389,7 +410,8 @@ class T27Full(nn.Module):
             glob = (b["z"], refined.reshape(B, T, 48),
                     compute_kinematic_features(
                         refined.reshape(B * T, 16, 3)).reshape(B, T, 60))
-        delta_all = self.temporal(q, p_tok, rel9, sens_tok, glob)  # (B,T,16,3)
+        tkw = {"hmd12": b["hmd12"]} if self.use_hmd12 else {}
+        delta_all = self.temporal(q, p_tok, rel9, sens_tok, glob, **tkw)
         final_all = refined + delta_all
         # anchor (2nd return) stays the CLEAN refined for the aux loss
         return final_all[:, -1], anchor, final_all
@@ -437,6 +459,12 @@ def main():
     ap.add_argument("--coords-from-cache", action="store_true")  # Task 31
     ap.add_argument("--eval-ckpt", default=None)   # Task 31: eval-only mode
     ap.add_argument("--eval-split", default="Val")
+    ap.add_argument("--hmd-tokens", action="store_true")   # Task 35-D
+    ap.add_argument("--hmd-root", default="/mnt/linux_hdd_a/t35_xr_hmd12")
+    # Task 35 user directive 2026-08-19: xR V2 has no Val file, so per-epoch
+    # selection may run on the V2 Test coordinates (test-selected, symmetric
+    # with the historical 34.06 line). Pass --sel-split Test to enable.
+    ap.add_argument("--sel-split", default="Val")
     args = ap.parse_args()
     device = "cuda"
     if args.seed is not None:
@@ -457,13 +485,15 @@ def main():
                     dual_frame=args.dual_frame, use_sensors=args.sensors,
                     globals_mode=args.globals_mode,
                     use_rel9=not args.no_rel9,
-                    flatten=args.flatten).to(device)
+                    flatten=args.flatten,
+                    use_hmd12=args.hmd_tokens).to(device)
+    hmd_root = args.hmd_root if args.hmd_tokens else None
     n_tmp = sum(p.numel() for p in model.temporal.parameters())
     print(f"temporal params: {n_tmp/1e6:.3f}M "
           f"({type(model.temporal).__name__})", flush=True)
 
     if args.eval_ckpt:                 # Task 31: single predefined eval pass
-        data = WindowData(args.eval_split, args.cache)
+        data = WindowData(args.eval_split, args.cache, hmd_root=hmd_root)
         print(f"{args.eval_split} windows: {len(data)}", flush=True)
         ck = torch.load(args.eval_ckpt, map_location="cpu")
         model.load_state_dict(ck["model"])
@@ -474,8 +504,8 @@ def main():
               f"extracted {mp-bp:+.2f}", flush=True)
         return
 
-    val = WindowData("Val", args.cache)
-    print(f"val windows: {len(val)}", flush=True)
+    val = WindowData(args.sel_split, args.cache, hmd_root=hmd_root)
+    print(f"selection split: {args.sel_split}, windows: {len(val)}", flush=True)
 
     if args.gate == "identity":
         b = val.batch(list(range(64)), device)
@@ -503,7 +533,7 @@ def main():
               f"at bs={args.bs}")
         return
 
-    train = WindowData("Train", args.cache)
+    train = WindowData("Train", args.cache, hmd_root=hmd_root)
     print(f"train windows: {len(train)}", flush=True)
     groups = [{"params": [p for p in model.temporal.parameters()],
                "lr": args.lr_temporal}]
@@ -523,6 +553,7 @@ def main():
            + (f"_glob{args.globals_mode}" if args.globals_mode else "")
            + ("_norel9" if args.no_rel9 else "")
            + ("_flat" if args.flatten else "")
+           + ("_hmd12" if args.hmd_tokens else "")
            + (f"_s{args.seed}" if args.seed is not None else ""))
     out_dir = f"work_dirs/t27_full_{tag}"
     os.makedirs(out_dir, exist_ok=True)
