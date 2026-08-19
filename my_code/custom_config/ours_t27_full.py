@@ -287,7 +287,8 @@ class FlattenTemporal(nn.Module):
 class T27Full(nn.Module):
     def __init__(self, head, arm, noise_sigma=0.0, noise_mode="white_legacy",
                  dual_frame=False, use_sensors=False, globals_mode=None,
-                 use_rel9=True, flatten=False, use_hmd12=False):
+                 use_rel9=True, flatten=False, use_hmd12=False,
+                 use_coarse=False):
         super().__init__()
         self.head = head
         self.arm = arm
@@ -297,6 +298,10 @@ class T27Full(nn.Module):
         self.use_sensors = use_sensors
         self.globals_mode = globals_mode
         self.use_hmd12 = use_hmd12
+        # Task 37 D2: stage-2 bypass — temporal consumes the COARSE output
+        self.in_key = "coarse" if use_coarse else "refined"
+        assert not (use_coarse and arm != "Ffrozencoord"), \
+            "use_coarse: coords-from-cache arm only"
         assert not (use_hmd12 and not flatten), "hmd12 tokens: flatten only"
         if noise_mode == "ar1":
             self.register_buffer("jscale", torch.tensor(
@@ -355,7 +360,7 @@ class T27Full(nn.Module):
 
     def forward(self, b):
         if self.head is None:            # Task 31: cached refined, no q
-            refined, q = b["refined"], None
+            refined, q = b[self.in_key], None
         elif self.frozen:
             with torch.no_grad():
                 refined, q = self.stage2(b)
@@ -430,7 +435,8 @@ def run_val(model, data, device, bs, dump=None):
             errs.append(e.mean(-1))
             if dump:
                 pj.append(e)
-            base.append((b["refined"][:, -1] - gt
+            in_key = getattr(model, "in_key", "refined")
+            base.append((b[in_key][:, -1] - gt
                          ).norm(dim=-1).mean(-1).cpu() * 1000)
     if dump:
         np.savez_compressed(dump, err=torch.cat(pj).numpy())  # (N, 16)
@@ -467,6 +473,7 @@ def main():
     ap.add_argument("--hmd-tokens", action="store_true")   # Task 35-D
     ap.add_argument("--hmd-root", default="/mnt/linux_hdd_a/t35_xr_hmd12")
     ap.add_argument("--dump-perjoint", default=None)       # Task 36-D
+    ap.add_argument("--use-coarse", action="store_true")   # Task 37 D2
     # Task 35 user directive 2026-08-19: xR V2 has no Val file, so per-epoch
     # selection may run on the V2 Test coordinates (test-selected, symmetric
     # with the historical 34.06 line). Pass --sel-split Test to enable.
@@ -492,7 +499,8 @@ def main():
                     globals_mode=args.globals_mode,
                     use_rel9=not args.no_rel9,
                     flatten=args.flatten,
-                    use_hmd12=args.hmd_tokens).to(device)
+                    use_hmd12=args.hmd_tokens,
+                    use_coarse=args.use_coarse).to(device)
     hmd_root = args.hmd_root if args.hmd_tokens else None
     n_tmp = sum(p.numel() for p in model.temporal.parameters())
     print(f"temporal params: {n_tmp/1e6:.3f}M "
@@ -560,6 +568,7 @@ def main():
            + ("_norel9" if args.no_rel9 else "")
            + ("_flat" if args.flatten else "")
            + ("_hmd12" if args.hmd_tokens else "")
+           + ("_coarse" if args.use_coarse else "")
            + (f"_s{args.seed}" if args.seed is not None else ""))
     out_dir = f"work_dirs/t27_full_{tag}"
     os.makedirs(out_dir, exist_ok=True)
