@@ -417,18 +417,23 @@ class T27Full(nn.Module):
         return final_all[:, -1], anchor, final_all
 
 
-def run_val(model, data, device, bs):
+def run_val(model, data, device, bs, dump=None):
     model.eval()
-    errs, base = [], []
+    errs, base, pj = [], [], []
     with torch.no_grad():
         for i in range(0, len(data), bs):
             ids = range(i, min(i + bs, len(data)))
             b = data.batch(list(ids), device)
             final, _, _ = model(b)
             gt = b["gt"][:, -1]
-            errs.append((final - gt).norm(dim=-1).mean(-1).cpu() * 1000)
+            e = (final - gt).norm(dim=-1).cpu() * 1000       # (B, 16)
+            errs.append(e.mean(-1))
+            if dump:
+                pj.append(e)
             base.append((b["refined"][:, -1] - gt
                          ).norm(dim=-1).mean(-1).cpu() * 1000)
+    if dump:
+        np.savez_compressed(dump, err=torch.cat(pj).numpy())  # (N, 16)
     return (torch.cat(errs).mean().item(), torch.cat(base).mean().item())
 
 
@@ -461,6 +466,7 @@ def main():
     ap.add_argument("--eval-split", default="Val")
     ap.add_argument("--hmd-tokens", action="store_true")   # Task 35-D
     ap.add_argument("--hmd-root", default="/mnt/linux_hdd_a/t35_xr_hmd12")
+    ap.add_argument("--dump-perjoint", default=None)       # Task 36-D
     # Task 35 user directive 2026-08-19: xR V2 has no Val file, so per-epoch
     # selection may run on the V2 Test coordinates (test-selected, symmetric
     # with the historical 34.06 line). Pass --sel-split Test to enable.
@@ -497,7 +503,7 @@ def main():
         print(f"{args.eval_split} windows: {len(data)}", flush=True)
         ck = torch.load(args.eval_ckpt, map_location="cpu")
         model.load_state_dict(ck["model"])
-        mp, bp = run_val(model, data, device, args.bs)
+        mp, bp = run_val(model, data, device, args.bs, dump=args.dump_perjoint)
         print(f"EVAL[{args.eval_split}] {args.eval_ckpt} "
               f"(train-best ep{ck.get('epoch')}, {ck.get('val_mpjpe'):.2f}): "
               f"MPJPE {mp:.2f} mm, base {bp:.2f} mm, "
