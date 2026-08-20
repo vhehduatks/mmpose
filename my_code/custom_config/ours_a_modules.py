@@ -385,8 +385,15 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                  sensor_frame: str = "floor", spatial_in_query: bool = True,
                  film_mode: str = "off",
                  lift_roll_align: bool = False, lift_roll_zero: bool = False,
+                 canon_mode: str = "floor",
                  **kwargs):
         super().__init__(*args, **kwargs)
+        # Task 38 P3: 'floor' = historical w2f@c2w canon (needs temporal
+        # geometry labels); 'body_axis' = calibration-free pose-derived frame
+        # (root->pelvis "down" + toe floor level, computed from the detached
+        # coarse pose — no extrinsics, works on both datasets).
+        assert canon_mode in ("floor", "body_axis"), canon_mode
+        self.canon_mode = canon_mode
         assert attn_mode in ("full", "self_only", "cross_only",
                              "mlp_matched", "replace", "replace_self",
                              "factored"), attn_mode
@@ -495,6 +502,47 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             if film_mode == "const":
                 self.film_in = nn.Parameter(torch.zeros(3))
 
+    # Task 38: does this configuration need the temporal geometry labels?
+    # (xR's H5 dataset and Quest's plain KinectEgoposeDataset have none.)
+    def _needs_geom(self):
+        return ((self.use_canon and self.canon_mode == "floor")
+                or self.sensor_mode == "floor"
+                or self.film_mode == "gravity"
+                or self.lift_roll_align)
+
+    # Task 38 P3: calibration-free canonicalization from the pose itself.
+    # Frame (detached): down = root->pelvis-center; floor = farthest toe
+    # projection along down; in-plane x = hip line orthogonalized to down.
+    # Joint indices follow the shared xregopose-16 order (enhance_hmd_info):
+    # root 0, LUpLeg 8, RUpLeg 12, LToe 11, RToe 15.
+    def _body_axis_canon(self, coarse_pose):
+        p = coarse_pose.detach()
+        root = p[:, 0]
+        down = (p[:, 8] + p[:, 12]) * 0.5 - root
+        dn = down.norm(dim=-1, keepdim=True)
+        fallback = torch.zeros_like(down)
+        fallback[:, 2] = 1.0
+        down = torch.where(dn > 1e-6, down / dn.clamp_min(1e-12), fallback)
+        hip = p[:, 12] - p[:, 8]
+        hip = hip - (hip * down).sum(-1, keepdim=True) * down
+        hn = hip.norm(dim=-1, keepdim=True)
+        fx = torch.zeros_like(hip)
+        fx[:, 0] = 1.0
+        fx = fx - (fx * down).sum(-1, keepdim=True) * down
+        fx = fx / fx.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+        x_ax = torch.where(hn > 1e-6, hip / hn.clamp_min(1e-12), fx)
+        up = -down
+        z_ax = torch.cross(x_ax, up, dim=-1)
+        R = torch.stack([x_ax, up, z_ax], dim=1)             # (B,3,3) rows
+        ground = torch.maximum(((p[:, 11] - root) * down).sum(-1),
+                               ((p[:, 15] - root) * down).sum(-1))
+        rel = coarse_pose - root.unsqueeze(1)                # grads flow
+        canon = torch.einsum("bij,bkj->bki", R, rel)
+        canon = canon + torch.stack(
+            [torch.zeros_like(ground), ground,
+             torch.zeros_like(ground)], -1).unsqueeze(1)
+        return canon
+
     # -- canonical transform from the per-sample device poses --------------
     def _canon_from_samples(self, batch_data_samples, device):
         labels = [d.gt_instance_labels for d in batch_data_samples]
@@ -534,7 +582,8 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
     def decode(self, batch_outputs, batch_data_samples, backbone_feat=None):
         hm = batch_outputs[0] if isinstance(batch_outputs, tuple) \
             else batch_outputs
-        self._canon = self._canon_from_samples(batch_data_samples, hm.device)
+        self._canon = (self._canon_from_samples(batch_data_samples, hm.device)
+                       if self._needs_geom() else None)
         try:
             return super().decode(batch_outputs, batch_data_samples,
                                   backbone_feat)
@@ -543,8 +592,9 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             self._roll = None
 
     def loss(self, feats, batch_data_samples, train_cfg={}):
-        self._canon = self._canon_from_samples(
+        self._canon = (self._canon_from_samples(
             batch_data_samples, feats[-1].device)
+            if self._needs_geom() else None)
         try:
             return super().loss(feats, batch_data_samples, train_cfg)
         finally:
@@ -626,7 +676,9 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                 [h[:, 0:3], h[:, 3:6], h[:, 9:12]], dim=1)   # (B,3,3)
 
         if self.attn_mode in ("replace", "replace_self", "factored"):
-            if self.use_canon and self._canon is not None:
+            if self.use_canon and self.canon_mode == "body_axis":
+                canon = self._body_axis_canon(coarse_pose)
+            elif self.use_canon and self._canon is not None:
                 R, t = self._canon[:, :3, :3], self._canon[:, :3, 3]
                 canon = torch.einsum(
                     "bij,bkj->bki", R, coarse_pose) + t[:, None]
@@ -645,7 +697,9 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             extra = self.attn_block(
                 joint_input.reshape(B * K, -1)).reshape(B, K, 3)
         else:
-            if self.use_canon and self._canon is not None:
+            if self.use_canon and self.canon_mode == "body_axis":
+                canon = self._body_axis_canon(coarse_pose)
+            elif self.use_canon and self._canon is not None:
                 R, t = self._canon[:, :3, :3], self._canon[:, :3, 3]
                 canon = torch.einsum(
                     "bij,bkj->bki", R, coarse_pose) + t[:, None]

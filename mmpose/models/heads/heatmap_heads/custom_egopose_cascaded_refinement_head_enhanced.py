@@ -356,6 +356,9 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
                  spatial_feat_dim: int = 64,
                  pose_feat_dim: int = 128,
                  kin_feat_dim: int = 64,
+                 # Task 38 P1: soft-argmax temperature for stage-2 sampling
+                 # (default 1.0 = historical behavior, byte-identical)
+                 sample_temp: float = 1.0,
                  # Other
                  decoder: OptConfigType = None,
                  heatmap_decoder_type: str = 'original',
@@ -373,6 +376,7 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
         self.use_refinement = use_refinement
         self.use_auxiliary_decoders = use_auxiliary_decoders
         self.fusion_mode = fusion_mode
+        self.sample_temp = sample_temp
 
         # Stage 1 loss modules
         self.loss_module = MODELS.build(loss)
@@ -632,7 +636,8 @@ class CustomEgoposeCascadedRefinementHead_enhanced(BaseHead):
         K = coarse_pose.shape[1]
 
         # 1. Per-joint spatial features via grid sampling
-        coords_2d, _ = soft_argmax_2d(heatmap.detach())
+        coords_2d, _ = soft_argmax_2d(heatmap.detach(),
+                                      temperature=self.sample_temp)
         grid = coords_2d * 2 - 1
         grid = grid.unsqueeze(1)
         sampled = F.grid_sample(
