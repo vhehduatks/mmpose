@@ -387,6 +387,8 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                  film_mode: str = "off",
                  lift_roll_align: bool = False, lift_roll_zero: bool = False,
                  canon_mode: str = "floor",
+                 wcalib_init: str = "", wcalib_vert_w: float = 0.05,
+                 wcalib_floor_w: float = 0.05,
                  **kwargs):
         super().__init__(*args, **kwargs)
         # Task 38 P3: 'floor' = historical w2f@c2w canon (needs temporal
@@ -398,8 +400,14 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
         # ceiling for any allowed frame source under the m2w/w2f/c2w ban).
         # 'frame_head' = Step 2, deployable: MLP z->(g_hat,d) trained by the
         # soft GBH height-consistency loss; canon with the detached frame.
+        # Task 41: 'world_calib' = regime-A deployable frame — canon(t) =
+        # relpose_to_floor(m2w(t)) @ T_learn with T_learn a per-participant
+        # SE(3) (the unknown camera<->HMD rig transform), grid-initialized
+        # from the 41-A world-consistency probe and kept anchored by aux
+        # verticality/floor losses. Reads ONLY temporal_mid2world (+mask);
+        # temporal_cam2world is never touched in this mode.
         assert canon_mode in ("floor", "body_axis", "body_axis_gt",
-                              "frame_head"), canon_mode
+                              "frame_head", "world_calib"), canon_mode
         self.canon_mode = canon_mode
         self._gt_kp3d = None
         self._frame_loss = None
@@ -412,6 +420,23 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                 self.frame_head[2].bias.zero_()
             # constant per-point offsets (HMD-above-head / controller-in-hand)
             self.frame_bias = nn.Parameter(torch.zeros(3))
+        self.wcalib_vert_w = float(wcalib_vert_w)
+        self.wcalib_floor_w = float(wcalib_floor_w)
+        self._wc_loss = None
+        self._wc_mask = None
+        if canon_mode == "world_calib":
+            assert wcalib_init, "world_calib needs the 41-A probe npz"
+            probe = np.load(wcalib_init)     # pickle-free: parts + R stack
+            parts = [str(p) for p in probe["parts"]]
+            Rs = probe["R"]
+            self._wc_part_index = {p: i for i, p in enumerate(parts)}
+            r6 = torch.stack([
+                torch.from_numpy(
+                    np.concatenate([Rs[i][:, 0], Rs[i][:, 1]])).float()
+                for i in range(len(parts))])            # (P,6) column-pair
+            self.wcalib_rot6 = nn.Parameter(r6.clone())
+            self.wcalib_t = nn.Parameter(torch.zeros(len(parts), 3))
+            self.register_buffer("wcalib_rot6_init", r6.clone())
         self.frame_joints = tuple(frame_joints)
         self.frame_loss_weight = float(frame_loss_weight)
         # Task 39-D 'canon_mlp': the 2x2 completion cell — the PLAIN GBH MLP
@@ -569,6 +594,51 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                         for d in batch_data_samples]).to(device).float()
         self._gt_kp3d = kp.reshape(-1, 16, 3)
 
+    # -- Task 41: world-consistency-calibrated constant rig transform --------
+    @staticmethod
+    def _rot6_to_R(r6):
+        """(...,6) column-pair 6D -> (...,3,3) via Gram-Schmidt (Zhou et al.)."""
+        a1, a2 = r6[..., :3], r6[..., 3:]
+        b1 = F.normalize(a1, dim=-1, eps=1e-8)
+        b2 = F.normalize(a2 - (b1 * a2).sum(-1, keepdim=True) * b1,
+                         dim=-1, eps=1e-8)
+        b3 = torch.cross(b1, b2, dim=-1)
+        return torch.stack([b1, b2, b3], dim=-1)         # columns
+
+    @staticmethod
+    def _part_of(data_sample):
+        # same parse as the t37 exporter: .../<part>/<sess>/<..>/<..>/frame.jpg
+        img = data_sample.metainfo["img_path"]
+        sess_dir = os.path.dirname(os.path.dirname(os.path.dirname(img)))
+        return os.path.basename(os.path.dirname(sess_dir))
+
+    def _wcalib_canon(self, batch_data_samples, device):
+        labels = [d.gt_instance_labels for d in batch_data_samples]
+        m2w = torch.cat([l.temporal_mid2world for l in labels]
+                        ).to(device).float()              # (B,4,4)
+        mask = torch.cat([l.temporal_mask for l in labels]
+                         ).to(device).float().reshape(-1)
+        idx = [self._wc_part_index.get(self._part_of(d), -1)
+               for d in batch_data_samples]
+        assert -1 not in idx, "participant missing from the 41-A probe npy"
+        idx = torch.tensor(idx, device=device)
+        R = self._rot6_to_R(self.wcalib_rot6[idx])        # (B,3,3)
+        T = torch.zeros(len(idx), 4, 4, device=device)
+        T[:, :3, :3] = R
+        T[:, :3, 3] = self.wcalib_t[idx]
+        T[:, 3, 3] = 1.0
+        canon = compute_relpose_to_floor(m2w) @ T         # mid2floor . T
+        eye = torch.eye(4, device=device).expand_as(canon)
+        self._wc_mask = mask
+        return torch.where(mask.reshape(-1, 1, 1) > 0, canon, eye)
+
+    def _wc_drift_deg(self):
+        with torch.no_grad():
+            R = self._rot6_to_R(self.wcalib_rot6)
+            R0 = self._rot6_to_R(self.wcalib_rot6_init)
+            c = ((R * R0).sum((-2, -1)) - 1) / 2
+            return torch.rad2deg(torch.arccos(c.clamp(-1, 1))).mean()
+
     # Task 38: does this configuration need the temporal geometry labels?
     # (xR's H5 dataset and Quest's plain KinectEgoposeDataset have none.)
     def _needs_geom(self):
@@ -651,8 +721,12 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
     def decode(self, batch_outputs, batch_data_samples, backbone_feat=None):
         hm = batch_outputs[0] if isinstance(batch_outputs, tuple) \
             else batch_outputs
-        self._canon = (self._canon_from_samples(batch_data_samples, hm.device)
-                       if self._needs_geom() else None)
+        if self.canon_mode == "world_calib":
+            self._canon = self._wcalib_canon(batch_data_samples, hm.device)
+        else:
+            self._canon = (self._canon_from_samples(batch_data_samples,
+                                                    hm.device)
+                           if self._needs_geom() else None)
         self._stash_gt(batch_data_samples, hm.device)
         try:
             return super().decode(batch_outputs, batch_data_samples,
@@ -662,19 +736,31 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             self._roll = None
             self._gt_kp3d = None
             self._fh = None
+            self._wc_mask = None
 
     def loss(self, feats, batch_data_samples, train_cfg={}):
-        self._canon = (self._canon_from_samples(
-            batch_data_samples, feats[-1].device)
-            if self._needs_geom() else None)
+        if self.canon_mode == "world_calib":
+            self._canon = self._wcalib_canon(batch_data_samples,
+                                             feats[-1].device)
+        else:
+            self._canon = (self._canon_from_samples(
+                batch_data_samples, feats[-1].device)
+                if self._needs_geom() else None)
         self._stash_gt(batch_data_samples, feats[-1].device)
         self._frame_loss = None
+        self._wc_loss = None
         try:
             losses = super().loss(feats, batch_data_samples, train_cfg)
             if self.canon_mode == "frame_head" \
                     and self._frame_loss is not None:
                 losses["loss_frame"] = \
                     self.frame_loss_weight * self._frame_loss
+            if self.canon_mode == "world_calib" \
+                    and self._wc_loss is not None:
+                vert, floor = self._wc_loss
+                losses["loss_wcalib_vert"] = self.wcalib_vert_w * vert
+                losses["loss_wcalib_floor"] = self.wcalib_floor_w * floor
+                losses["wcalib_drift_deg"] = self._wc_drift_deg()
             return losses
         finally:
             self._canon = None
@@ -682,6 +768,8 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             self._gt_kp3d = None
             self._frame_loss = None
             self._fh = None
+            self._wc_loss = None
+            self._wc_mask = None
 
     def forward(self, feats):
         # parent forward with the 47x47 add_deconv output stashed for the
@@ -752,6 +840,24 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                     + d.unsqueeze(1) + self.frame_bias.unsqueeze(0)
                 self._frame_loss = (h_pred - h_meas).abs().mean()
             self._fh = (g.detach(), d.detach())
+
+        # Task 41: world-consistency anchors on the canonicalized DETACHED
+        # coarse pose — gradients reach T_learn only (calibration anchors,
+        # not pose supervision). Contact DRIFT is not computable inside a
+        # shuffled batch; the grid init carries it. The floor plane sits at
+        # canon y = -0.75 (compute_relpose_to_floor's y_offset).
+        if (self.canon_mode == "world_calib" and self.training
+                and self._canon is not None and self._wc_mask is not None):
+            Rc, tc = self._canon[:, :3, :3], self._canon[:, :3, 3]
+            pc = torch.einsum("bij,bkj->bki", Rc,
+                              coarse_pose.detach()) + tc[:, None]
+            wm = self._wc_mask > 0
+            if wm.any():
+                up = F.normalize(pc[:, 0] - 0.5 * (pc[:, 8] + pc[:, 12]),
+                                 dim=-1, eps=1e-6)
+                toe_y = torch.minimum(pc[:, 11, 1], pc[:, 15, 1])
+                self._wc_loss = ((1.0 - up[:, 1])[wm].mean(),
+                                 ((toe_y + 0.75) ** 2)[wm].mean())
 
         z_exp = z_latent.unsqueeze(1).expand(B, K, -1)
         pose_exp = pose_feat.unsqueeze(1).expand(B, K, -1)
