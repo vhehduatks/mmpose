@@ -376,7 +376,8 @@ class MatchedMLPBlock(nn.Module):
 @MODELS.register_module()
 class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
 
-    def __init__(self, *args, attn_mode: str = "full",
+    def __init__(self, *args, frame_joints=(0, 4, 7),
+                 frame_loss_weight: float = 1.0, attn_mode: str = "full",
                  use_hmd_token: bool = True, attn_dim: int = 64,
                  attn_heads: int = 4, use_canon: bool = True,
                  sample_mode: str = "soft", sample_temp: float = 0.1,
@@ -392,11 +393,33 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
         # geometry labels); 'body_axis' = calibration-free pose-derived frame
         # (root->pelvis "down" + toe floor level, computed from the detached
         # coarse pose — no extrinsics, works on both datasets).
-        assert canon_mode in ("floor", "body_axis"), canon_mode
+        # Task 39: 'body_axis_gt' = same body-axis frame but computed from GT
+        # keypoint3d (oracle, prediction-independent + noise-free — the
+        # ceiling for any allowed frame source under the m2w/w2f/c2w ban).
+        # 'frame_head' = Step 2, deployable: MLP z->(g_hat,d) trained by the
+        # soft GBH height-consistency loss; canon with the detached frame.
+        assert canon_mode in ("floor", "body_axis", "body_axis_gt",
+                              "frame_head"), canon_mode
         self.canon_mode = canon_mode
+        self._gt_kp3d = None
+        self._frame_loss = None
+        self._fh = None
+        if canon_mode == "frame_head":
+            self.frame_head = nn.Sequential(
+                nn.Linear(64, 32), nn.GELU(), nn.Linear(32, 4))
+            with torch.no_grad():
+                self.frame_head[2].weight.normal_(std=0.01)
+                self.frame_head[2].bias.zero_()
+            # constant per-point offsets (HMD-above-head / controller-in-hand)
+            self.frame_bias = nn.Parameter(torch.zeros(3))
+        self.frame_joints = tuple(frame_joints)
+        self.frame_loss_weight = float(frame_loss_weight)
+        # Task 39-D 'canon_mlp': the 2x2 completion cell — the PLAIN GBH MLP
+        # stage-2, with only the 3-d coarse-coord token channel replaced by
+        # canonicalized coords (no attention block at all).
         assert attn_mode in ("full", "self_only", "cross_only",
                              "mlp_matched", "replace", "replace_self",
-                             "factored"), attn_mode
+                             "factored", "canon_mlp"), attn_mode
         # Task 20.1 multi-scale spatial feature: 'off' = parent 8x8 sample;
         # 'fused' = 8x8 (2048) + per-joint 47x47 deconv sample (256) -> proj;
         # 'fused_ctrl' = EXACT param match, the 256-d slot filled with the
@@ -425,7 +448,9 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
         self.use_canon = bool(use_canon)
         self._canon = None
         self.attn_gate = nn.Parameter(torch.zeros(16, 1))
-        if attn_mode == "mlp_matched":
+        if attn_mode == "canon_mlp":
+            self.attn_block = None          # plain parent MLP, canon coords
+        elif attn_mode == "mlp_matched":
             self.attn_block = MatchedMLPBlock()
         elif attn_mode == "factored":
             self.attn_block = FactoredAttnBlock(d=attn_dim, heads=attn_heads)
@@ -502,6 +527,48 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             if film_mode == "const":
                 self.film_in = nn.Parameter(torch.zeros(3))
 
+    # Task 39: canon dispatch — one place deciding the frame source.
+    def _apply_canon(self, coarse_pose):
+        if self.canon_mode == "body_axis":
+            return self._body_axis_canon(coarse_pose)
+        if self.canon_mode == "body_axis_gt":
+            assert self._gt_kp3d is not None, "body_axis_gt: GT not stashed"
+            return self._body_axis_canon(coarse_pose,
+                                         frame_src=self._gt_kp3d)
+        if self.canon_mode == "frame_head":
+            assert self._fh is not None, "frame_head: frame not computed"
+            g, d = self._fh                              # detached
+            zc = torch.zeros_like(g)
+            zc[:, 2] = 1.0
+            x_ax = zc - (zc * g).sum(-1, keepdim=True) * g
+            xn = x_ax.norm(dim=-1, keepdim=True)
+            fb = torch.zeros_like(g)
+            fb[:, 0] = 1.0
+            fb = fb - (fb * g).sum(-1, keepdim=True) * g
+            fb = fb / fb.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+            x_ax = torch.where(xn > 1e-3, x_ax / xn.clamp_min(1e-6), fb)
+            z_ax = torch.cross(x_ax, g, dim=-1)
+            R = torch.stack([x_ax, g, z_ax], dim=1)      # rows; g -> +y
+            root_c = coarse_pose[:, 0].detach()
+            h_root = (root_c * g).sum(-1) + d            # predicted root ht
+            canon = torch.einsum(
+                "bij,bkj->bki", R, coarse_pose - root_c.unsqueeze(1))
+            canon = canon + torch.stack(
+                [torch.zeros_like(h_root), h_root,
+                 torch.zeros_like(h_root)], -1).unsqueeze(1)
+            return canon
+        if self._canon is not None:          # 'floor' (banned machinery era)
+            R, t = self._canon[:, :3, :3], self._canon[:, :3, 3]
+            return torch.einsum("bij,bkj->bki", R, coarse_pose) + t[:, None]
+        return coarse_pose
+
+    def _stash_gt(self, batch_data_samples, device):
+        if self.canon_mode != "body_axis_gt":
+            return
+        kp = torch.cat([d.gt_instance_labels.keypoint3d
+                        for d in batch_data_samples]).to(device).float()
+        self._gt_kp3d = kp.reshape(-1, 16, 3)
+
     # Task 38: does this configuration need the temporal geometry labels?
     # (xR's H5 dataset and Quest's plain KinectEgoposeDataset have none.)
     def _needs_geom(self):
@@ -515,8 +582,10 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
     # projection along down; in-plane x = hip line orthogonalized to down.
     # Joint indices follow the shared xregopose-16 order (enhance_hmd_info):
     # root 0, LUpLeg 8, RUpLeg 12, LToe 11, RToe 15.
-    def _body_axis_canon(self, coarse_pose):
-        p = coarse_pose.detach()
+    def _body_axis_canon(self, coarse_pose, frame_src=None):
+        # frame_src: pose the FRAME is derived from (Task 39 'body_axis_gt'
+        # passes GT keypoint3d); default = the prediction itself (Task 38 P3).
+        p = (coarse_pose if frame_src is None else frame_src).detach()
         root = p[:, 0]
         down = (p[:, 8] + p[:, 12]) * 0.5 - root
         dn = down.norm(dim=-1, keepdim=True)
@@ -584,22 +653,35 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             else batch_outputs
         self._canon = (self._canon_from_samples(batch_data_samples, hm.device)
                        if self._needs_geom() else None)
+        self._stash_gt(batch_data_samples, hm.device)
         try:
             return super().decode(batch_outputs, batch_data_samples,
                                   backbone_feat)
         finally:
             self._canon = None
             self._roll = None
+            self._gt_kp3d = None
+            self._fh = None
 
     def loss(self, feats, batch_data_samples, train_cfg={}):
         self._canon = (self._canon_from_samples(
             batch_data_samples, feats[-1].device)
             if self._needs_geom() else None)
+        self._stash_gt(batch_data_samples, feats[-1].device)
+        self._frame_loss = None
         try:
-            return super().loss(feats, batch_data_samples, train_cfg)
+            losses = super().loss(feats, batch_data_samples, train_cfg)
+            if self.canon_mode == "frame_head" \
+                    and self._frame_loss is not None:
+                losses["loss_frame"] = \
+                    self.frame_loss_weight * self._frame_loss
+            return losses
         finally:
             self._canon = None
             self._roll = None
+            self._gt_kp3d = None
+            self._frame_loss = None
+            self._fh = None
 
     def forward(self, feats):
         # parent forward with the 47x47 add_deconv output stashed for the
@@ -657,13 +739,35 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
         else:
             hmd_feat, hmd_exp = None, None
 
+        # Task 39 Step 2: predict the frame (g_hat, d) from the image latent
+        # and accumulate the soft GBH height-consistency loss.
+        if self.canon_mode == "frame_head":
+            raw = self.frame_head(z_latent.detach())
+            g = F.normalize(raw[:, :3], dim=-1, eps=1e-6)
+            d = raw[:, 3]
+            if hmd_info is not None and hmd_info.shape[-1] >= 12:
+                h_meas = hmd_info.to(torch.float32)[:, 9:12]     # (B,3)
+                p_pts = coarse_pose.detach()[:, list(self.frame_joints)]
+                h_pred = (p_pts * g.unsqueeze(1)).sum(-1) \
+                    + d.unsqueeze(1) + self.frame_bias.unsqueeze(0)
+                self._frame_loss = (h_pred - h_meas).abs().mean()
+            self._fh = (g.detach(), d.detach())
+
         z_exp = z_latent.unsqueeze(1).expand(B, K, -1)
         pose_exp = pose_feat.unsqueeze(1).expand(B, K, -1)
         kin_exp = kin_feat.unsqueeze(1).expand(B, K, -1)
-        parts = [coarse_pose, spatial_feat, z_exp, pose_exp, kin_exp]
+        coord_repr = self._apply_canon(coarse_pose) \
+            if (self.attn_mode == "canon_mlp" and self.use_canon) \
+            else coarse_pose
+        parts = [coord_repr, spatial_feat, z_exp, pose_exp, kin_exp]
         if hmd_exp is not None:
             parts.append(hmd_exp)
         joint_input = torch.cat(parts, dim=-1)
+
+        if self.attn_mode == "canon_mlp":
+            delta = self.refinement_mlp(
+                joint_input.reshape(B * K, -1)).reshape(B, K, 3)
+            return coarse_pose + delta
 
         sens_toks = None
         if self.sensor_mode == "floor" and self._sens is not None:
@@ -676,14 +780,8 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
                 [h[:, 0:3], h[:, 3:6], h[:, 9:12]], dim=1)   # (B,3,3)
 
         if self.attn_mode in ("replace", "replace_self", "factored"):
-            if self.use_canon and self.canon_mode == "body_axis":
-                canon = self._body_axis_canon(coarse_pose)
-            elif self.use_canon and self._canon is not None:
-                R, t = self._canon[:, :3, :3], self._canon[:, :3, 3]
-                canon = torch.einsum(
-                    "bij,bkj->bki", R, coarse_pose) + t[:, None]
-            else:
-                canon = coarse_pose
+            canon = self._apply_canon(coarse_pose) if self.use_canon \
+                else coarse_pose
             delta = self.attn_block(canon, spatial_feat, z_latent,
                                     pose_feat, kin_feat, hmd_feat,
                                     sens_toks=sens_toks)
@@ -697,14 +795,8 @@ class OursAttnCascadedHead(CustomEgoposeCascadedRefinementHead_enhanced):
             extra = self.attn_block(
                 joint_input.reshape(B * K, -1)).reshape(B, K, 3)
         else:
-            if self.use_canon and self.canon_mode == "body_axis":
-                canon = self._body_axis_canon(coarse_pose)
-            elif self.use_canon and self._canon is not None:
-                R, t = self._canon[:, :3, :3], self._canon[:, :3, 3]
-                canon = torch.einsum(
-                    "bij,bkj->bki", R, coarse_pose) + t[:, None]
-            else:
-                canon = coarse_pose
+            canon = self._apply_canon(coarse_pose) if self.use_canon \
+                else coarse_pose
             extra = self.attn_block(canon, spatial_feat, z_latent,
                                     pose_feat, kin_feat, hmd_feat,
                                     sens_toks=sens_toks)
